@@ -58,6 +58,10 @@
   }
 </script>
 
+<!-- ─── Drag region — always rendered so the window is draggable in every state ── -->
+<!-- h-8 covers the macOS traffic-light zone; pointer-events-none prevents click capture -->
+<div class="fixed top-0 left-0 right-0 h-8 [-webkit-app-region:drag] pointer-events-none z-50"></div>
+
 <!-- ─── Welcome ────────────────────────────────────────────────────────────── -->
 {#if state === 'welcome'}
   <div class="flex flex-col h-full items-center justify-center bg-stone-50">
@@ -183,15 +187,18 @@
 {:else if state === 'open' && project}
   <div class="flex flex-col h-full bg-stone-50">
 
-    <!-- Titlebar area -->
-    <div class="flex items-center justify-between px-4 py-3 border-b border-stone-200 bg-white pl-20">
-      <div class="flex flex-col">
+    <!-- Titlebar area — [-webkit-app-region:drag] makes the bar draggable;
+         interactive children opt out with [-webkit-app-region:no-drag] -->
+    <div class="flex items-center justify-between px-4 py-3 border-b border-stone-200 bg-white pl-20
+                [-webkit-app-region:drag]">
+      <div class="flex flex-col [-webkit-app-region:no-drag]">
         <span class="text-sm font-semibold text-stone-800">{project.name}</span>
         <span class="text-xs text-stone-400">{project.nodes.length} nodes</span>
       </div>
       <button
         onclick={closeProject}
-        class="text-xs text-stone-400 hover:text-stone-600 transition-colors cursor-default px-2 py-1"
+        class="text-xs text-stone-400 hover:text-stone-600 transition-colors cursor-default px-2 py-1
+               [-webkit-app-region:no-drag]"
       >
         Close
       </button>
