@@ -41,7 +41,6 @@ function createWindow(): BrowserWindow {
 
   win.once('ready-to-show', () => win.show())
 
-  // electron-vite sets ELECTRON_RENDERER_URL in dev mode
   if (process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
@@ -54,7 +53,9 @@ function createWindow(): BrowserWindow {
 // ─── IPC handlers ────────────────────────────────────────────────────────────
 
 function registerIpcHandlers(): void {
-  // Project lifecycle
+
+  // ── Project lifecycle ────────────────────────────────────────────────────
+
   ipcMain.handle(IPC.PROJECT_CREATE, (_, { name, parentPath }: { name: string; parentPath: string }) =>
     projectManager.createProject(name, parentPath)
   )
@@ -63,17 +64,57 @@ function registerIpcHandlers(): void {
     projectManager.openProject(path)
   )
 
-  ipcMain.handle(IPC.PROJECT_SAVE, (_, { project }) =>
-    projectManager.saveProject(project)
+  ipcMain.handle(IPC.PROJECT_SAVE, async () =>
+    projectManager.saveProject()
   )
 
-  // Git
+  ipcMain.handle(IPC.PROJECT_GET_CURRENT, () => {
+    const project = projectManager.getCurrent()
+    return ok(project)
+  })
+
+  ipcMain.handle(IPC.PROJECT_CLOSE, async () =>
+    projectManager.flushAndClose()
+  )
+
+  // ── Node CRUD ────────────────────────────────────────────────────────────
+
+  ipcMain.handle(IPC.NODE_CREATE, (_, { parentId, name }: { parentId: string; name: string }) =>
+    projectManager.nodeCreate(parentId, name)
+  )
+
+  ipcMain.handle(IPC.NODE_UPDATE, (
+    _,
+    { id, changes }: {
+      id: string
+      changes: { name?: string; properties?: Record<string, string | number | boolean | null> }
+    }
+  ) => projectManager.nodeUpdate(id, changes))
+
+  ipcMain.handle(IPC.NODE_DELETE, (_, { id }: { id: string }) =>
+    projectManager.nodeDelete(id)
+  )
+
+  ipcMain.handle(IPC.NODE_MOVE, (
+    _,
+    { id, newParentId, newOrder }: { id: string; newParentId: string; newOrder: number }
+  ) => projectManager.nodeMove(id, newParentId, newOrder))
+
+  // ── Search ───────────────────────────────────────────────────────────────
+
+  ipcMain.handle(IPC.SEARCH_QUERY, (_, { query }: { query: string }) =>
+    projectManager.searchNodes(query)
+  )
+
+  // ── Git ──────────────────────────────────────────────────────────────────
+
   ipcMain.handle(IPC.GIT_CHECK, async () => {
     const status = await gitService.checkVersion()
     return ok(status)
   })
 
-  // Native dialog helpers
+  // ── Dialog helpers ───────────────────────────────────────────────────────
+
   ipcMain.handle(IPC.DIALOG_OPEN_FOLDER, async (_, { title }: { title: string }) => {
     const result = await dialog.showOpenDialog({
       title,
@@ -82,15 +123,11 @@ function registerIpcHandlers(): void {
     return result.canceled ? null : result.filePaths[0]
   })
 
-  // Phase 2+ stubs (return NOT_IMPLEMENTED so the renderer can handle gracefully)
-  const notImplemented = () =>
-    Promise.resolve(err(ErrorCode.NOT_IMPLEMENTED, 'Not implemented in Phase 1'))
+  // ── Phase 3+ stubs ───────────────────────────────────────────────────────
 
-  ipcMain.handle(IPC.NODE_CREATE,      notImplemented)
-  ipcMain.handle(IPC.NODE_UPDATE,      notImplemented)
-  ipcMain.handle(IPC.NODE_DELETE,      notImplemented)
-  ipcMain.handle(IPC.NODE_MOVE,        notImplemented)
-  ipcMain.handle(IPC.SEARCH_QUERY,     notImplemented)
+  const notImplemented = () =>
+    Promise.resolve(err(ErrorCode.NOT_IMPLEMENTED, 'Not implemented yet'))
+
   ipcMain.handle(IPC.SNAPSHOT_CREATE,  notImplemented)
   ipcMain.handle(IPC.SNAPSHOT_LIST,    notImplemented)
   ipcMain.handle(IPC.SNAPSHOT_COMPARE, notImplemented)
@@ -103,6 +140,7 @@ app.whenReady().then(async () => {
   appLogger.info('app starting', { version: app.getVersion(), platform: process.platform })
 
   const gitStatus = await gitService.checkVersion()
+  appLogger.info('git version check', { version: gitStatus.version, meetsMinimum: gitStatus.meetsMinimum })
 
   if (!gitStatus.available) {
     await dialog.showMessageBox({
@@ -134,6 +172,12 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+})
+
+// Flush autosave before quitting so no changes are lost.
+app.on('before-quit', () => {
+  projectManager.cancelAutosave()
+  projectManager.saveProject()
 })
 
 app.on('window-all-closed', () => {

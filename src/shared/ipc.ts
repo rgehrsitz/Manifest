@@ -18,39 +18,51 @@ import type {
 
 // Channel name constants — use these everywhere, never raw strings.
 export const IPC = {
-  PROJECT_CREATE:   'project:create',
-  PROJECT_OPEN:     'project:open',
-  PROJECT_SAVE:     'project:save',
-  NODE_CREATE:      'node:create',
-  NODE_UPDATE:      'node:update',
-  NODE_DELETE:      'node:delete',
-  NODE_MOVE:        'node:move',
-  SEARCH_QUERY:     'search:query',
-  SNAPSHOT_CREATE:  'snapshot:create',
-  SNAPSHOT_LIST:    'snapshot:list',
-  SNAPSHOT_COMPARE: 'snapshot:compare',
-  SNAPSHOT_RESTORE: 'snapshot:restore',
-  GIT_CHECK:        'git:check',
+  PROJECT_CREATE:      'project:create',
+  PROJECT_OPEN:        'project:open',
+  PROJECT_SAVE:        'project:save',
+  PROJECT_GET_CURRENT: 'project:getCurrent',
+  PROJECT_CLOSE:       'project:close',
+  NODE_CREATE:         'node:create',
+  NODE_UPDATE:         'node:update',
+  NODE_DELETE:         'node:delete',
+  NODE_MOVE:           'node:move',
+  SEARCH_QUERY:        'search:query',
+  SNAPSHOT_CREATE:     'snapshot:create',
+  SNAPSHOT_LIST:       'snapshot:list',
+  SNAPSHOT_COMPARE:    'snapshot:compare',
+  SNAPSHOT_RESTORE:    'snapshot:restore',
+  GIT_CHECK:           'git:check',
   // UI utility channels (not domain operations)
-  DIALOG_OPEN_FOLDER: 'dialog:openFolder',
+  DIALOG_OPEN_FOLDER:  'dialog:openFolder',
 } as const
 
 // Typed API surface exposed on window.api by the preload script.
 // Renderer code should only interact with main process through this interface.
+//
+// Node mutation methods return Result<Project> — the full updated project state
+// after each mutation. The renderer replaces its local store entirely, which
+// eliminates any possibility of partial-sync bugs.
 export interface ManifestAPI {
   project: {
     create(name: string, parentPath: string): Promise<Result<Project>>
     open(path: string): Promise<Result<Project>>
-    save(project: Project): Promise<Result<void>>
+    save(): Promise<Result<void>>
+    getCurrent(): Promise<Result<Project | null>>
+    close(): Promise<Result<void>>
   }
   node: {
-    create(parentId: string | null, name: string, order: number): Promise<Result<ManifestNode>>
+    /** Create a child node under parentId. Returns full updated Project. */
+    create(parentId: string, name: string): Promise<Result<Project>>
+    /** Update node name and/or properties. Returns full updated Project. */
     update(
       id: string,
-      changes: Partial<Omit<ManifestNode, 'id' | 'created'>>
-    ): Promise<Result<ManifestNode>>
-    delete(id: string): Promise<Result<void>>
-    move(id: string, newParentId: string | null, newOrder: number): Promise<Result<void>>
+      changes: { name?: string; properties?: Record<string, string | number | boolean | null> }
+    ): Promise<Result<Project>>
+    /** Delete node and all its descendants. Returns full updated Project. */
+    delete(id: string): Promise<Result<Project>>
+    /** Move node to newParentId (appended as last child) or reorder within same parent. */
+    move(id: string, newParentId: string, newOrder: number): Promise<Result<Project>>
   }
   search: {
     query(query: string): Promise<Result<SearchResult[]>>

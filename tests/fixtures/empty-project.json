@@ -1,8 +1,18 @@
 {
-  "version": 1,
+  "version": 2,
   "id": "01900000-0000-7000-8000-000000000001",
-  "name": "Test Project",
+  "name": "Empty Project",
   "created": "2026-01-01T00:00:00.000Z",
   "modified": "2026-01-01T00:00:00.000Z",
-  "nodes": []
+  "nodes": [
+    {
+      "id": "01900000-0000-7000-8000-000000000010",
+      "parentId": null,
+      "name": "Empty Project",
+      "order": 0,
+      "properties": {},
+      "created": "2026-01-01T00:00:00.000Z",
+      "modified": "2026-01-01T00:00:00.000Z"
+    }
+  ]
 }

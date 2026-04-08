@@ -12,13 +12,17 @@ const api: ManifestAPI = {
       ipcRenderer.invoke(IPC.PROJECT_CREATE, { name, parentPath }),
     open: (path) =>
       ipcRenderer.invoke(IPC.PROJECT_OPEN, { path }),
-    save: (project) =>
-      ipcRenderer.invoke(IPC.PROJECT_SAVE, { project }),
+    save: () =>
+      ipcRenderer.invoke(IPC.PROJECT_SAVE),
+    getCurrent: () =>
+      ipcRenderer.invoke(IPC.PROJECT_GET_CURRENT),
+    close: () =>
+      ipcRenderer.invoke(IPC.PROJECT_CLOSE),
   },
 
   node: {
-    create: (parentId, name, order) =>
-      ipcRenderer.invoke(IPC.NODE_CREATE, { parentId, name, order }),
+    create: (parentId, name) =>
+      ipcRenderer.invoke(IPC.NODE_CREATE, { parentId, name }),
     update: (id, changes) =>
       ipcRenderer.invoke(IPC.NODE_UPDATE, { id, changes }),
     delete: (id) =>

@@ -1,5 +1,17 @@
 # Manifest TODOS
 
+## P1 — Must do in Phase 2
+
+### Playwright/Electron E2E Harness
+**What:** Create `playwright.config.ts` with Electron app launch wiring. Add an `electronApp` test fixture that boots the built app and exposes the first BrowserWindow.
+**Why:** `package.json` has `playwright test` but there is no config file and no Electron launch integration. The 6 Phase 2 E2E tests cannot run without this.
+**Pros:** Unblocks all E2E testing. One-time setup that all future E2E tests build on.
+**Cons:** Requires `@playwright/test` Electron integration (`_electron` launch API). Slight extra setup complexity.
+**Context:** Identified during Phase 2 eng review (Codex outside voice). The Playwright Electron launch API (`_electron.launch({ args: ['out/main/index.js'] })`) is the standard path. Must be done before writing any E2E tests.
+**Effort:** S (human) -> XS (CC+gstack)
+**Priority:** P1 (blocks Phase 2 E2E)
+**Depends on:** Phase 2 build completing successfully
+
 Deferred work from CEO review (2026-04-07).
 
 ## P2 — Post-v1 or late v1
