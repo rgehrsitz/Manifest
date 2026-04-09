@@ -2,17 +2,18 @@
 
 <script lang="ts">
   import { onMount, tick } from 'svelte'
-  import type { Project, ManifestNode } from '../../shared/types'
+  import type { Project, ManifestNode, Snapshot, DiffEntry } from '../../shared/types'
   import { buildTree, getSiblingIndex, getAncestorIds } from './lib/tree'
   import TreeNode from './components/TreeNode.svelte'
   import DetailPane from './components/DetailPane.svelte'
   import MoveToDialog from './components/MoveToDialog.svelte'
+  import SnapshotDialog from './components/SnapshotDialog.svelte'
 
   type AppState = 'welcome' | 'creating' | 'loading' | 'open'
 
   // ─── State ────────────────────────────────────────────────────────────────
 
-  let state:    AppState       = $state('welcome')
+  let appState: AppState       = $state('welcome')
   let project:  Project | null = $state(null)
   let error:    string | null  = $state(null)
   let newName:  string         = $state('')
@@ -36,19 +37,32 @@
   // we also support F2 on the tree row)
   let moveToNodeId: string | null = $state(null)
 
+  // Snapshot/history UI state
+  let snapshotDialogOpen: boolean = $state(false)
+  let snapshots: Snapshot[] = $state([])
+  let snapshotDiffEntries: DiffEntry[] = $state([])
+  let snapshotCompareLoaded: boolean = $state(false)
+  let snapshotLoading: boolean = $state(false)
+  let snapshotCreating: boolean = $state(false)
+  let snapshotComparing: boolean = $state(false)
+  let snapshotRestoringName: string | null = $state(null)
+  let snapshotError: string | null = $state(null)
+
   // Non-blocking error toast
   let toastMsg:     string | null = $state(null)
   let toastTimer:   ReturnType<typeof setTimeout> | null = null
 
   // ─── Derived ──────────────────────────────────────────────────────────────
 
-  const tree = $derived(project ? buildTree(project.nodes) : null)
+  const tree = $derived.by(() => {
+    if (!project) return null
+    return buildTree(project.nodes)
+  })
 
-  const selectedNode = $derived(
-    selectedId && project
-      ? (project.nodes.find(n => n.id === selectedId) ?? null)
-      : null
-  )
+  const selectedNode = $derived.by(() => {
+    if (!selectedId || !project) return null
+    return project.nodes.find((node) => node.id === selectedId) ?? null
+  })
 
   // ─── Lifecycle ────────────────────────────────────────────────────────────
 
@@ -58,7 +72,7 @@
     if (result.ok && result.data) {
       project = result.data
       selectRoot(result.data)
-      state = 'open'
+      appState = 'open'
     }
   })
 
@@ -99,6 +113,13 @@
     }
   }
 
+  async function reloadCurrentProject() {
+    const result = await window.api.project.getCurrent()
+    if (result.ok && result.data) {
+      applyProject(result.data)
+    }
+  }
+
   // ─── Welcome actions ──────────────────────────────────────────────────────
 
   async function openProject() {
@@ -106,15 +127,15 @@
     const folderPath = await window.api.dialog.openFolder('Open Project')
     if (!folderPath) return
 
-    state = 'loading'
+    appState = 'loading'
     const result = await window.api.project.open(folderPath)
     if (result.ok) {
       project = result.data
       selectRoot(result.data)
-      state = 'open'
+      appState = 'open'
     } else {
       error = result.error.message
-      state = 'welcome'
+      appState = 'welcome'
     }
   }
 
@@ -132,7 +153,7 @@
     if (result.ok) {
       project = result.data
       selectRoot(result.data)
-      state = 'open'
+      appState = 'open'
     } else {
       error = result.error.message
     }
@@ -145,10 +166,15 @@
     expandedIds = new Set()
     searchQuery = ''
     searchResults = []
-    state = 'welcome'
+    appState = 'welcome'
     newName = ''
     newPath = ''
     error = null
+    snapshotDialogOpen = false
+    snapshots = []
+    snapshotDiffEntries = []
+    snapshotCompareLoaded = false
+    snapshotError = null
   }
 
   // ─── Tree actions ─────────────────────────────────────────────────────────
@@ -302,6 +328,91 @@
     }
   }
 
+  // ─── Snapshots / history ────────────────────────────────────────────────
+
+  async function refreshSnapshots() {
+    if (!project) return
+    snapshotLoading = true
+    snapshotError = null
+
+    const result = await window.api.snapshot.list()
+    snapshotLoading = false
+
+    if (result.ok) {
+      snapshots = result.data
+    } else {
+      snapshotError = result.error.message
+    }
+  }
+
+  async function openSnapshots() {
+    snapshotDialogOpen = true
+    snapshotDiffEntries = []
+    snapshotCompareLoaded = false
+    await refreshSnapshots()
+  }
+
+  function closeSnapshots() {
+    snapshotDialogOpen = false
+    snapshotError = null
+    snapshotDiffEntries = []
+    snapshotCompareLoaded = false
+    snapshotCreating = false
+    snapshotComparing = false
+    snapshotRestoringName = null
+  }
+
+  async function handleSnapshotCreate(name: string) {
+    snapshotCreating = true
+    snapshotError = null
+    const result = await window.api.snapshot.create(name)
+    snapshotCreating = false
+
+    if (result.ok) {
+      await refreshSnapshots()
+      snapshotCompareLoaded = false
+      snapshotDiffEntries = []
+      showToast(`Snapshot "${result.data.name}" created`)
+    } else {
+      snapshotError = result.error.message
+    }
+  }
+
+  async function handleSnapshotCompare(from: string, to: string) {
+    snapshotComparing = true
+    snapshotError = null
+    const result = await window.api.snapshot.compare(from, to)
+    snapshotComparing = false
+
+    if (result.ok) {
+      snapshotCompareLoaded = true
+      snapshotDiffEntries = result.data
+    } else {
+      snapshotCompareLoaded = false
+      snapshotError = result.error.message
+    }
+  }
+
+  async function handleSnapshotRestore(name: string) {
+    const confirmed = window.confirm(`Restore snapshot "${name}"? Current unsnapshotted changes will be replaced.`)
+    if (!confirmed) return
+
+    snapshotRestoringName = name
+    snapshotError = null
+    const result = await window.api.snapshot.restore(name)
+    snapshotRestoringName = null
+
+    if (result.ok) {
+      await reloadCurrentProject()
+      snapshotDiffEntries = []
+      snapshotCompareLoaded = false
+      closeSnapshots()
+      showToast(`Restored snapshot "${name}"`)
+    } else {
+      snapshotError = result.error.message
+    }
+  }
+
   // ─── Utilities ────────────────────────────────────────────────────────────
 
   function getDescendantCount(nodeId: string, nodes: ManifestNode[]): number {
@@ -328,6 +439,25 @@
   </div>
 {/if}
 
+<!-- ─── Snapshot dialog ───────────────────────────────────────────────────── -->
+{#if snapshotDialogOpen}
+  <SnapshotDialog
+    {snapshots}
+    diffEntries={snapshotDiffEntries}
+    compareLoaded={snapshotCompareLoaded}
+    loading={snapshotLoading}
+    creating={snapshotCreating}
+    comparing={snapshotComparing}
+    restoringName={snapshotRestoringName}
+    error={snapshotError}
+    onClose={closeSnapshots}
+    onRefresh={refreshSnapshots}
+    onCreate={handleSnapshotCreate}
+    onCompare={handleSnapshotCompare}
+    onRestore={handleSnapshotRestore}
+  />
+{/if}
+
 <!-- ─── Move-to dialog ────────────────────────────────────────────────────── -->
 {#if moveToNodeId && project}
   <MoveToDialog
@@ -339,7 +469,7 @@
 {/if}
 
 <!-- ─── Welcome ────────────────────────────────────────────────────────────── -->
-{#if state === 'welcome'}
+{#if appState === 'welcome'}
   <div class="flex flex-col h-full items-center justify-center bg-stone-50">
     <div class="flex flex-col items-center gap-8 w-full max-w-sm px-6">
 
@@ -364,7 +494,7 @@
           Open Project
         </button>
         <button
-          onclick={() => { state = 'creating'; error = null }}
+          onclick={() => { appState = 'creating'; error = null }}
           class="w-full bg-white hover:bg-stone-50 text-stone-700 text-sm font-medium
                  px-4 py-2.5 rounded-lg border border-stone-200 transition-colors duration-150 cursor-default"
           data-testid="create-project-btn"
@@ -377,7 +507,7 @@
   </div>
 
 <!-- ─── Create project form ───────────────────────────────────────────────── -->
-{:else if state === 'creating'}
+{:else if appState === 'creating'}
   <div class="flex flex-col h-full items-center justify-center bg-stone-50">
     <div class="flex flex-col gap-5 w-full max-w-sm px-6">
 
@@ -429,7 +559,7 @@
 
       <div class="flex gap-2 pt-1">
         <button
-          onclick={() => { state = 'welcome'; error = null }}
+          onclick={() => { appState = 'welcome'; error = null }}
           class="flex-1 bg-white hover:bg-stone-50 text-stone-600 text-sm font-medium
                  px-4 py-2.5 rounded-lg border border-stone-200 transition-colors cursor-default"
         >
@@ -451,13 +581,13 @@
   </div>
 
 <!-- ─── Loading ───────────────────────────────────────────────────────────── -->
-{:else if state === 'loading'}
+{:else if appState === 'loading'}
   <div class="flex h-full items-center justify-center bg-stone-50">
     <p class="text-sm text-stone-400">Opening project…</p>
   </div>
 
 <!-- ─── Project open ──────────────────────────────────────────────────────── -->
-{:else if state === 'open' && project}
+{:else if appState === 'open' && project}
   <div class="flex flex-col h-full bg-white" data-testid="project-view">
 
     <!-- Titlebar -->
@@ -467,14 +597,24 @@
         <span class="text-sm font-semibold text-stone-800">{project.name}</span>
         <span class="text-xs text-stone-400">{project.nodes.length} nodes</span>
       </div>
-      <button
-        onclick={closeProject}
-        class="text-xs text-stone-400 hover:text-stone-600 transition-colors cursor-default
-               px-2 py-1 [-webkit-app-region:no-drag]"
-        data-testid="close-project-btn"
-      >
-        Close
-      </button>
+      <div class="flex items-center gap-2 [-webkit-app-region:no-drag]">
+        <button
+          onclick={openSnapshots}
+          class="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-600
+                 transition-colors hover:bg-stone-50 cursor-default"
+          data-testid="open-snapshots-btn"
+        >
+          Snapshots
+        </button>
+        <button
+          onclick={closeProject}
+          class="text-xs text-stone-400 hover:text-stone-600 transition-colors cursor-default
+                 px-2 py-1"
+          data-testid="close-project-btn"
+        >
+          Close
+        </button>
+      </div>
     </div>
 
     <!-- Two-pane body -->
