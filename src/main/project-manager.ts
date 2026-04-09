@@ -23,10 +23,11 @@
 import { mkdirSync, writeFileSync, readFileSync, renameSync, statSync } from 'fs'
 import { join } from 'path'
 import { v7 as uuidv7 } from 'uuid'
-import type { Project, ManifestNode, SearchResult, Result } from '../shared/types'
+import type { Project, ManifestNode, SearchResult, Result, Snapshot, DiffEntry } from '../shared/types'
 import { ok, err, ErrorCode } from '../shared/errors'
 import { migrate, getCurrentVersion } from '../shared/migration'
-import { validateNodeName, validatePropertyKey, validatePropertyValue } from '../shared/validation'
+import { validateNodeName, validatePropertyKey, validatePropertyValue, validateSnapshotName } from '../shared/validation'
+import { diffProjects } from '../shared/diff-engine'
 import type { GitService } from './git-service'
 import type { Logger } from './logger'
 
@@ -414,7 +415,124 @@ export class ProjectManager {
     return ok(results)
   }
 
+  // ─── Snapshots / history ───────────────────────────────────────────────────
+
+  async snapshotCreate(name: string): Promise<Result<Snapshot>> {
+    if (!this.currentProject) {
+      return err(ErrorCode.PROJECT_NOT_FOUND, 'No project is currently open')
+    }
+
+    const validation = validateSnapshotName(name)
+    if (!validation.valid) {
+      return err(ErrorCode.VALIDATION_FAILED, validation.message ?? 'Invalid snapshot name')
+    }
+
+    const flushResult = await this.flushPendingAutosave()
+    if (!flushResult.ok) {
+      return flushResult as Result<Snapshot>
+    }
+
+    try {
+      const snapshot = await this.git.createSnapshot(this.currentProject.path!, name)
+      this.logger.info('snapshot created', { name, path: this.currentProject.path })
+      return ok(snapshot)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      const code = msg.includes('already exists') ? ErrorCode.VALIDATION_FAILED : ErrorCode.GIT_COMMIT_FAILED
+      const message = code === ErrorCode.VALIDATION_FAILED
+        ? `Snapshot "${name}" already exists`
+        : `Failed to create snapshot: ${msg}`
+      this.logger.error('snapshot create failed', { name, path: this.currentProject.path, error: msg })
+      return err(code, message)
+    }
+  }
+
+  async snapshotList(): Promise<Result<Snapshot[]>> {
+    if (!this.currentProject?.path) {
+      return err(ErrorCode.PROJECT_NOT_FOUND, 'No project is currently open')
+    }
+
+    try {
+      const snapshots = await this.git.listSnapshots(this.currentProject.path)
+      return ok(snapshots)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      this.logger.error('snapshot list failed', { path: this.currentProject.path, error: msg })
+      return err(ErrorCode.GIT_COMMIT_FAILED, `Failed to list snapshots: ${msg}`)
+    }
+  }
+
+  async snapshotCompare(a: string, b: string): Promise<Result<DiffEntry[]>> {
+    if (!this.currentProject?.path) {
+      return err(ErrorCode.PROJECT_NOT_FOUND, 'No project is currently open')
+    }
+
+    try {
+      const [rawA, rawB] = await Promise.all([
+        this.git.readSnapshotManifest(this.currentProject.path, a),
+        this.git.readSnapshotManifest(this.currentProject.path, b),
+      ])
+
+      const projectA = this.parseManifestJson(rawA)
+      if (!projectA.ok) return projectA as Result<DiffEntry[]>
+
+      const projectB = this.parseManifestJson(rawB)
+      if (!projectB.ok) return projectB as Result<DiffEntry[]>
+
+      const diffs = diffProjects(projectA.data, projectB.data)
+      this.logger.info('snapshot compare complete', {
+        path: this.currentProject.path,
+        from: a,
+        to: b,
+        diffCount: diffs.length,
+      })
+      return ok(diffs)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      this.logger.error('snapshot compare failed', { path: this.currentProject.path, from: a, to: b, error: msg })
+      return err(ErrorCode.GIT_COMMIT_FAILED, `Failed to compare snapshots: ${msg}`)
+    }
+  }
+
+  async snapshotRestore(name: string): Promise<Result<void>> {
+    if (!this.currentProject?.path) {
+      return err(ErrorCode.PROJECT_NOT_FOUND, 'No project is currently open')
+    }
+
+    this.cancelAutosave()
+
+    try {
+      const raw = await this.git.readSnapshotManifest(this.currentProject.path, name)
+      const restored = this.parseManifestJson(raw)
+      if (!restored.ok) return restored as Result<void>
+
+      const previousProject = this.currentProject
+      this.currentProject = {
+        ...restored.data,
+        path: previousProject.path,
+      }
+
+      const writeResult = await this.writeManifest(this.currentProject, { touchModified: false })
+      if (!writeResult.ok) {
+        this.currentProject = previousProject
+        return writeResult
+      }
+
+      this.logger.info('snapshot restored', { name, path: this.currentProject.path })
+      return ok(undefined as void)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      this.logger.error('snapshot restore failed', { name, path: this.currentProject.path, error: msg })
+      return err(ErrorCode.GIT_COMMIT_FAILED, `Failed to restore snapshot: ${msg}`)
+    }
+  }
+
   // ─── Autosave ───────────────────────────────────────────────────────────────
+
+  private async flushPendingAutosave(): Promise<Result<void>> {
+    this.cancelAutosave()
+    return this.saveProject()
+  }
 
   private scheduleAutosave(): void {
     this.cancelAutosave()
@@ -435,6 +553,29 @@ export class ProjectManager {
   }
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
+
+  private parseManifestJson(raw: string): Result<Project> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let data: any
+
+    try {
+      data = JSON.parse(raw)
+    } catch {
+      return err(ErrorCode.VALIDATION_FAILED, 'Project file is not valid JSON')
+    }
+
+    try {
+      data = migrate(data)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      return err(ErrorCode.SCHEMA_VERSION, msg)
+    }
+
+    const validation = this.validateManifest(data)
+    if (!validation.ok) return validation as Result<Project>
+
+    return ok(data as Project)
+  }
 
   // Collect id of node + all its descendants.
   private collectDescendants(rootId: string): Set<string> {
@@ -485,16 +626,27 @@ export class ProjectManager {
   }
 
   // Atomic write: tmp then rename.
-  private async writeManifest(project: Project): Promise<Result<void>> {
+  private async writeManifest(
+    project: Project,
+    options: { touchModified?: boolean } = {}
+  ): Promise<Result<void>> {
     if (!project.path) {
       return err(ErrorCode.PROJECT_NOT_FOUND, 'Project has no path — cannot save')
     }
     const manifestPath = join(project.path, 'manifest.json')
     const tmpPath = `${manifestPath}.tmp`
+    const touchModified = options.touchModified ?? true
     try {
-      const { path: _path, ...persistable } = { ...project, modified: new Date().toISOString() }
+      const persistedProject = {
+        ...project,
+        modified: touchModified ? new Date().toISOString() : project.modified,
+      }
+      const { path: _path, ...persistable } = persistedProject
       writeFileSync(tmpPath, JSON.stringify(persistable, null, 2), 'utf8')
       renameSync(tmpPath, manifestPath)
+      if (this.currentProject?.path === project.path && this.currentProject.id === project.id) {
+        this.currentProject = persistedProject
+      }
       this.logger.debug('project saved', { path: project.path })
       return ok(undefined as void)
     } catch (e: unknown) {

@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test",
+    "test:e2e": "bun run build && playwright test",
     "package": "electron-vite build && electron-builder"
   },
   "dependencies": {

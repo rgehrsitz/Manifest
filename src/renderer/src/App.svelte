@@ -1,7 +1,7 @@
 <svelte:options runes />
 
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import type { Project, ManifestNode } from '../../shared/types'
   import { buildTree, getSiblingIndex, getAncestorIds } from './lib/tree'
   import TreeNode from './components/TreeNode.svelte'
@@ -30,6 +30,7 @@
   let addingChildTo: string | null = $state(null)
   let addingChildName: string      = $state('')
   let addingChildError: string | null = $state(null)
+  let addChildInput: HTMLInputElement | null = $state(null)
 
   // Inline rename state (double-click on tree — delegates to DetailPane, but
   // we also support F2 on the tree row)
@@ -76,6 +77,18 @@
     if (toastTimer) clearTimeout(toastTimer)
     toastTimer = setTimeout(() => { toastMsg = null }, 4000)
   }
+
+  async function focusInput(el: HTMLInputElement | null) {
+    await tick()
+    el?.focus()
+    el?.select()
+  }
+
+  $effect(() => {
+    if (addingChildTo) {
+      void focusInput(addChildInput)
+    }
+  })
 
   function applyProject(p: Project) {
     project = p
@@ -546,6 +559,7 @@
               <div class="mt-1 ml-8 flex flex-col gap-1">
                 <input
                   type="text"
+                  bind:this={addChildInput}
                   bind:value={addingChildName}
                   placeholder="Node name"
                   class="w-full text-sm border border-stone-300 rounded px-2 py-1
@@ -555,7 +569,6 @@
                     if (e.key === 'Enter') commitAddChild()
                     if (e.key === 'Escape') cancelAddChild()
                   }}
-                  autofocus
                 />
                 {#if addingChildError}
                   <p class="text-xs text-red-600">{addingChildError}</p>

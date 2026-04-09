@@ -125,13 +125,21 @@ function registerIpcHandlers(): void {
 
   // ── Phase 3+ stubs ───────────────────────────────────────────────────────
 
-  const notImplemented = () =>
-    Promise.resolve(err(ErrorCode.NOT_IMPLEMENTED, 'Not implemented yet'))
+  ipcMain.handle(IPC.SNAPSHOT_CREATE, (_, { name }: { name: string }) =>
+    projectManager.snapshotCreate(name)
+  )
 
-  ipcMain.handle(IPC.SNAPSHOT_CREATE,  notImplemented)
-  ipcMain.handle(IPC.SNAPSHOT_LIST,    notImplemented)
-  ipcMain.handle(IPC.SNAPSHOT_COMPARE, notImplemented)
-  ipcMain.handle(IPC.SNAPSHOT_RESTORE, notImplemented)
+  ipcMain.handle(IPC.SNAPSHOT_LIST, () =>
+    projectManager.snapshotList()
+  )
+
+  ipcMain.handle(IPC.SNAPSHOT_COMPARE, (_, { a, b }: { a: string; b: string }) =>
+    projectManager.snapshotCompare(a, b)
+  )
+
+  ipcMain.handle(IPC.SNAPSHOT_RESTORE, (_, { name }: { name: string }) =>
+    projectManager.snapshotRestore(name)
+  )
 }
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────

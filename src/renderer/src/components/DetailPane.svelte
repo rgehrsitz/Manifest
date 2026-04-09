@@ -1,6 +1,7 @@
 <svelte:options runes />
 
 <script lang="ts">
+  import { tick } from 'svelte'
   import type { ManifestNode, Project } from '../../../shared/types'
   import { validateNodeName, validatePropertyKey, validatePropertyValue } from '../../../shared/validation'
 
@@ -21,6 +22,7 @@
   let editingName = $state(false)
   let nameInput = $state('')
   let nameError = $state<string | null>(null)
+  let nameInputEl = $state<HTMLInputElement | null>(null)
 
   function startEditName() {
     if (!node) return
@@ -104,6 +106,7 @@
   let editingPropKey = $state<string | null>(null)
   let editingPropValue = $state('')
   let editingPropError = $state<string | null>(null)
+  let propValueInputEl = $state<HTMLInputElement | null>(null)
 
   function startEditProp(key: string) {
     editingPropKey = key
@@ -136,6 +139,24 @@
     node?.parentId ? project.nodes.find(n => n.id === node!.parentId) : null
   )
   const propEntries = $derived(Object.entries(node?.properties ?? {}))
+
+  async function focusInput(el: HTMLInputElement | null) {
+    await tick()
+    el?.focus()
+    el?.select()
+  }
+
+  $effect(() => {
+    if (editingName) {
+      void focusInput(nameInputEl)
+    }
+  })
+
+  $effect(() => {
+    if (editingPropKey !== null) {
+      void focusInput(propValueInputEl)
+    }
+  })
 </script>
 
 {#if !node}
@@ -151,6 +172,7 @@
         <div class="flex flex-col gap-1">
           <input
             type="text"
+            bind:this={nameInputEl}
             bind:value={nameInput}
             onkeydown={handleNameKeyDown}
             onblur={commitName}
@@ -158,7 +180,6 @@
                    rounded px-2 py-0.5 focus:outline-none focus:ring-2 focus:ring-stone-400
                    selectable w-full"
             data-testid="name-input"
-            autofocus
           />
           {#if nameError}
             <p class="text-xs text-red-600">{nameError}</p>
@@ -205,6 +226,7 @@
               {#if editingPropKey === key}
                 <input
                   type="text"
+                  bind:this={propValueInputEl}
                   bind:value={editingPropValue}
                   onkeydown={(e) => handlePropKeyDown(e, key)}
                   onblur={() => commitProp(key)}
@@ -212,7 +234,6 @@
                          px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-stone-400
                          selectable"
                   data-testid="prop-value-input"
-                  autofocus
                 />
               {:else}
                 <!-- svelte-ignore a11y_click_events_have_key_events -->

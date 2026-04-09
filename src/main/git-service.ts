@@ -4,13 +4,14 @@
 
 import { execFile } from 'child_process'
 import { promisify } from 'util'
-import type { GitStatus } from '../shared/types'
+import type { GitStatus, Snapshot } from '../shared/types'
 import type { Logger } from './logger'
 
 const execFileAsync = promisify(execFile)
 
 const MIN_GIT_VERSION: [number, number, number] = [2, 25, 0]
 const MIN_GIT_VERSION_STRING = MIN_GIT_VERSION.join('.')
+const SNAPSHOT_TAG_PREFIX = 'snapshot/'
 
 // Serial async queue — all git + file write operations enqueue here.
 // Prevents .git/index.lock contention from concurrent operations.
@@ -97,5 +98,87 @@ export class GitService {
       )
       this.logger.info('initial git commit', { dir: projectDir })
     })
+  }
+
+  async createSnapshot(projectDir: string, name: string): Promise<Snapshot> {
+    return this.queue.enqueue(async () => {
+      await execFileAsync('git', ['add', 'manifest.json'], { cwd: projectDir })
+      await execFileAsync(
+        'git',
+        ['-c', 'user.email=manifest@local', '-c', 'user.name=Manifest', 'commit', '--allow-empty', '-m', name],
+        { cwd: projectDir }
+      )
+      await execFileAsync('git', ['tag', `${SNAPSHOT_TAG_PREFIX}${name}`], { cwd: projectDir })
+
+      const snapshot = await this.readSnapshot(projectDir, name)
+      this.logger.info('snapshot created', { dir: projectDir, name, commitHash: snapshot.commitHash })
+      return snapshot
+    })
+  }
+
+  async listSnapshots(projectDir: string): Promise<Snapshot[]> {
+    return this.queue.enqueue(async () => {
+      const { stdout } = await execFileAsync(
+        'git',
+        [
+          'for-each-ref',
+          'refs/tags/snapshot',
+          '--sort=-creatordate',
+          '--format=%(refname)\t%(objectname)\t%(creatordate:iso-strict)\t%(subject)',
+        ],
+        { cwd: projectDir }
+      )
+
+      const snapshots = stdout
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => {
+          const [refname, commitHash, createdAt, message] = line.split('\t')
+          return {
+            name: refname.replace(/^refs\/tags\/snapshot\//, ''),
+            commitHash,
+            createdAt,
+            message,
+          }
+        })
+
+      this.logger.debug('snapshots listed', { dir: projectDir, count: snapshots.length })
+      return snapshots
+    })
+  }
+
+  async readSnapshotManifest(projectDir: string, name: string): Promise<string> {
+    return this.queue.enqueue(async () => {
+      const { stdout } = await execFileAsync('git', ['show', `${SNAPSHOT_TAG_PREFIX}${name}:manifest.json`], {
+        cwd: projectDir,
+      })
+      return stdout
+    })
+  }
+
+  private async readSnapshot(projectDir: string, name: string): Promise<Snapshot> {
+    const { stdout } = await execFileAsync(
+      'git',
+      [
+        'for-each-ref',
+        `refs/tags/${SNAPSHOT_TAG_PREFIX}${name}`,
+        '--format=%(refname)\t%(objectname)\t%(creatordate:iso-strict)\t%(subject)',
+      ],
+      { cwd: projectDir }
+    )
+
+    const line = stdout.trim()
+    if (!line) {
+      throw new Error(`Snapshot not found: ${name}`)
+    }
+
+    const [refname, commitHash, createdAt, message] = line.split('\t')
+    return {
+      name: refname.replace(/^refs\/tags\/snapshot\//, ''),
+      commitHash,
+      createdAt,
+      message,
+    }
   }
 }
