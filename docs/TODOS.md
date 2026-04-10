@@ -14,6 +14,47 @@
 
 Deferred work from CEO review (2026-04-07).
 
+## P1 — Tree Rewrite + Compare Mode (deferred scope items)
+
+These items were explicitly deferred during the 2026-04-10 eng review of the tree rewrite + inline compare mode plan. They are known, reasoned decisions — not oversights.
+
+### DnD Reorder for Tree Nodes
+**What:** Drag-and-drop reordering of nodes within the tree (change parent or sibling order).
+**Why:** Faster than the existing Move Up / Move Down context menu for multi-level restructuring.
+**Pros:** More intuitive for large hierarchies.
+**Cons:** Virtualized DnD is a hard problem. `svelte-dnd-action` doesn't play well with virtual lists. Would require either a custom DnD implementation or accepting that DnD only works on the visible rendered window, which is broken UX. The existing context menu (Move Up, Move Down, Move To) covers the base case.
+**Context:** Deferred from tree rewrite plan (2026-04-10). The context menu solution ships with PR #1.
+**Effort:** L (human) -> M (CC+gstack)
+**Priority:** P1.5 (post-tree-rewrite, pre-v1 release if pilot feedback demands it)
+**Depends on:** Tree rewrite (PR #1) landing
+
+### Typeahead / Search-in-Tree
+**What:** Typing in the tree filters/highlights matching nodes inline without leaving the tree to the search panel.
+**Why:** Faster navigation in large hierarchies with known node names.
+**Pros:** Common UX pattern in file trees. Reduces round-trip to search panel.
+**Cons:** State management interplay with expanded set is non-trivial. Highlight rendering needs another VisibleRow decoration variant.
+**Context:** Deferred from tree rewrite plan (2026-04-10). Existing search panel works; this is an enhancement.
+**Effort:** S (human) -> S (CC+gstack)
+**Priority:** P1.5
+**Depends on:** Tree rewrite (PR #1) landing
+
+### Inline Rename in Tree Row (F2 in-row)
+**What:** Pressing F2 on a tree row shows a name input directly inside the row, without switching to the Detail pane.
+**Why:** Faster for keyboard users who want to rename without looking right.
+**Cons:** DetailPane already has inline rename. A second rename path means two places to maintain validation, error display, dedupe checking. Risk of drift.
+**Context:** Explicitly deferred during tree rewrite plan (2026-04-10). F2 signal-based approach ships in PR #1: F2 bumps `renameRequestId` in App.svelte, DetailPane's `$effect` picks it up and starts editing. Users who prefer tree-row editing can be addressed post-v1.
+**Effort:** S (human) -> S (CC+gstack)
+**Priority:** P2 (post-v1)
+**Depends on:** Tree rewrite (PR #1), DetailPane signal-based rename landing
+
+### Fix ErrorCode.GIT_COMMIT_FAILED Mislabel in Snapshot Compare
+**What:** `project-manager.ts` `snapshotCompare` and the new `snapshotLoadCompare` both use `ErrorCode.GIT_COMMIT_FAILED` when a compare fails. "Commit failed" is the wrong label for "read manifest failed."
+**Why:** Code clarity, accurate error reporting to users.
+**Cons:** Adds a new error code, small blast radius.
+**Context:** Identified during code quality review (2026-04-10). Pre-existing issue, out of scope for the tree rewrite PRs.
+**Effort:** XS
+**Priority:** P2 (cleanup, any time)
+
 ## P2 — Post-v1 or late v1
 
 ### CSV/JSON Import
@@ -37,14 +78,9 @@ Deferred work from CEO review (2026-04-07).
 **Depends on:** Pilot usage data, core diff engine working
 
 ### Virtual Tree Scrolling
-**What:** Implement virtual scrolling for the hierarchy tree view to handle >500 visible nodes.
-**Why:** Performance review identified DOM stress at >500 expanded nodes. Real projects may have 1000-5000+ nodes.
-**Pros:** Smooth scrolling and rendering at any project size.
-**Cons:** Adds complexity to tree interaction (drag-drop, keyboard nav with virtual scroll).
-**Context:** Identified during CEO review performance section. Not blocking for initial v1 with sub-500 node projects.
-**Effort:** S (human) -> S (CC+gstack)
-**Priority:** P2
-**Depends on:** Tree UI component (Phase 2)
+**What:** ~~Implement virtual scrolling for the hierarchy tree view to handle >500 visible nodes.~~
+**Status:** DONE — delivered in PR #1 (Tree rewrite, 2026-04-10). `@tanstack/svelte-virtual` ships with the tree rewrite. Closes this item.
+**Was:** P2, identified during CEO review.
 
 ### Fractional Indexing for Sibling Order
 **What:** Replace integer `order` field with string-based fractional indexing (e.g., "a0", "a0V") for sibling ordering.

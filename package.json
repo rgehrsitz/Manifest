@@ -4,21 +4,29 @@
   "description": "Local-first desktop app for structured project management",
   "main": "out/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev",
+    "rebuild:native:node": "npm rebuild better-sqlite3",
+    "rebuild:native:electron": "electron-rebuild -f -w better-sqlite3",
+    "dev": "bun run rebuild:native:electron && electron-vite dev",
     "build": "electron-vite build",
-    "preview": "electron-vite preview",
+    "preview": "bun run rebuild:native:electron && electron-vite preview",
+    "postinstall": "bun run rebuild:native:node",
+    "generate:project": "bun scripts/generate-project.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.node.json",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:e2e": "bun run build && playwright test",
-    "package": "electron-vite build && electron-builder"
+    "test": "bun run rebuild:native:node && node ./node_modules/vitest/vitest.mjs run",
+    "test:watch": "bun run rebuild:native:node && node ./node_modules/vitest/vitest.mjs",
+    "test:e2e": "bun run rebuild:native:electron && bun run build && playwright test",
+    "package": "bun run rebuild:native:electron && electron-vite build && electron-builder"
   },
   "dependencies": {
+    "@tanstack/svelte-virtual": "^3.13.23",
+    "better-sqlite3": "^12.8.0",
     "uuid": "^10.0.0"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.3",
     "@playwright/test": "^1.49.0",
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
     "@types/uuid": "^10.0.0",
     "autoprefixer": "^10.4.20",

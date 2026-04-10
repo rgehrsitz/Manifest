@@ -4,7 +4,8 @@
   import { onMount, tick } from 'svelte'
   import type { Project, ManifestNode, Snapshot, DiffEntry } from '../../shared/types'
   import { buildTree, getSiblingIndex, getAncestorIds } from './lib/tree'
-  import TreeNode from './components/TreeNode.svelte'
+  import { flattenTree } from './lib/tree-rows'
+  import Tree from './components/Tree.svelte'
   import DetailPane from './components/DetailPane.svelte'
   import MoveToDialog from './components/MoveToDialog.svelte'
   import SnapshotDialog from './components/SnapshotDialog.svelte'
@@ -33,8 +34,10 @@
   let addingChildError: string | null = $state(null)
   let addChildInput: HTMLInputElement | null = $state(null)
 
-  // Inline rename state (double-click on tree — delegates to DetailPane, but
-  // we also support F2 on the tree row)
+  // Rename request signal — bumping this counter triggers DetailPane.startEditName().
+  // Tree raises onRenameRequest → App increments → DetailPane $effect picks it up.
+  let renameRequestId = $state(0)
+
   let moveToNodeId: string | null = $state(null)
 
   // Snapshot/history UI state
@@ -57,6 +60,11 @@
   const tree = $derived.by(() => {
     if (!project) return null
     return buildTree(project.nodes)
+  })
+
+  const flatRows = $derived.by(() => {
+    if (!tree) return []
+    return flattenTree(tree, expandedIds)
   })
 
   const selectedNode = $derived.by(() => {
@@ -277,15 +285,9 @@
     else showToast(result.error.message)
   }
 
-  function handleRename(id: string) {
-    // Focus the detail pane name field — select the node first.
-    selectedId = id
-    // The DetailPane handles the actual rename interaction.
-    // We dispatch a custom event that DetailPane listens for.
-    setTimeout(() => {
-      const el = document.querySelector<HTMLElement>('[data-testid="node-name"]')
-      el?.click()
-    }, 50)
+  function handleRenameRequest() {
+    // Bump the signal counter — DetailPane's $effect will call startEditName().
+    renameRequestId += 1
   }
 
   async function handleNodeUpdate(
@@ -674,29 +676,26 @@
 
         <!-- Tree -->
         {:else}
-          <div class="flex-1 overflow-y-auto p-2" role="tree" aria-label="Project tree" data-testid="tree">
-            {#if tree}
-              <TreeNode
-                node={tree}
+          <div class="flex-1 flex flex-col overflow-hidden" role="tree" data-testid="tree">
+            <!-- Virtualised tree — takes all available space -->
+            <div class="flex-1 overflow-hidden">
+              <Tree
+                rows={flatRows}
                 {selectedId}
-                {expandedIds}
                 onSelect={handleSelect}
                 onToggle={handleToggle}
                 onAddChild={handleAddChild}
                 onMoveUp={handleMoveUp}
                 onMoveDown={handleMoveDown}
-                onRename={handleRename}
+                onRenameRequest={handleRenameRequest}
                 onDelete={handleDelete}
                 onMoveTo={handleMoveTo}
-                isFirst={true}
-                isLast={true}
-                isRoot={true}
               />
-            {/if}
+            </div>
 
-            <!-- Inline add-child input -->
+            <!-- Inline add-child input — rendered below the tree, always visible -->
             {#if addingChildTo}
-              <div class="mt-1 ml-8 flex flex-col gap-1">
+              <div class="border-t border-stone-200 px-3 py-2 flex flex-col gap-1 bg-stone-50 shrink-0">
                 <input
                   type="text"
                   bind:this={addChildInput}
@@ -736,6 +735,7 @@
         <DetailPane
           node={selectedNode}
           {project}
+          {renameRequestId}
           onUpdate={handleNodeUpdate}
           onError={showToast}
         />

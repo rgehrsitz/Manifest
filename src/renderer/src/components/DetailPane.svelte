@@ -8,6 +8,8 @@
   interface Props {
     node: ManifestNode | null
     project: Project
+    /** Bumped by App.svelte when the user presses F2 or "Rename" in the tree context menu. */
+    renameRequestId?: number
     onUpdate: (id: string, changes: {
       name?: string
       properties?: Record<string, string | number | boolean | null>
@@ -15,7 +17,17 @@
     onError: (msg: string) => void
   }
 
-  let { node, project, onUpdate, onError }: Props = $props()
+  let { node, project, renameRequestId = 0, onUpdate, onError }: Props = $props()
+
+  // When renameRequestId increments, start editing the name.
+  // Skip the initial value (0) so we don't auto-edit on mount.
+  let _prevRenameRequestId = 0
+  $effect(() => {
+    if (renameRequestId > 0 && renameRequestId !== _prevRenameRequestId) {
+      _prevRenameRequestId = renameRequestId
+      startEditName()
+    }
+  })
 
   // ─── Name editing ─────────────────────────────────────────────────────────
 

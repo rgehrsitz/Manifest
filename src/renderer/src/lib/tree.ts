@@ -5,22 +5,24 @@
 import type { ManifestNode } from '../../../shared/types'
 
 // A node decorated with its children, depth, and ancestry path — ready for rendering.
-export interface TreeNode {
-  node: ManifestNode
-  children: TreeNode[]
+// Generic over N so that ManifestNode subtypes (e.g. MergedTreeNode) can reuse
+// the same tree builder without a second DFS implementation.
+export interface TreeNode<N extends ManifestNode = ManifestNode> {
+  node: N
+  children: TreeNode<N>[]
   depth: number
   path: string[]  // ancestor names, root-first, not including self
 }
 
 // Build a full tree from the flat node array.
 // Returns the single root TreeNode (parentId === null).
-export function buildTree(nodes: ManifestNode[]): TreeNode | null {
+export function buildTree<N extends ManifestNode = ManifestNode>(nodes: N[]): TreeNode<N> | null {
   if (nodes.length === 0) return null
 
   const root = nodes.find(n => n.parentId === null)
   if (!root) return null
 
-  const byParent = new Map<string | null, ManifestNode[]>()
+  const byParent = new Map<string | null, N[]>()
   for (const node of nodes) {
     const key = node.parentId
     if (!byParent.has(key)) byParent.set(key, [])
@@ -32,7 +34,7 @@ export function buildTree(nodes: ManifestNode[]): TreeNode | null {
     children.sort((a, b) => a.order - b.order)
   }
 
-  function buildNode(node: ManifestNode, depth: number, path: string[]): TreeNode {
+  function buildNode(node: N, depth: number, path: string[]): TreeNode<N> {
     const children = (byParent.get(node.id) ?? []).map(child =>
       buildNode(child, depth + 1, [...path, node.name])
     )
