@@ -137,6 +137,10 @@ function registerIpcHandlers(): void {
     projectManager.snapshotCompare(a, b)
   )
 
+  ipcMain.handle(IPC.SNAPSHOT_LOAD_COMPARE, (_, { a, b }: { a: string; b: string }) =>
+    projectManager.snapshotLoadCompare(a, b)
+  )
+
   ipcMain.handle(IPC.SNAPSHOT_RESTORE, (_, { name }: { name: string }) =>
     projectManager.snapshotRestore(name)
   )

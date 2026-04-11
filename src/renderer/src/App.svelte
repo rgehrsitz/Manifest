@@ -2,13 +2,14 @@
 
 <script lang="ts">
   import { onMount, tick } from 'svelte'
-  import type { Project, ManifestNode, Snapshot, DiffEntry } from '../../shared/types'
+  import type { Project, ManifestNode, Snapshot } from '../../shared/types'
+  import type { MergedTree } from '../../shared/merged-tree'
   import { buildTree, getSiblingIndex, getAncestorIds } from './lib/tree'
   import { flattenTree } from './lib/tree-rows'
   import Tree from './components/Tree.svelte'
   import DetailPane from './components/DetailPane.svelte'
   import MoveToDialog from './components/MoveToDialog.svelte'
-  import SnapshotDialog from './components/SnapshotDialog.svelte'
+  import SnapshotsPanel from './components/SnapshotsPanel.svelte'
 
   type AppState = 'welcome' | 'creating' | 'loading' | 'open'
 
@@ -41,15 +42,19 @@
   let moveToNodeId: string | null = $state(null)
 
   // Snapshot/history UI state
-  let snapshotDialogOpen: boolean = $state(false)
+  let snapshotPanelOpen: boolean = $state(false)
   let snapshots: Snapshot[] = $state([])
-  let snapshotDiffEntries: DiffEntry[] = $state([])
-  let snapshotCompareLoaded: boolean = $state(false)
   let snapshotLoading: boolean = $state(false)
   let snapshotCreating: boolean = $state(false)
   let snapshotComparing: boolean = $state(false)
   let snapshotRestoringName: string | null = $state(null)
   let snapshotError: string | null = $state(null)
+
+  // Compare mode state — separate from normal expanded state so user's tree
+  // position is preserved when exiting compare mode.
+  let compareMode: boolean = $state(false)
+  let mergedTree: MergedTree | null = $state(null)
+  let compareExpanded: Set<string> = $state(new Set())
 
   // Non-blocking error toast
   let toastMsg:     string | null = $state(null)
@@ -63,6 +68,11 @@
   })
 
   const flatRows = $derived.by(() => {
+    if (compareMode && mergedTree) {
+      const mergedTreeBuilt = buildTree(mergedTree.nodes)
+      if (!mergedTreeBuilt) return []
+      return flattenTree(mergedTreeBuilt, compareExpanded, { compareMode: true })
+    }
     if (!tree) return []
     return flattenTree(tree, expandedIds)
   })
@@ -178,11 +188,12 @@
     newName = ''
     newPath = ''
     error = null
-    snapshotDialogOpen = false
+    snapshotPanelOpen = false
     snapshots = []
-    snapshotDiffEntries = []
-    snapshotCompareLoaded = false
     snapshotError = null
+    compareMode = false
+    mergedTree = null
+    compareExpanded = new Set()
   }
 
   // ─── Tree actions ─────────────────────────────────────────────────────────
@@ -193,10 +204,15 @@
   }
 
   function handleToggle(id: string) {
-    const next = new Set(expandedIds)
-    if (next.has(id)) next.delete(id)
-    else next.add(id)
-    expandedIds = next
+    if (compareMode) {
+      const next = new Set(compareExpanded)
+      if (next.has(id)) next.delete(id) else next.add(id)
+      compareExpanded = next
+    } else {
+      const next = new Set(expandedIds)
+      if (next.has(id)) next.delete(id) else next.add(id)
+      expandedIds = next
+    }
   }
 
   function handleAddChild(parentId: string) {
@@ -348,20 +364,23 @@
   }
 
   async function openSnapshots() {
-    snapshotDialogOpen = true
-    snapshotDiffEntries = []
-    snapshotCompareLoaded = false
+    snapshotPanelOpen = true
     await refreshSnapshots()
   }
 
   function closeSnapshots() {
-    snapshotDialogOpen = false
+    snapshotPanelOpen = false
     snapshotError = null
-    snapshotDiffEntries = []
-    snapshotCompareLoaded = false
     snapshotCreating = false
     snapshotComparing = false
     snapshotRestoringName = null
+    exitCompareMode()
+  }
+
+  function exitCompareMode() {
+    compareMode = false
+    mergedTree = null
+    compareExpanded = new Set()
   }
 
   async function handleSnapshotCreate(name: string) {
@@ -372,8 +391,6 @@
 
     if (result.ok) {
       await refreshSnapshots()
-      snapshotCompareLoaded = false
-      snapshotDiffEntries = []
       showToast(`Snapshot "${result.data.name}" created`)
     } else {
       snapshotError = result.error.message
@@ -383,14 +400,23 @@
   async function handleSnapshotCompare(from: string, to: string) {
     snapshotComparing = true
     snapshotError = null
-    const result = await window.api.snapshot.compare(from, to)
+    const result = await window.api.snapshot.loadCompare(from, to)
     snapshotComparing = false
 
     if (result.ok) {
-      snapshotCompareLoaded = true
-      snapshotDiffEntries = result.data
+      mergedTree = result.data
+      // Seed compareExpanded from normalExpanded ∪ ancestors of every changed node.
+      const changedIds = result.data.nodes
+        .filter(n => n.status !== 'unchanged')
+        .map(n => n.id)
+      const ancestors = new Set<string>()
+      for (const id of changedIds) {
+        for (const aid of getAncestorIds(id, result.data.nodes)) ancestors.add(aid)
+        ancestors.add(id)
+      }
+      compareExpanded = new Set([...expandedIds, ...ancestors])
+      compareMode = true
     } else {
-      snapshotCompareLoaded = false
       snapshotError = result.error.message
     }
   }
@@ -406,8 +432,7 @@
 
     if (result.ok) {
       await reloadCurrentProject()
-      snapshotDiffEntries = []
-      snapshotCompareLoaded = false
+      exitCompareMode()
       closeSnapshots()
       showToast(`Restored snapshot "${name}"`)
     } else {
@@ -441,24 +466,6 @@
   </div>
 {/if}
 
-<!-- ─── Snapshot dialog ───────────────────────────────────────────────────── -->
-{#if snapshotDialogOpen}
-  <SnapshotDialog
-    {snapshots}
-    diffEntries={snapshotDiffEntries}
-    compareLoaded={snapshotCompareLoaded}
-    loading={snapshotLoading}
-    creating={snapshotCreating}
-    comparing={snapshotComparing}
-    restoringName={snapshotRestoringName}
-    error={snapshotError}
-    onClose={closeSnapshots}
-    onRefresh={refreshSnapshots}
-    onCreate={handleSnapshotCreate}
-    onCompare={handleSnapshotCompare}
-    onRestore={handleSnapshotRestore}
-  />
-{/if}
 
 <!-- ─── Move-to dialog ────────────────────────────────────────────────────── -->
 {#if moveToNodeId && project}
@@ -740,6 +747,26 @@
           onError={showToast}
         />
       </div>
+
+      <!-- ── Snapshots panel (docked, non-blocking) ─────────────────────── -->
+      {#if snapshotPanelOpen}
+        <SnapshotsPanel
+          {snapshots}
+          {mergedTree}
+          compareLoaded={compareMode}
+          loading={snapshotLoading}
+          creating={snapshotCreating}
+          comparing={snapshotComparing}
+          restoringName={snapshotRestoringName}
+          error={snapshotError}
+          onClose={closeSnapshots}
+          onRefresh={refreshSnapshots}
+          onCreate={handleSnapshotCreate}
+          onCompare={handleSnapshotCompare}
+          onExitCompare={exitCompareMode}
+          onRestore={handleSnapshotRestore}
+        />
+      {/if}
 
     </div>
   </div>

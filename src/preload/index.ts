@@ -43,6 +43,8 @@ const api: ManifestAPI = {
       ipcRenderer.invoke(IPC.SNAPSHOT_LIST, {}),
     compare: (a, b) =>
       ipcRenderer.invoke(IPC.SNAPSHOT_COMPARE, { a, b }),
+    loadCompare: (a, b) =>
+      ipcRenderer.invoke(IPC.SNAPSHOT_LOAD_COMPARE, { a, b }),
     restore: (name) =>
       ipcRenderer.invoke(IPC.SNAPSHOT_RESTORE, { name }),
   },

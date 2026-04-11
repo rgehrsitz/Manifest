@@ -28,6 +28,8 @@ import { ok, err, ErrorCode } from '../shared/errors'
 import { migrate, getCurrentVersion } from '../shared/migration'
 import { validateNodeName, validatePropertyKey, validatePropertyValue, validateSnapshotName } from '../shared/validation'
 import { diffProjects } from '../shared/diff-engine'
+import { buildMergedTree } from '../shared/merged-tree'
+import type { MergedTree } from '../shared/merged-tree'
 import type { GitService } from './git-service'
 import type { Logger } from './logger'
 
@@ -466,32 +468,59 @@ export class ProjectManager {
     if (!this.currentProject?.path) {
       return err(ErrorCode.PROJECT_NOT_FOUND, 'No project is currently open')
     }
-
     try {
-      const [rawA, rawB] = await Promise.all([
-        this.git.readSnapshotManifest(this.currentProject.path, a),
-        this.git.readSnapshotManifest(this.currentProject.path, b),
-      ])
-
-      const projectA = this.parseManifestJson(rawA)
-      if (!projectA.ok) return projectA as Result<DiffEntry[]>
-
-      const projectB = this.parseManifestJson(rawB)
-      if (!projectB.ok) return projectB as Result<DiffEntry[]>
-
-      const diffs = diffProjects(projectA.data, projectB.data)
+      const loaded = await this.loadAndDiff(a, b)
+      if (!loaded.ok) return loaded as Result<DiffEntry[]>
       this.logger.info('snapshot compare complete', {
         path: this.currentProject.path,
         from: a,
         to: b,
-        diffCount: diffs.length,
+        diffCount: loaded.data.diffs.length,
       })
-      return ok(diffs)
+      return ok(loaded.data.diffs)
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
       this.logger.error('snapshot compare failed', { path: this.currentProject.path, from: a, to: b, error: msg })
       return err(ErrorCode.GIT_COMMIT_FAILED, `Failed to compare snapshots: ${msg}`)
     }
+  }
+
+  async snapshotLoadCompare(a: string, b: string): Promise<Result<MergedTree>> {
+    if (!this.currentProject?.path) {
+      return err(ErrorCode.PROJECT_NOT_FOUND, 'No project is currently open')
+    }
+    try {
+      const loaded = await this.loadAndDiff(a, b)
+      if (!loaded.ok) return loaded as Result<MergedTree>
+      const { projectA, projectB, diffs } = loaded.data
+      const merged = buildMergedTree(projectA, projectB, diffs, a, b)
+      this.logger.info('snapshot loadCompare complete', {
+        path: this.currentProject.path,
+        from: a,
+        to: b,
+        nodeCount: merged.nodes.length,
+      })
+      return ok(merged)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      this.logger.error('snapshot loadCompare failed', { path: this.currentProject.path, from: a, to: b, error: msg })
+      return err(ErrorCode.GIT_COMMIT_FAILED, `Failed to load compare: ${msg}`)
+    }
+  }
+
+  /** Shared inner logic: read both snapshots from git and diff them. */
+  private async loadAndDiff(a: string, b: string): Promise<Result<{ projectA: Project; projectB: Project; diffs: DiffEntry[] }>> {
+    const path = this.currentProject!.path!
+    const [rawA, rawB] = await Promise.all([
+      this.git.readSnapshotManifest(path, a),
+      this.git.readSnapshotManifest(path, b),
+    ])
+    const projectA = this.parseManifestJson(rawA)
+    if (!projectA.ok) return projectA as Result<{ projectA: Project; projectB: Project; diffs: DiffEntry[] }>
+    const projectB = this.parseManifestJson(rawB)
+    if (!projectB.ok) return projectB as Result<{ projectA: Project; projectB: Project; diffs: DiffEntry[] }>
+    const diffs = diffProjects(projectA.data, projectB.data)
+    return ok({ projectA: projectA.data, projectB: projectB.data, diffs })
   }
 
   async snapshotRestore(name: string): Promise<Result<void>> {

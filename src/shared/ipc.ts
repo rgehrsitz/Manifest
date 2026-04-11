@@ -15,6 +15,7 @@ import type {
   GitStatus,
   Result,
 } from './types'
+import type { MergedTree } from './merged-tree'
 
 // Channel name constants — use these everywhere, never raw strings.
 export const IPC = {
@@ -30,8 +31,9 @@ export const IPC = {
   SEARCH_QUERY:        'search:query',
   SNAPSHOT_CREATE:     'snapshot:create',
   SNAPSHOT_LIST:       'snapshot:list',
-  SNAPSHOT_COMPARE:    'snapshot:compare',
-  SNAPSHOT_RESTORE:    'snapshot:restore',
+  SNAPSHOT_COMPARE:      'snapshot:compare',
+  SNAPSHOT_LOAD_COMPARE: 'snapshot:loadCompare',
+  SNAPSHOT_RESTORE:      'snapshot:restore',
   GIT_CHECK:           'git:check',
   // UI utility channels (not domain operations)
   DIALOG_OPEN_FOLDER:  'dialog:openFolder',
@@ -71,6 +73,8 @@ export interface ManifestAPI {
     create(name: string): Promise<Result<Snapshot>>
     list(): Promise<Result<Snapshot[]>>
     compare(a: string, b: string): Promise<Result<DiffEntry[]>>
+    /** Full compare: returns merged tree with per-node diffs embedded. */
+    loadCompare(a: string, b: string): Promise<Result<MergedTree>>
     restore(name: string): Promise<Result<void>>
   }
   git: {

@@ -1,0 +1,373 @@
+<svelte:options runes />
+
+<script lang="ts">
+  import type { Snapshot } from '../../../shared/types'
+  import type { MergedTree } from '../../../shared/merged-tree'
+  import {
+    severityBadgeClass,
+    severityClass,
+    formatChangeType,
+    formatPath,
+    formatValue,
+    describePropertyChange,
+  } from '../lib/diff-format'
+
+  interface Props {
+    snapshots: Snapshot[]
+    mergedTree: MergedTree | null
+    compareLoaded: boolean
+    loading: boolean
+    creating: boolean
+    comparing: boolean
+    restoringName: string | null
+    error: string | null
+    onClose: () => void
+    onRefresh: () => Promise<void>
+    onCreate: (name: string) => Promise<void>
+    onCompare: (from: string, to: string) => Promise<void>
+    onExitCompare: () => void
+    onRestore: (name: string) => Promise<void>
+  }
+
+  let {
+    snapshots,
+    mergedTree,
+    compareLoaded,
+    loading,
+    creating,
+    comparing,
+    restoringName,
+    error,
+    onClose,
+    onRefresh,
+    onCreate,
+    onCompare,
+    onExitCompare,
+    onRestore,
+  }: Props = $props()
+
+  let snapshotName = $state('')
+  let compareFrom = $state('')
+  let compareTo = $state('')
+
+  const severityOrder = ['High', 'Medium', 'Low'] as const
+
+  // Flatten all diffs from the merged tree nodes.
+  const allDiffs = $derived(
+    mergedTree ? mergedTree.nodes.flatMap(n => n.diffs) : []
+  )
+
+  const severitySummary = $derived(
+    severityOrder
+      .map(severity => ({
+        severity,
+        count: allDiffs.filter(e => e.severity === severity).length,
+      }))
+      .filter(e => e.count > 0)
+  )
+
+  const changeSummary = $derived(
+    Array.from(new Set(allDiffs.map(e => e.changeType))).map(changeType => ({
+      changeType,
+      count: allDiffs.filter(e => e.changeType === changeType).length,
+    }))
+  )
+
+  const groupedDiffs = $derived(
+    severityOrder
+      .map(severity => ({
+        severity,
+        entries: allDiffs.filter(e => e.severity === severity),
+      }))
+      .filter(g => g.entries.length > 0)
+  )
+
+  $effect(() => {
+    const names = snapshots.map(s => s.name)
+    if (snapshots.length === 0) { compareFrom = ''; compareTo = ''; return }
+    if (!compareTo || !names.includes(compareTo)) compareTo = snapshots[0].name
+    if (!compareFrom || !names.includes(compareFrom) || compareFrom === compareTo) {
+      compareFrom = snapshots[1]?.name ?? snapshots[0].name
+    }
+  })
+
+  async function submitCreate() {
+    const trimmed = snapshotName.trim()
+    if (!trimmed || creating) return
+    await onCreate(trimmed)
+    snapshotName = ''
+  }
+
+  async function submitCompare() {
+    if (!compareFrom || !compareTo || compareFrom === compareTo || comparing) return
+    await onCompare(compareFrom, compareTo)
+  }
+
+  function snapshotTagClass(name: string): string {
+    if (name === compareFrom) return 'bg-stone-800 text-white'
+    if (name === compareTo)   return 'bg-sky-100 text-sky-700'
+    return 'bg-stone-100 text-stone-500'
+  }
+</script>
+
+<!--
+  Docked snapshots panel — slides in from the right as a third column.
+  Does NOT block the tree or detail pane. The user can click nodes, edit
+  properties, and view diffs simultaneously.
+-->
+<div
+  class="flex flex-col h-full border-l border-stone-200 bg-white w-80 shrink-0 overflow-hidden"
+  data-testid="snapshots-panel"
+>
+  <!-- Header -->
+  <div class="flex items-center justify-between px-4 py-3 border-b border-stone-200 shrink-0">
+    <div>
+      <h2 class="text-sm font-semibold text-stone-900">Snapshots</h2>
+      <p class="text-xs text-stone-400">Named checkpoints and semantic diffs.</p>
+    </div>
+    <div class="flex items-center gap-1">
+      <button
+        onclick={onRefresh}
+        class="rounded-lg border border-stone-200 px-2 py-1 text-xs text-stone-600
+               transition-colors hover:bg-stone-50 cursor-default"
+        data-testid="refresh-snapshots-btn"
+      >Refresh</button>
+      <button
+        onclick={onClose}
+        aria-label="Close snapshots"
+        class="rounded-lg px-2 py-1 text-stone-400 transition-colors hover:bg-stone-100
+               hover:text-stone-700 cursor-default text-sm"
+      >✕</button>
+    </div>
+  </div>
+
+  <!-- Scrollable body -->
+  <div class="flex-1 overflow-y-auto overscroll-contain">
+
+    <!-- Create snapshot -->
+    <section class="px-4 py-3 border-b border-stone-100 space-y-2">
+      <h3 class="text-[10px] font-semibold uppercase tracking-wide text-stone-500">Create Snapshot</h3>
+      <input
+        type="text"
+        bind:value={snapshotName}
+        placeholder="phase-3-baseline"
+        class="w-full rounded-lg border border-stone-200 bg-stone-50 px-3 py-1.5 text-sm
+               text-stone-800 placeholder-stone-300 focus:outline-none focus:ring-1
+               focus:ring-stone-400 selectable"
+        data-testid="snapshot-name-input"
+        onkeydown={(e) => { if (e.key === 'Enter') submitCreate() }}
+      />
+      <button
+        onclick={submitCreate}
+        disabled={!snapshotName.trim() || creating}
+        class="w-full rounded-lg bg-stone-800 px-3 py-1.5 text-xs font-medium text-white
+               transition-colors hover:bg-stone-700 disabled:bg-stone-300 cursor-default
+               disabled:cursor-not-allowed"
+        data-testid="create-snapshot-btn"
+      >
+        {creating ? 'Creating…' : 'Create Snapshot'}
+      </button>
+    </section>
+
+    <!-- Saved snapshots list -->
+    <section class="px-4 py-3 border-b border-stone-100 space-y-2">
+      <h3 class="text-[10px] font-semibold uppercase tracking-wide text-stone-500">
+        Saved Snapshots {#if !loading}({snapshots.length}){/if}
+      </h3>
+
+      {#if error}
+        <div class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700"
+             data-testid="snapshot-error">
+          {error}
+        </div>
+      {/if}
+
+      {#if loading}
+        <p class="text-xs text-stone-400">Loading…</p>
+      {:else if snapshots.length === 0}
+        <div class="rounded-lg border border-dashed border-stone-200 bg-stone-50 px-3 py-4
+                    text-xs text-stone-400 text-center">
+          No snapshots yet.
+        </div>
+      {:else}
+        <div class="space-y-1.5">
+          {#each snapshots as snapshot (snapshot.name)}
+            <div
+              class="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2.5"
+              data-testid="snapshot-row"
+            >
+              <div class="flex items-start justify-between gap-2">
+                <div class="min-w-0">
+                  <div class="flex items-center gap-1.5">
+                    <p class="truncate text-xs font-medium text-stone-800">{snapshot.name}</p>
+                    {#if snapshots.length >= 2}
+                      <span class={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase
+                                   tracking-wide ${snapshotTagClass(snapshot.name)}`}>
+                        {snapshot.name === compareFrom ? 'From' : snapshot.name === compareTo ? 'To' : ''}
+                      </span>
+                    {/if}
+                  </div>
+                  <p class="mt-0.5 text-[10px] text-stone-400">
+                    {new Date(snapshot.createdAt).toLocaleString()}
+                  </p>
+                </div>
+                <button
+                  onclick={() => onRestore(snapshot.name)}
+                  disabled={restoringName === snapshot.name}
+                  class="shrink-0 rounded border border-stone-200 bg-white px-2 py-1 text-[10px]
+                         font-medium text-stone-600 hover:bg-stone-50 disabled:text-stone-400
+                         cursor-default"
+                  data-testid="restore-snapshot-btn"
+                >
+                  {restoringName === snapshot.name ? '…' : 'Restore'}
+                </button>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </section>
+
+    <!-- Compare controls -->
+    <section class="px-4 py-3 border-b border-stone-100 space-y-2">
+      <h3 class="text-[10px] font-semibold uppercase tracking-wide text-stone-500">Compare</h3>
+      <div class="flex gap-2">
+        <label class="flex-1 flex flex-col gap-0.5 text-[10px] text-stone-500">
+          From
+          <select
+            bind:value={compareFrom}
+            class="rounded border border-stone-200 bg-stone-50 px-2 py-1.5 text-xs
+                   text-stone-700 focus:outline-none focus:ring-1 focus:ring-stone-400"
+            data-testid="compare-from-select"
+          >
+            {#each snapshots as snapshot (snapshot.name)}
+              <option value={snapshot.name}>{snapshot.name}</option>
+            {/each}
+          </select>
+        </label>
+        <label class="flex-1 flex flex-col gap-0.5 text-[10px] text-stone-500">
+          To
+          <select
+            bind:value={compareTo}
+            class="rounded border border-stone-200 bg-stone-50 px-2 py-1.5 text-xs
+                   text-stone-700 focus:outline-none focus:ring-1 focus:ring-stone-400"
+            data-testid="compare-to-select"
+          >
+            {#each snapshots as snapshot (snapshot.name)}
+              <option value={snapshot.name}>{snapshot.name}</option>
+            {/each}
+          </select>
+        </label>
+      </div>
+      <button
+        onclick={submitCompare}
+        disabled={snapshots.length < 2 || !compareFrom || !compareTo || compareFrom === compareTo || comparing}
+        class="w-full rounded-lg bg-stone-800 px-3 py-1.5 text-xs font-medium text-white
+               transition-colors hover:bg-stone-700 disabled:bg-stone-300 cursor-default
+               disabled:cursor-not-allowed"
+        data-testid="compare-snapshots-btn"
+      >
+        {comparing ? 'Comparing…' : 'Compare'}
+      </button>
+    </section>
+
+    <!-- Diff results -->
+    {#if compareLoaded}
+      <section class="px-4 py-3 space-y-3" data-testid="snapshot-diff-list">
+        <!-- Summary bar -->
+        <div class="flex items-center justify-between">
+          <p class="text-xs font-medium text-stone-700">
+            {allDiffs.length} {allDiffs.length === 1 ? 'change' : 'changes'}
+            {#if mergedTree}
+              — {mergedTree.fromSnapshot} → {mergedTree.toSnapshot}
+            {/if}
+          </p>
+          {#if compareLoaded}
+            <button
+              onclick={onExitCompare}
+              class="text-[10px] text-stone-400 hover:text-stone-600 cursor-default underline"
+            >Exit compare</button>
+          {/if}
+        </div>
+
+        {#if allDiffs.length === 0}
+          <div class="rounded-xl border border-dashed border-emerald-200 bg-emerald-50/60
+                      px-4 py-5 text-center">
+            <p class="text-xs font-medium text-emerald-700">No changes</p>
+            <p class="text-xs text-emerald-600 mt-0.5">These snapshots describe the same state.</p>
+          </div>
+        {:else}
+          <!-- Severity chips -->
+          <div class="flex flex-wrap gap-1.5">
+            {#each severitySummary as item (item.severity)}
+              <span class={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase
+                            tracking-wide ${severityBadgeClass(item.severity)}`}>
+                {item.count} {item.severity}
+              </span>
+            {/each}
+          </div>
+          <!-- Change type chips -->
+          <div class="flex flex-wrap gap-1">
+            {#each changeSummary as item (item.changeType)}
+              <span class="rounded-full bg-stone-100 px-2 py-0.5 text-[10px] text-stone-600">
+                {item.count} {formatChangeType(item.changeType)}
+              </span>
+            {/each}
+          </div>
+
+          <!-- Grouped diff rows -->
+          {#each groupedDiffs as group (group.severity)}
+            <div class="space-y-1.5">
+              <h4 class="text-[10px] font-semibold uppercase tracking-wide text-stone-400">
+                {group.severity} Priority
+              </h4>
+              {#each group.entries as diff, idx (`${diff.nodeId}-${diff.changeType}-${idx}`)}
+                <div
+                  class={`rounded-xl border px-3 py-3 shadow-sm ${severityClass(diff.severity)}`}
+                  data-testid="snapshot-diff-row"
+                >
+                  <div class="flex items-start justify-between gap-2">
+                    <div class="min-w-0">
+                      <p class="text-xs font-medium text-stone-800">{formatChangeType(diff.changeType)}</p>
+                      <p class="mt-0.5 text-xs text-stone-600 truncate">
+                        {formatPath(diff.context.path, diff.context.nodeName)}
+                      </p>
+                    </div>
+                    <span class={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold
+                                  uppercase tracking-wide ${severityBadgeClass(diff.severity)}`}>
+                      {diff.severity}
+                    </span>
+                  </div>
+
+                  {#if diff.changeType === 'renamed' || diff.changeType === 'moved' || diff.changeType === 'order-changed'}
+                    <div class="mt-2 grid grid-cols-2 gap-1.5">
+                      <div class="rounded bg-white/80 px-2 py-1.5 ring-1 ring-black/5">
+                        <p class="text-[9px] font-semibold uppercase tracking-wide text-stone-400">Before</p>
+                        <p class="mt-0.5 text-xs text-stone-700">{formatValue(diff.oldValue)}</p>
+                      </div>
+                      <div class="rounded bg-white/80 px-2 py-1.5 ring-1 ring-black/5">
+                        <p class="text-[9px] font-semibold uppercase tracking-wide text-stone-400">After</p>
+                        <p class="mt-0.5 text-xs text-stone-700">{formatValue(diff.newValue)}</p>
+                      </div>
+                    </div>
+                  {:else if diff.changeType === 'property-changed'}
+                    <div class="mt-2 rounded bg-white/80 px-2 py-2 ring-1 ring-black/5">
+                      <p class="text-[9px] font-semibold uppercase tracking-wide text-stone-400">Changes</p>
+                      <div class="mt-1 flex flex-wrap gap-1">
+                        {#each describePropertyChange(diff) as line (line)}
+                          <span class="rounded-full bg-stone-100 px-2 py-0.5 text-[10px] text-stone-600">
+                            {line}
+                          </span>
+                        {/each}
+                      </div>
+                    </div>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          {/each}
+        {/if}
+      </section>
+    {/if}
+  </div>
+</div>

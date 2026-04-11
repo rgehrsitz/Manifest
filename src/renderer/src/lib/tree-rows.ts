@@ -7,6 +7,7 @@
 // here so PR #2 can light them up without changing the discriminant shape.
 
 import type { ManifestNode } from '../../../shared/types'
+import type { MergedTreeNode, MergedStatus } from '../../../shared/merged-tree'
 import type { TreeNode } from './tree'
 
 // ─── Row variants ─────────────────────────────────────────────────────────────
@@ -81,13 +82,7 @@ export interface RowBadge {
 // ─── Flattener ───────────────────────────────────────────────────────────────
 
 export interface FlattenOptions {
-  /**
-   * When true, the flattener emits 'decorated' and 'ghost' rows using the
-   * merged-tree data attached to each node.
-   *
-   * @default false
-   * @throws {Error} NOT_IMPLEMENTED until PR #2
-   */
+  /** When true, nodes are treated as MergedTreeNode and emit decorated/ghost rows. */
   compareMode?: boolean
 }
 
@@ -96,21 +91,79 @@ export interface FlattenOptions {
  * Collapsed subtrees are skipped entirely, so this scales to 10k+ node trees
  * without paying for invisible rows.
  *
- * The returned array is the exact input to the virtualizer.
+ * In compareMode the tree must be built from MergedTreeNode[]; nodes with
+ * status 'removed' or 'moved-from' emit GhostRows (always leaves).
+ * All other nodes emit DecoratedRows (or NormalRows for 'unchanged').
  */
 export function flattenTree(
   root: TreeNode,
   expandedIds: Set<string>,
   options: FlattenOptions = {}
 ): VisibleRow[] {
-  if (options.compareMode) {
-    throw new Error(
-      'NOT_IMPLEMENTED: compareMode will be enabled in PR #2 (inline compare mode)'
-    )
-  }
-
   const result: VisibleRow[] = []
 
+  if (options.compareMode) {
+    function walkCompare(treeNode: TreeNode, siblingIndex: number, siblingCount: number): void {
+      const merged = treeNode.node as unknown as MergedTreeNode
+      const isGhost = merged.status === 'removed' || merged.status === 'moved-from'
+
+      if (isGhost) {
+        // Ghost rows are always leaves — never expand.
+        result.push({
+          kind: 'ghost',
+          id: merged.id,                   // already `ghost:${originalId}`
+          depth: treeNode.depth,
+          node: treeNode.node,
+          hasChildren: false,
+          expanded: false,
+          status: merged.status as 'removed' | 'moved-from',
+        })
+        return // never recurse into ghost children
+      }
+
+      const hasChildren = treeNode.children.length > 0
+      const isExpanded = expandedIds.has(merged.id)
+      const rowStatus = mergedStatusToRowStatus(merged.status)
+
+      if (merged.status === 'unchanged') {
+        result.push({
+          kind: 'normal',
+          id: merged.id,
+          depth: treeNode.depth,
+          node: treeNode.node,
+          hasChildren,
+          childCount: treeNode.children.length,
+          expanded: isExpanded,
+          isFirst: siblingIndex === 0,
+          isLast: siblingIndex === siblingCount - 1,
+        })
+      } else {
+        result.push({
+          kind: 'decorated',
+          id: merged.id,
+          depth: treeNode.depth,
+          node: treeNode.node,
+          hasChildren,
+          childCount: treeNode.children.length,
+          expanded: isExpanded,
+          isFirst: siblingIndex === 0,
+          isLast: siblingIndex === siblingCount - 1,
+          status: rowStatus,
+          badges: buildBadges(merged),
+        })
+      }
+
+      if (hasChildren && isExpanded) {
+        for (let i = 0; i < treeNode.children.length; i++) {
+          walkCompare(treeNode.children[i], i, treeNode.children.length)
+        }
+      }
+    }
+    walkCompare(root, 0, 1)
+    return result
+  }
+
+  // Normal mode — no compare data.
   function walk(treeNode: TreeNode, siblingIndex: number, siblingCount: number): void {
     const hasChildren = treeNode.children.length > 0
     const isExpanded = expandedIds.has(treeNode.node.id)
@@ -134,8 +187,46 @@ export function flattenTree(
     }
   }
 
-  // Root is always alone at the top level.
   walk(root, 0, 1)
-
   return result
+}
+
+// ─── Internal helpers ─────────────────────────────────────────────────────────
+
+function mergedStatusToRowStatus(status: MergedStatus): RowStatus {
+  switch (status) {
+    case 'added':            return 'added'
+    case 'moved':            return 'moved-to'
+    case 'renamed':          return 'renamed'
+    case 'property-changed': return 'property-changed'
+    case 'order-changed':    return 'order-changed'
+    case 'mixed':            return 'mixed'
+    default:                 return 'unchanged'
+  }
+}
+
+const BADGE_LABELS: Partial<Record<RowStatus, string>> = {
+  added:            'Added',
+  'moved-to':       'Moved',
+  renamed:          'Renamed',
+  'property-changed': 'Changed',
+  'order-changed':  'Reordered',
+  mixed:            'Modified',
+}
+
+const BADGE_SEVERITY: Partial<Record<RowStatus, 'High' | 'Medium' | 'Low'>> = {
+  added:              'High',
+  'moved-to':         'High',
+  renamed:            'Medium',
+  'property-changed': 'Medium',
+  'order-changed':    'Low',
+  mixed:              'High',
+}
+
+function buildBadges(merged: MergedTreeNode): RowBadge[] {
+  const status = mergedStatusToRowStatus(merged.status)
+  const label = BADGE_LABELS[status]
+  const severity = BADGE_SEVERITY[status] ?? 'Medium'
+  if (!label) return []
+  return [{ kind: status, label, severity }]
 }
