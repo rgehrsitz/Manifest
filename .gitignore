@@ -6,3 +6,10 @@ dist/
 *.tsbuildinfo
 playwright-report/
 .playwright-artifacts/
+
+# Generated project fixtures (created by scripts/generate-project.mjs)
+manifest-large-fixture/
+tmp/
+
+# SQLite search index (auto-created per project, not source-controlled)
+**/.manifest/

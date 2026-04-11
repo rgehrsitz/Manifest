@@ -12,6 +12,15 @@ const noopLogger = {
   debug: () => {},
 }
 
+// No-op search stub — better-sqlite3 is not available in Bun's test runner.
+const noopSearch = {
+  rebuild:     () => {},
+  close:       () => {},
+  upsertNode:  () => {},
+  deleteNodes: () => {},
+  query:       () => [],
+}
+
 let tmpDir: string
 let manager: ProjectManager
 let projectDir: string
@@ -21,7 +30,7 @@ beforeEach(async () => {
   mkdirSync(tmpDir, { recursive: true })
 
   const git = new GitService(noopLogger as any)
-  manager = new ProjectManager(git, noopLogger as any)
+  manager = new ProjectManager(git, noopLogger as any, noopSearch as any)
 
   const created = await manager.createProject('Snapshot Project', tmpDir)
   expect(created.ok).toBe(true)
@@ -30,8 +39,9 @@ beforeEach(async () => {
   projectDir = created.data.path!
 })
 
-afterEach(() => {
+afterEach(async () => {
   manager.cancelAutosave()
+  await manager.flushAndClose()
   rmSync(tmpDir, { recursive: true, force: true })
 })
 

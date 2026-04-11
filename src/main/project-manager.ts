@@ -32,6 +32,7 @@ import { buildMergedTree } from '../shared/merged-tree'
 import type { MergedTree } from '../shared/merged-tree'
 import type { GitService } from './git-service'
 import type { Logger } from './logger'
+import { SearchIndexService } from './search-index'
 
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024  // 50 MB
 const AUTOSAVE_DEBOUNCE_MS = 2500              // 2.5 seconds
@@ -42,7 +43,8 @@ export class ProjectManager {
 
   constructor(
     private readonly git: GitService,
-    private readonly logger: Logger
+    private readonly logger: Logger,
+    private readonly search = new SearchIndexService()
   ) {}
 
   // ─── Lifecycle ──────────────────────────────────────────────────────────────
@@ -83,6 +85,8 @@ export class ProjectManager {
       await this.writeManifest(project)
       await this.git.initRepo(projectPath)
       await this.git.initialCommit(projectPath)
+      const searchResult = this.rebuildSearchIndex(project, 'initialize')
+      if (!searchResult.ok) return searchResult as Result<Project>
 
       this.currentProject = project
       this.logger.info('project created', { name, path: projectPath })
@@ -115,6 +119,7 @@ export class ProjectManager {
         return err(ErrorCode.VALIDATION_FAILED, 'Project file is not valid JSON')
       }
 
+      const originalVersion = data.version
       try {
         data = migrate(data)
       } catch (e: unknown) {
@@ -128,9 +133,14 @@ export class ProjectManager {
       const project: Project = { ...data, path: projectPath }
 
       // If migration bumped the version, write the migrated file back immediately.
-      if (data.version !== JSON.parse(raw).version) {
+      if (data.version !== originalVersion) {
         await this.writeManifest(project)
-        this.logger.info('project migrated', { from: JSON.parse(raw).version, to: data.version })
+        this.logger.info('project migrated', { from: originalVersion, to: data.version })
+      }
+
+      const searchResult = this.rebuildSearchIndex(project, 'rebuild')
+      if (!searchResult.ok) {
+        return searchResult as Result<Project>
       }
 
       this.currentProject = project
@@ -158,6 +168,7 @@ export class ProjectManager {
     this.cancelAutosave()
     const result = await this.saveProject()
     this.currentProject = null
+    this.search.close()
     return result
   }
 
@@ -199,14 +210,15 @@ export class ProjectManager {
       modified: now,
     }
 
-    this.currentProject = {
+    const nextProject: Project = {
       ...this.currentProject,
       modified: now,
       nodes: [...this.currentProject.nodes, newNode],
     }
 
-    this.scheduleAutosave()
-    return ok(this.currentProject)
+    return this.commitProjectMutation(nextProject, () => {
+      this.search.upsertNode(nextProject.path!, newNode)
+    })
   }
 
   // Update a node's name and/or properties.
@@ -255,14 +267,15 @@ export class ProjectManager {
       modified: now,
     }
 
-    this.currentProject = {
+    const nextProject: Project = {
       ...this.currentProject,
       modified: now,
       nodes: this.currentProject.nodes.map(n => n.id === id ? updatedNode : n),
     }
 
-    this.scheduleAutosave()
-    return ok(this.currentProject)
+    return this.commitProjectMutation(nextProject, () => {
+      this.search.upsertNode(nextProject.path!, updatedNode)
+    })
   }
 
   // Delete a node and all its descendants.
@@ -285,14 +298,15 @@ export class ProjectManager {
     const remaining = this.currentProject.nodes.filter(n => !toDelete.has(n.id))
     const reordered = this.renumberSiblings(remaining, node.parentId)
 
-    this.currentProject = {
+    const nextProject: Project = {
       ...this.currentProject,
       modified: now,
       nodes: reordered,
     }
 
-    this.scheduleAutosave()
-    return ok(this.currentProject)
+    return this.commitProjectMutation(nextProject, () => {
+      this.search.deleteNodes(nextProject.path!, Array.from(toDelete))
+    })
   }
 
   // Move a node to a new parent (reparent) or reorder within current parent.
@@ -320,6 +334,7 @@ export class ProjectManager {
 
     const isReparent = node.parentId !== newParentId
     const now = new Date().toISOString()
+    let nextProject: Project
 
     if (isReparent) {
       // Sibling name check in new parent.
@@ -343,7 +358,7 @@ export class ProjectManager {
         modified: now,
       }
 
-      this.currentProject = {
+      nextProject = {
         ...this.currentProject,
         modified: now,
         nodes: [...reorderedOld, movedNode],
@@ -367,7 +382,7 @@ export class ProjectManager {
       // Assign clean 0..n-1 orders.
       const reordered = without.map((n, i) => ({ ...n, order: i, modified: now }))
 
-      this.currentProject = {
+      nextProject = {
         ...this.currentProject,
         modified: now,
         nodes: [
@@ -377,8 +392,10 @@ export class ProjectManager {
       }
     }
 
-    this.scheduleAutosave()
-    return ok(this.currentProject)
+    const movedNode = nextProject.nodes.find(n => n.id === id)!
+    return this.commitProjectMutation(nextProject, () => {
+      this.search.upsertNode(nextProject.path!, movedNode)
+    })
   }
 
   // ─── Search ─────────────────────────────────────────────────────────────────
@@ -392,29 +409,63 @@ export class ProjectManager {
     if (!q) return ok([])
 
     const nodeMap = new Map(this.currentProject.nodes.map(n => [n.id, n]))
+    const project = this.currentProject
 
-    const results: SearchResult[] = this.currentProject.nodes
-      .filter(n => {
-        const nameMatch = n.name.toLowerCase().includes(q)
-        const propMatch = Object.values(n.properties).some(v =>
-          String(v).toLowerCase().includes(q)
+    try {
+      const results = this.search.query(project.path!, q)
+        .reduce<SearchResult[]>((acc, hit) => {
+          const node = nodeMap.get(hit.nodeId)
+          if (!node) return acc
+          const parent = node.parentId ? nodeMap.get(node.parentId) : null
+          acc.push({
+            nodeId: node.id,
+            nodeName: node.name,
+            parentName: parent?.name ?? null,
+            matchField: hit.matchField,
+            snippet: hit.snippet || node.name,
+          })
+          return acc
+        }, [])
+
+      return ok(results)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      this.logger.warn('search query failed; attempting index rebuild', {
+        path: project.path,
+        error: msg,
+      })
+
+      const rebuildResult = this.rebuildSearchIndex(project, 'rebuild')
+      if (!rebuildResult.ok) {
+        return err(
+          ErrorCode.SQLITE_CAPABILITY,
+          `Search is unavailable: ${rebuildResult.error.message}`
         )
-        return nameMatch || propMatch
-      })
-      .slice(0, 50)
-      .map(n => {
-        const parent = n.parentId ? nodeMap.get(n.parentId) : null
-        const matchField = n.name.toLowerCase().includes(q) ? 'name' : 'property'
-        return {
-          nodeId: n.id,
-          nodeName: n.name,
-          parentName: parent?.name ?? null,
-          matchField,
-          snippet: n.name,
-        }
-      })
+      }
 
-    return ok(results)
+      try {
+        const retried = this.search.query(project.path!, q)
+          .reduce<SearchResult[]>((acc, hit) => {
+            const node = nodeMap.get(hit.nodeId)
+            if (!node) return acc
+            const parent = node.parentId ? nodeMap.get(node.parentId) : null
+            acc.push({
+              nodeId: node.id,
+              nodeName: node.name,
+              parentName: parent?.name ?? null,
+              matchField: hit.matchField,
+              snippet: hit.snippet || node.name,
+            })
+            return acc
+          }, [])
+
+        return ok(retried)
+      } catch (retryError: unknown) {
+        const retryMsg = retryError instanceof Error ? retryError.message : String(retryError)
+        this.logger.error('search query failed after rebuild', { path: project.path, error: retryMsg })
+        return err(ErrorCode.SQLITE_CAPABILITY, `Search is unavailable: ${retryMsg}`)
+      }
+    }
   }
 
   // ─── Snapshots / history ───────────────────────────────────────────────────
@@ -536,14 +587,22 @@ export class ProjectManager {
       if (!restored.ok) return restored as Result<void>
 
       const previousProject = this.currentProject
-      this.currentProject = {
+      const restoredProject: Project = {
         ...restored.data,
         path: previousProject.path,
       }
 
+      const searchResult = this.rebuildSearchIndex(restoredProject, 'rebuild')
+      if (!searchResult.ok) {
+        return searchResult
+      }
+
+      this.currentProject = restoredProject
+
       const writeResult = await this.writeManifest(this.currentProject, { touchModified: false })
       if (!writeResult.ok) {
         this.currentProject = previousProject
+        this.restoreSearchIndex(previousProject)
         return writeResult
       }
 
@@ -604,6 +663,55 @@ export class ProjectManager {
     if (!validation.ok) return validation as Result<Project>
 
     return ok(data as Project)
+  }
+
+  private commitProjectMutation(
+    nextProject: Project,
+    syncSearch: () => void
+  ): Result<Project> {
+    const previousProject = this.currentProject
+    if (!previousProject?.path) {
+      return err(ErrorCode.PROJECT_NOT_FOUND, 'No project open')
+    }
+
+    try {
+      syncSearch()
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      this.restoreSearchIndex(previousProject)
+      this.logger.error('search index sync failed', { path: previousProject.path, error: msg })
+      return err(ErrorCode.SQLITE_CAPABILITY, `Failed to update search index: ${msg}`)
+    }
+
+    this.currentProject = nextProject
+    this.scheduleAutosave()
+    return ok(nextProject)
+  }
+
+  private rebuildSearchIndex(project: Project, action: 'initialize' | 'rebuild'): Result<void> {
+    try {
+      this.search.rebuild(project)
+      return ok(undefined as void)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      this.logger.error(`search index ${action} failed`, { path: project.path, error: msg })
+      return err(
+        ErrorCode.SQLITE_CAPABILITY,
+        `Failed to ${action} search index: ${msg}`
+      )
+    }
+  }
+
+  private restoreSearchIndex(project: Project | null): void {
+    if (!project) {
+      this.search.close()
+      return
+    }
+
+    const rebuilt = this.rebuildSearchIndex(project, 'rebuild')
+    if (!rebuilt.ok) {
+      this.search.close()
+    }
   }
 
   // Collect id of node + all its descendants.
