@@ -206,11 +206,11 @@
   function handleToggle(id: string) {
     if (compareMode) {
       const next = new Set(compareExpanded)
-      if (next.has(id)) next.delete(id) else next.add(id)
+      if (next.has(id)) { next.delete(id) } else { next.add(id) }
       compareExpanded = next
     } else {
       const next = new Set(expandedIds)
-      if (next.has(id)) next.delete(id) else next.add(id)
+      if (next.has(id)) { next.delete(id) } else { next.add(id) }
       expandedIds = next
     }
   }
