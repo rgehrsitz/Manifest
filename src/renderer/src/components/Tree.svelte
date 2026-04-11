@@ -195,6 +195,18 @@
     void rows
     if (focusedIndex >= rows.length) focusedIndex = -1
   })
+
+  // Scroll the selected row into view whenever selectedId or rows changes.
+  // align:'auto' is a no-op when the row is already fully visible, so clicking
+  // directly in the tree causes no perceptible jump.
+  $effect(() => {
+    const id = selectedId
+    void rows   // reactive dependency — re-runs when ancestors are expanded
+    if (!id || !virtualizerStore) return
+    const idx = rows.findIndex(r => r.id === id)
+    if (idx < 0) return
+    get(virtualizerStore).scrollToIndex(idx, { align: 'auto' })
+  })
 </script>
 
 <!--
