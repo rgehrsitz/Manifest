@@ -21,6 +21,10 @@
     comparing: boolean
     restoringName: string | null
     error: string | null
+    /** Node id currently selected in the tree — highlights the matching diff row. */
+    highlightedNodeId?: string | null
+    /** Called when the user clicks a diff row — App selects the node in the tree. */
+    onDiffNodeSelect?: (nodeId: string) => void
     onClose: () => void
     onRefresh: () => Promise<void>
     onCreate: (name: string) => Promise<void>
@@ -38,6 +42,8 @@
     comparing,
     restoringName,
     error,
+    highlightedNodeId = null,
+    onDiffNodeSelect,
     onClose,
     onRefresh,
     onCreate,
@@ -49,6 +55,16 @@
   let snapshotName = $state('')
   let compareFrom = $state('')
   let compareTo = $state('')
+
+  // Ref to scrollable body — used to scroll highlighted diff into view.
+  let scrollEl: HTMLElement | null = $state(null)
+
+  // Scroll highlighted diff card into view whenever the selection changes.
+  $effect(() => {
+    if (!highlightedNodeId || !scrollEl) return
+    const el = scrollEl.querySelector<HTMLElement>(`[data-node-id="${highlightedNodeId}"]`)
+    el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  })
 
   const severityOrder = ['High', 'Medium', 'Low'] as const
 
@@ -114,9 +130,10 @@
   Docked snapshots panel — slides in from the right as a third column.
   Does NOT block the tree or detail pane. The user can click nodes, edit
   properties, and view diffs simultaneously.
+  Width is controlled by the parent (App.svelte) via a wrapper div.
 -->
 <div
-  class="flex flex-col h-full border-l border-stone-200 bg-white w-80 shrink-0 overflow-hidden"
+  class="flex flex-col h-full bg-white overflow-hidden"
   data-testid="snapshots-panel"
 >
   <!-- Header -->
@@ -142,7 +159,7 @@
   </div>
 
   <!-- Scrollable body -->
-  <div class="flex-1 overflow-y-auto overscroll-contain">
+  <div class="flex-1 overflow-y-auto overscroll-contain" bind:this={scrollEl}>
 
     <!-- Create snapshot -->
     <section class="px-4 py-3 border-b border-stone-100 space-y-2">
@@ -322,8 +339,17 @@
                 {group.severity} Priority
               </h4>
               {#each group.entries as diff, idx (`${diff.nodeId}-${diff.changeType}-${idx}`)}
+                {@const isHighlighted = highlightedNodeId === diff.nodeId}
                 <div
-                  class={`rounded-xl border px-3 py-3 shadow-sm ${severityClass(diff.severity)}`}
+                  role={onDiffNodeSelect ? 'button' : undefined}
+                  tabindex={onDiffNodeSelect ? 0 : undefined}
+                  onclick={() => onDiffNodeSelect?.(diff.nodeId)}
+                  onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onDiffNodeSelect?.(diff.nodeId) }}
+                  data-node-id={diff.nodeId}
+                  class={`rounded-xl border px-3 py-3 shadow-sm transition-shadow
+                    ${severityClass(diff.severity)}
+                    ${isHighlighted ? 'ring-2 ring-sky-400 ring-offset-1' : ''}
+                    ${onDiffNodeSelect ? 'cursor-pointer hover:shadow-md' : ''}`}
                   data-testid="snapshot-diff-row"
                 >
                   <div class="flex items-start justify-between gap-2">

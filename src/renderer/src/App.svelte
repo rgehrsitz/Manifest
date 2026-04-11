@@ -1,7 +1,7 @@
 <svelte:options runes />
 
 <script lang="ts">
-  import { onMount, tick } from 'svelte'
+  import { onMount, onDestroy, tick } from 'svelte'
   import type { Project, ManifestNode, Snapshot } from '../../shared/types'
   import type { MergedTree } from '../../shared/merged-tree'
   import { buildTree, getSiblingIndex, getAncestorIds } from './lib/tree'
@@ -56,6 +56,37 @@
   let mergedTree: MergedTree | null = $state(null)
   let compareExpanded: Set<string> = $state(new Set())
 
+  // Resizable pane widths (px).
+  let treeWidth:  number = $state(288)  // 18rem default
+  let panelWidth: number = $state(320)  // 20rem default
+
+  // Drag-to-resize state.
+  let draggingHandle: 'tree' | 'panel' | null = $state(null)
+  let dragStartX = 0
+  let dragStartWidth = 0
+
+  function startDrag(handle: 'tree' | 'panel', e: MouseEvent) {
+    draggingHandle = handle
+    dragStartX = e.clientX
+    dragStartWidth = handle === 'tree' ? treeWidth : panelWidth
+    e.preventDefault()
+  }
+
+  function onDragMove(e: MouseEvent) {
+    if (!draggingHandle) return
+    const delta = e.clientX - dragStartX
+    if (draggingHandle === 'tree') {
+      treeWidth = Math.max(160, Math.min(520, dragStartWidth + delta))
+    } else {
+      // Panel handle is on its left edge — dragging left grows the panel.
+      panelWidth = Math.max(240, Math.min(600, dragStartWidth - delta))
+    }
+  }
+
+  function onDragEnd() {
+    draggingHandle = null
+  }
+
   // Non-blocking error toast
   let toastMsg:     string | null = $state(null)
   let toastTimer:   ReturnType<typeof setTimeout> | null = null
@@ -92,6 +123,15 @@
       selectRoot(result.data)
       appState = 'open'
     }
+
+    // Resize drag — registered once here, cleaned up in onDestroy.
+    window.addEventListener('mousemove', onDragMove)
+    window.addEventListener('mouseup', onDragEnd)
+  })
+
+  onDestroy(() => {
+    window.removeEventListener('mousemove', onDragMove)
+    window.removeEventListener('mouseup', onDragEnd)
   })
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -421,6 +461,18 @@
     }
   }
 
+  /** Called when user clicks a diff row — selects that node in the tree. */
+  function handleDiffNodeSelect(nodeId: string) {
+    selectedId = nodeId
+    if (compareMode && mergedTree) {
+      const ancestors = getAncestorIds(nodeId, mergedTree.nodes)
+      compareExpanded = new Set([...compareExpanded, ...ancestors, nodeId])
+    } else if (project) {
+      const ancestors = getAncestorIds(nodeId, project.nodes)
+      expandedIds = new Set([...expandedIds, ...ancestors, nodeId])
+    }
+  }
+
   async function handleSnapshotRestore(name: string) {
     const confirmed = window.confirm(`Restore snapshot "${name}"? Current unsnapshotted changes will be replaced.`)
     if (!confirmed) return
@@ -626,11 +678,18 @@
       </div>
     </div>
 
-    <!-- Two-pane body -->
-    <div class="flex flex-1 overflow-hidden">
+    <!-- Three-pane body — tree | drag | detail | drag | snapshots -->
+    <div
+      class="flex flex-1 overflow-hidden"
+      class:cursor-col-resize={draggingHandle !== null}
+      class:select-none={draggingHandle !== null}
+    >
 
       <!-- ── Left pane: tree + search ──────────────────────────────────── -->
-      <div class="w-72 shrink-0 flex flex-col border-r border-stone-200 bg-stone-50 overflow-hidden">
+      <div
+        style="width: {treeWidth}px"
+        class="shrink-0 flex flex-col bg-stone-50 overflow-hidden"
+      >
 
         <!-- Search bar -->
         <div class="px-3 py-2 border-b border-stone-200">
@@ -737,6 +796,17 @@
 
       </div>
 
+      <!-- ── Drag handle: tree | detail ────────────────────────────────── -->
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize tree panel"
+        class="w-1 shrink-0 cursor-col-resize bg-stone-200 hover:bg-sky-400
+               transition-colors duration-100"
+        class:bg-sky-500={draggingHandle === 'tree'}
+        onmousedown={(e) => startDrag('tree', e)}
+      ></div>
+
       <!-- ── Right pane: detail ─────────────────────────────────────────── -->
       <div class="flex-1 overflow-hidden" data-testid="detail-pane">
         <DetailPane
@@ -750,22 +820,38 @@
 
       <!-- ── Snapshots panel (docked, non-blocking) ─────────────────────── -->
       {#if snapshotPanelOpen}
-        <SnapshotsPanel
-          {snapshots}
-          {mergedTree}
-          compareLoaded={compareMode}
-          loading={snapshotLoading}
-          creating={snapshotCreating}
-          comparing={snapshotComparing}
-          restoringName={snapshotRestoringName}
-          error={snapshotError}
-          onClose={closeSnapshots}
-          onRefresh={refreshSnapshots}
-          onCreate={handleSnapshotCreate}
-          onCompare={handleSnapshotCompare}
-          onExitCompare={exitCompareMode}
-          onRestore={handleSnapshotRestore}
-        />
+        <!-- Drag handle: detail | panel -->
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize snapshots panel"
+          class="w-1 shrink-0 cursor-col-resize bg-stone-200 hover:bg-sky-400
+                 transition-colors duration-100"
+          class:bg-sky-500={draggingHandle === 'panel'}
+          onmousedown={(e) => startDrag('panel', e)}
+        ></div>
+
+        <!-- Controlled-width wrapper — SnapshotsPanel fills it with w-full -->
+        <div style="width: {panelWidth}px" class="shrink-0 overflow-hidden">
+          <SnapshotsPanel
+            {snapshots}
+            {mergedTree}
+            compareLoaded={compareMode}
+            loading={snapshotLoading}
+            creating={snapshotCreating}
+            comparing={snapshotComparing}
+            restoringName={snapshotRestoringName}
+            error={snapshotError}
+            highlightedNodeId={selectedId}
+            onDiffNodeSelect={handleDiffNodeSelect}
+            onClose={closeSnapshots}
+            onRefresh={refreshSnapshots}
+            onCreate={handleSnapshotCreate}
+            onCompare={handleSnapshotCompare}
+            onExitCompare={exitCompareMode}
+            onRestore={handleSnapshotRestore}
+          />
+        </div>
       {/if}
 
     </div>
