@@ -16,7 +16,8 @@
     "test": "bun run rebuild:native:node && node ./node_modules/vitest/vitest.mjs run",
     "test:watch": "bun run rebuild:native:node && node ./node_modules/vitest/vitest.mjs",
     "test:e2e": "bun run rebuild:native:electron && bun run build && playwright test",
-    "package": "bun run rebuild:native:electron && electron-vite build && electron-builder"
+    "package": "bun run rebuild:native:electron && electron-vite build && electron-builder",
+    "package:verify": "node scripts/verify_packaging.mjs"
   },
   "dependencies": {
     "@tanstack/svelte-virtual": "^3.13.23",
