@@ -210,12 +210,14 @@
 </script>
 
 <!--
-  Scrollable tree viewport. role="tree" is declared on the wrapper in App.svelte.
+  Scrollable tree viewport. It owns keyboard navigation and tree semantics.
   The context menu is rendered as a sibling to this div (after it in the DOM),
   so it is never inside a CSS-transformed element.
 -->
 <div
   bind:this={containerEl}
+  role="tree"
+  aria-label="Project tree"
   class="h-full overflow-y-auto overscroll-contain focus:outline-none"
   tabindex="0"
   onkeydown={handleKeyDown}

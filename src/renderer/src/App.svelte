@@ -421,6 +421,20 @@
     compareMode = false
     mergedTree = null
     compareExpanded = new Set()
+    if (project && selectedId && !project.nodes.find(node => node.id === selectedId)) {
+      const root = project.nodes.find(node => node.parentId === null)
+      selectedId = root?.id ?? null
+    }
+  }
+
+  function resolveCompareSelectionId(nodeId: string): string {
+    if (!mergedTree) return nodeId
+    if (mergedTree.nodes.some(node => node.id === nodeId)) return nodeId
+
+    const ghostId = `ghost:${nodeId}`
+    if (mergedTree.nodes.some(node => node.id === ghostId)) return ghostId
+
+    return nodeId
   }
 
   async function handleSnapshotCreate(name: string) {
@@ -463,11 +477,13 @@
 
   /** Called when user clicks a diff row — selects that node in the tree. */
   function handleDiffNodeSelect(nodeId: string) {
-    selectedId = nodeId
     if (compareMode && mergedTree) {
-      const ancestors = getAncestorIds(nodeId, mergedTree.nodes)
-      compareExpanded = new Set([...compareExpanded, ...ancestors, nodeId])
+      const compareSelectionId = resolveCompareSelectionId(nodeId)
+      selectedId = compareSelectionId
+      const ancestors = getAncestorIds(compareSelectionId, mergedTree.nodes)
+      compareExpanded = new Set([...compareExpanded, ...ancestors, compareSelectionId])
     } else if (project) {
+      selectedId = nodeId
       const ancestors = getAncestorIds(nodeId, project.nodes)
       expandedIds = new Set([...expandedIds, ...ancestors, nodeId])
     }
@@ -485,7 +501,6 @@
     if (result.ok) {
       await reloadCurrentProject()
       exitCompareMode()
-      closeSnapshots()
       showToast(`Restored snapshot "${name}"`)
     } else {
       snapshotError = result.error.message
@@ -719,7 +734,7 @@
         </div>
 
         <!-- Search results overlay -->
-        {#if searchQuery && (searchResults.length > 0 || searching)}
+        {#if searchQuery.trim()}
           <div class="flex-1 overflow-y-auto p-2" data-testid="search-results">
             {#if searching}
               <p class="text-xs text-stone-400 px-2 py-1">Searching…</p>
@@ -735,14 +750,14 @@
                 </button>
               {/each}
               {#if searchResults.length === 0}
-                <p class="text-xs text-stone-400 px-2 py-1">No results</p>
+                <p class="text-xs text-stone-400 px-2 py-1" data-testid="search-no-results">No results</p>
               {/if}
             {/if}
           </div>
 
         <!-- Tree -->
         {:else}
-          <div class="flex-1 flex flex-col overflow-hidden" role="tree" data-testid="tree">
+          <div class="flex-1 flex flex-col overflow-hidden" data-testid="tree">
             <!-- Virtualised tree — takes all available space -->
             <div class="flex-1 overflow-hidden">
               <Tree
@@ -797,15 +812,14 @@
       </div>
 
       <!-- ── Drag handle: tree | detail ────────────────────────────────── -->
-      <div
-        role="separator"
-        aria-orientation="vertical"
+      <button
+        type="button"
         aria-label="Resize tree panel"
         class="w-1 shrink-0 cursor-col-resize bg-stone-200 hover:bg-sky-400
-               transition-colors duration-100"
+               transition-colors duration-100 p-0"
         class:bg-sky-500={draggingHandle === 'tree'}
         onmousedown={(e) => startDrag('tree', e)}
-      ></div>
+      ></button>
 
       <!-- ── Right pane: detail ─────────────────────────────────────────── -->
       <div class="flex-1 overflow-hidden" data-testid="detail-pane">
@@ -821,15 +835,14 @@
       <!-- ── Snapshots panel (docked, non-blocking) ─────────────────────── -->
       {#if snapshotPanelOpen}
         <!-- Drag handle: detail | panel -->
-        <div
-          role="separator"
-          aria-orientation="vertical"
+        <button
+          type="button"
           aria-label="Resize snapshots panel"
           class="w-1 shrink-0 cursor-col-resize bg-stone-200 hover:bg-sky-400
-                 transition-colors duration-100"
+                 transition-colors duration-100 p-0"
           class:bg-sky-500={draggingHandle === 'panel'}
           onmousedown={(e) => startDrag('panel', e)}
-        ></div>
+        ></button>
 
         <!-- Controlled-width wrapper — SnapshotsPanel fills it with w-full -->
         <div style="width: {panelWidth}px" class="shrink-0 overflow-hidden">

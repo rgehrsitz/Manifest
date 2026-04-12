@@ -215,6 +215,18 @@ test('searches by property value and focuses the selected node', async ({ appPag
   await expect(appPage.getByTestId('search-input')).toHaveValue('')
 })
 
+test('shows an empty state when search finds no matches', async ({ appPage, electronApp, workspaceDir }) => {
+  const projectDir = join(workspaceDir, 'Search Miss Lab')
+  await writeFixtureProject(projectDir, 'project-with-nodes.json')
+
+  await openProjectThroughUi(appPage, electronApp, projectDir)
+
+  await appPage.getByTestId('search-input').fill('does-not-exist')
+  await expect(appPage.getByTestId('search-results')).toBeVisible()
+  await expect(appPage.getByTestId('search-no-results')).toBeVisible()
+  await expect(appPage.getByTestId('search-no-results')).toContainText('No results')
+})
+
 test('autosaves edits to disk and reopens them cleanly', async ({ appPage, electronApp, workspaceDir }) => {
   const projectDir = await createProjectThroughUi(appPage, electronApp, workspaceDir, 'Autosave Lab')
   const manifestPath = join(projectDir, 'manifest.json')

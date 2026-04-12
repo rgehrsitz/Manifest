@@ -102,7 +102,7 @@
     const names = snapshots.map(s => s.name)
     if (snapshots.length === 0) { compareFrom = ''; compareTo = ''; return }
     if (!compareTo || !names.includes(compareTo)) compareTo = snapshots[0].name
-    if (!compareFrom || !names.includes(compareFrom) || compareFrom === compareTo) {
+    if (!compareFrom || !names.includes(compareFrom)) {
       compareFrom = snapshots[1]?.name ?? snapshots[0].name
     }
   })
@@ -339,56 +339,101 @@
                 {group.severity} Priority
               </h4>
               {#each group.entries as diff, idx (`${diff.nodeId}-${diff.changeType}-${idx}`)}
-                {@const isHighlighted = highlightedNodeId === diff.nodeId}
-                <div
-                  role={onDiffNodeSelect ? 'button' : undefined}
-                  tabindex={onDiffNodeSelect ? 0 : undefined}
-                  onclick={() => onDiffNodeSelect?.(diff.nodeId)}
-                  onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onDiffNodeSelect?.(diff.nodeId) }}
-                  data-node-id={diff.nodeId}
-                  class={`rounded-xl border px-3 py-3 shadow-sm transition-shadow
-                    ${severityClass(diff.severity)}
-                    ${isHighlighted ? 'ring-2 ring-sky-400 ring-offset-1' : ''}
-                    ${onDiffNodeSelect ? 'cursor-pointer hover:shadow-md' : ''}`}
-                  data-testid="snapshot-diff-row"
-                >
-                  <div class="flex items-start justify-between gap-2">
-                    <div class="min-w-0">
-                      <p class="text-xs font-medium text-stone-800">{formatChangeType(diff.changeType)}</p>
-                      <p class="mt-0.5 text-xs text-stone-600 truncate">
-                        {formatPath(diff.context.path, diff.context.nodeName)}
-                      </p>
+                {@const isHighlighted = highlightedNodeId === diff.nodeId || highlightedNodeId === `ghost:${diff.nodeId}`}
+                {#if onDiffNodeSelect}
+                  <button
+                    type="button"
+                    onclick={() => onDiffNodeSelect(diff.nodeId)}
+                    data-node-id={diff.nodeId}
+                    class={`w-full rounded-xl border px-3 py-3 shadow-sm transition-shadow text-left
+                      ${severityClass(diff.severity)}
+                      ${isHighlighted ? 'ring-2 ring-sky-400 ring-offset-1' : ''}
+                      cursor-pointer hover:shadow-md`}
+                    data-testid="snapshot-diff-row"
+                  >
+                    <div class="flex items-start justify-between gap-2">
+                      <div class="min-w-0">
+                        <p class="text-xs font-medium text-stone-800">{formatChangeType(diff.changeType)}</p>
+                        <p class="mt-0.5 text-xs text-stone-600 truncate">
+                          {formatPath(diff.context.path, diff.context.nodeName)}
+                        </p>
+                      </div>
+                      <span class={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold
+                                    uppercase tracking-wide ${severityBadgeClass(diff.severity)}`}>
+                        {diff.severity}
+                      </span>
                     </div>
-                    <span class={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold
-                                  uppercase tracking-wide ${severityBadgeClass(diff.severity)}`}>
-                      {diff.severity}
-                    </span>
-                  </div>
 
-                  {#if diff.changeType === 'renamed' || diff.changeType === 'moved' || diff.changeType === 'order-changed'}
-                    <div class="mt-2 grid grid-cols-2 gap-1.5">
-                      <div class="rounded bg-white/80 px-2 py-1.5 ring-1 ring-black/5">
-                        <p class="text-[9px] font-semibold uppercase tracking-wide text-stone-400">Before</p>
-                        <p class="mt-0.5 text-xs text-stone-700">{formatValue(diff.oldValue)}</p>
+                    {#if diff.changeType === 'renamed' || diff.changeType === 'moved' || diff.changeType === 'order-changed'}
+                      <div class="mt-2 grid grid-cols-2 gap-1.5">
+                        <div class="rounded bg-white/80 px-2 py-1.5 ring-1 ring-black/5">
+                          <p class="text-[9px] font-semibold uppercase tracking-wide text-stone-400">Before</p>
+                          <p class="mt-0.5 text-xs text-stone-700">{formatValue(diff.oldValue)}</p>
+                        </div>
+                        <div class="rounded bg-white/80 px-2 py-1.5 ring-1 ring-black/5">
+                          <p class="text-[9px] font-semibold uppercase tracking-wide text-stone-400">After</p>
+                          <p class="mt-0.5 text-xs text-stone-700">{formatValue(diff.newValue)}</p>
+                        </div>
                       </div>
-                      <div class="rounded bg-white/80 px-2 py-1.5 ring-1 ring-black/5">
-                        <p class="text-[9px] font-semibold uppercase tracking-wide text-stone-400">After</p>
-                        <p class="mt-0.5 text-xs text-stone-700">{formatValue(diff.newValue)}</p>
+                    {:else if diff.changeType === 'property-changed'}
+                      <div class="mt-2 rounded bg-white/80 px-2 py-2 ring-1 ring-black/5">
+                        <p class="text-[9px] font-semibold uppercase tracking-wide text-stone-400">Changes</p>
+                        <div class="mt-1 flex flex-wrap gap-1">
+                          {#each describePropertyChange(diff) as line (line)}
+                            <span class="rounded-full bg-stone-100 px-2 py-0.5 text-[10px] text-stone-600">
+                              {line}
+                            </span>
+                          {/each}
+                        </div>
                       </div>
+                    {/if}
+                  </button>
+                {:else}
+                  <div
+                    data-node-id={diff.nodeId}
+                    class={`rounded-xl border px-3 py-3 shadow-sm transition-shadow
+                      ${severityClass(diff.severity)}
+                      ${isHighlighted ? 'ring-2 ring-sky-400 ring-offset-1' : ''}`}
+                    data-testid="snapshot-diff-row"
+                  >
+                    <div class="flex items-start justify-between gap-2">
+                      <div class="min-w-0">
+                        <p class="text-xs font-medium text-stone-800">{formatChangeType(diff.changeType)}</p>
+                        <p class="mt-0.5 text-xs text-stone-600 truncate">
+                          {formatPath(diff.context.path, diff.context.nodeName)}
+                        </p>
+                      </div>
+                      <span class={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold
+                                    uppercase tracking-wide ${severityBadgeClass(diff.severity)}`}>
+                        {diff.severity}
+                      </span>
                     </div>
-                  {:else if diff.changeType === 'property-changed'}
-                    <div class="mt-2 rounded bg-white/80 px-2 py-2 ring-1 ring-black/5">
-                      <p class="text-[9px] font-semibold uppercase tracking-wide text-stone-400">Changes</p>
-                      <div class="mt-1 flex flex-wrap gap-1">
-                        {#each describePropertyChange(diff) as line (line)}
-                          <span class="rounded-full bg-stone-100 px-2 py-0.5 text-[10px] text-stone-600">
-                            {line}
-                          </span>
-                        {/each}
+
+                    {#if diff.changeType === 'renamed' || diff.changeType === 'moved' || diff.changeType === 'order-changed'}
+                      <div class="mt-2 grid grid-cols-2 gap-1.5">
+                        <div class="rounded bg-white/80 px-2 py-1.5 ring-1 ring-black/5">
+                          <p class="text-[9px] font-semibold uppercase tracking-wide text-stone-400">Before</p>
+                          <p class="mt-0.5 text-xs text-stone-700">{formatValue(diff.oldValue)}</p>
+                        </div>
+                        <div class="rounded bg-white/80 px-2 py-1.5 ring-1 ring-black/5">
+                          <p class="text-[9px] font-semibold uppercase tracking-wide text-stone-400">After</p>
+                          <p class="mt-0.5 text-xs text-stone-700">{formatValue(diff.newValue)}</p>
+                        </div>
                       </div>
-                    </div>
-                  {/if}
-                </div>
+                    {:else if diff.changeType === 'property-changed'}
+                      <div class="mt-2 rounded bg-white/80 px-2 py-2 ring-1 ring-black/5">
+                        <p class="text-[9px] font-semibold uppercase tracking-wide text-stone-400">Changes</p>
+                        <div class="mt-1 flex flex-wrap gap-1">
+                          {#each describePropertyChange(diff) as line (line)}
+                            <span class="rounded-full bg-stone-100 px-2 py-0.5 text-[10px] text-stone-600">
+                              {line}
+                            </span>
+                          {/each}
+                        </div>
+                      </div>
+                    {/if}
+                  </div>
+                {/if}
               {/each}
             </div>
           {/each}

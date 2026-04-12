@@ -75,8 +75,10 @@ test('creates, compares, and restores snapshots from the renderer surface', asyn
     .getByTestId('restore-snapshot-btn')
     .click()
 
-  // After restore, panel stays open (it is docked, not modal).
+  // After restore, compare mode exits but the docked panel stays open.
+  await expect(appPage.getByTestId('snapshot-diff-list')).toHaveCount(0)
   await expect(appPage.getByTestId('snapshots-panel')).toBeVisible()
+  await expect(appPage.getByTestId('compare-from-select')).toBeVisible()
 
   // Rack A should be gone from the tree.
   await expect(appPage.locator('[data-testid="tree-node"]', { hasText: 'Rack A' })).toHaveCount(0)
@@ -88,4 +90,60 @@ test('creates, compares, and restores snapshots from the renderer surface', asyn
   })
 
   expect(manifest).toEqual([projectName])
+})
+
+test('surfaces removed nodes in snapshot compare mode', async ({ appPage, electronApp, workspaceDir }) => {
+  const parentDir = workspaceDir
+  const projectName = 'Removal Compare Lab'
+
+  await appPage.getByTestId('create-project-btn').click()
+  await appPage.getByTestId('project-name-input').fill(projectName)
+
+  await electronApp.evaluate(({ dialog }, path) => {
+    dialog.showOpenDialog = async () => ({
+      canceled: false,
+      filePaths: [path],
+    })
+  }, parentDir)
+
+  await appPage.getByTestId('choose-folder-btn').click()
+  await appPage.getByTestId('create-btn').click()
+  await expect(appPage.getByTestId('project-view')).toBeVisible()
+
+  await appPage.locator('[data-testid="tree-node"]', { hasText: projectName }).click({ button: 'right' })
+  await appPage.getByRole('menuitem', { name: 'Add Child' }).click()
+  await appPage.getByTestId('add-child-input').fill('Rack A')
+  await appPage.getByTestId('add-child-commit').click()
+  await expect(appPage.locator('[data-testid="tree-node"]', { hasText: 'Rack A' })).toBeVisible()
+
+  await appPage.getByTestId('open-snapshots-btn').click()
+  await appPage.getByTestId('snapshot-name-input').fill('with-rack')
+  await appPage.getByTestId('create-snapshot-btn').click()
+  await expect(appPage.getByTestId('snapshot-row').filter({ hasText: 'with-rack' })).toBeVisible()
+
+  await appPage.getByRole('button', { name: 'Close snapshots' }).click()
+  await expect(appPage.getByTestId('snapshots-panel')).toHaveCount(0)
+
+  appPage.once('dialog', (dialog) => dialog.accept())
+  await appPage.locator('[data-testid="tree-node"]', { hasText: 'Rack A' }).click({ button: 'right' })
+  await appPage.getByRole('menuitem', { name: 'Delete…' }).click()
+  await expect(appPage.locator('[data-testid="tree-node"]', { hasText: 'Rack A' })).toHaveCount(0)
+
+  await appPage.getByTestId('open-snapshots-btn').click()
+  await appPage.getByTestId('snapshot-name-input').fill('without-rack')
+  await appPage.getByTestId('create-snapshot-btn').click()
+  await expect(appPage.getByTestId('snapshot-row').filter({ hasText: 'without-rack' })).toBeVisible()
+
+  await appPage.getByTestId('compare-from-select').selectOption('with-rack')
+  await appPage.getByTestId('compare-to-select').selectOption('without-rack')
+  await appPage.getByTestId('compare-snapshots-btn').click()
+
+  await expect(appPage.getByTestId('snapshot-diff-list')).toBeVisible()
+  await expect(appPage.getByText('1 change')).toBeVisible()
+  const removedRow = appPage.getByTestId('snapshot-diff-row').filter({ hasText: 'Removed' })
+  await expect(removedRow).toBeVisible()
+  await expect(removedRow).toContainText('Rack A')
+
+  await removedRow.click()
+  await expect(appPage.locator('[data-testid="tree-node"][data-row-status=\"removed\"]', { hasText: 'Rack A' })).toBeVisible()
 })

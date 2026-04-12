@@ -376,14 +376,34 @@ describe('buildMergedTree', () => {
     expect(rack!.diffs.length).toBeGreaterThanOrEqual(2)
   })
 
-  // ── Ghost diffs are empty ─────────────────────────────────────────────────────
+  // ── Ghost diffs ───────────────────────────────────────────────────────────────
 
-  it('ghost nodes always have empty diffs array', () => {
+  it('removed ghosts embed their removal diff', () => {
     const fromNodes = [n('root', null, 0), n('gone', 'root', 0)]
     const toNodes = [n('root', null, 0)]
     const result = merge(fromNodes, toNodes)
 
     const ghost = findGhost(result, 'gone')
+    expect(ghost!.diffs).toHaveLength(1)
+    expect(ghost!.diffs[0].changeType).toBe('removed')
+  })
+
+  it('moved-from ghosts still have empty diffs array', () => {
+    const fromNodes = [
+      n('root', null, 0),
+      n('p1', 'root', 0),
+      n('p2', 'root', 1),
+      n('child', 'p1', 0),
+    ]
+    const toNodes = [
+      n('root', null, 0),
+      n('p1', 'root', 0),
+      n('p2', 'root', 1),
+      n('child', 'p2', 0),
+    ]
+    const result = merge(fromNodes, toNodes)
+
+    const ghost = findGhost(result, 'child')
     expect(ghost!.diffs).toEqual([])
   })
 

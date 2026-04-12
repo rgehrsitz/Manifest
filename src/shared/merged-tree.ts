@@ -40,7 +40,7 @@ export interface MergedTreeNode extends ManifestNode {
     parentId?: string | null
     properties?: Record<string, string | number | boolean | null>
   }
-  /** All DiffEntry records touching this node (empty for unchanged/ghost). */
+  /** All DiffEntry records touching this node. Removed ghosts carry their removal diff. */
   diffs: DiffEntry[]
 }
 
@@ -114,7 +114,8 @@ export function buildMergedTree(
 
   for (const nodeA of from.nodes) {
     if (nodesB.has(nodeA.id)) continue // still alive — handled in step 1
-    merged.push(makeGhost(nodeA, 'removed', nodesB))
+    const nodeDiffs = diffsByNodeId.get(nodeA.id) ?? []
+    merged.push(makeGhost(nodeA, 'removed', nodesB, nodeDiffs))
     summary.removed++
   }
 
@@ -185,7 +186,8 @@ function buildPrevious(
 function makeGhost(
   nodeA: ManifestNode,
   status: 'removed' | 'moved-from',
-  nodesB: Map<string, ManifestNode>
+  nodesB: Map<string, ManifestNode>,
+  diffs: DiffEntry[] = []
 ): MergedTreeNode {
   const ghostParentId = resolveGhostParent(nodeA.parentId, nodesB)
 
@@ -194,7 +196,7 @@ function makeGhost(
     id: `ghost:${nodeA.id}`,
     parentId: ghostParentId,
     status,
-    diffs: [],
+    diffs,
   }
 }
 
