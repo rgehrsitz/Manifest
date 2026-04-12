@@ -7,9 +7,11 @@ directories:
 files:
   - out/**/*
   - package.json
+  - resources/icon.png
 
 mac:
   category: public.app-category.productivity
+  icon: resources/icon.icns
   target:
     - target: dmg
       arch:
@@ -17,12 +19,14 @@ mac:
         - arm64
 
 win:
+  icon: resources/icon.ico
   target:
     - target: nsis
       arch:
         - x64
 
 linux:
+  icon: resources/icon.png
   target:
     - target: AppImage
       arch:

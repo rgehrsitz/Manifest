@@ -11,6 +11,7 @@
     "preview": "bun run rebuild:native:electron && electron-vite preview",
     "postinstall": "bun run rebuild:native:node",
     "generate:project": "bun scripts/generate-project.mjs",
+    "generate:brand": "python3 scripts/generate_brand_assets.py",
     "typecheck": "tsc --noEmit -p tsconfig.node.json",
     "test": "bun run rebuild:native:node && node ./node_modules/vitest/vitest.mjs run",
     "test:watch": "bun run rebuild:native:node && node ./node_modules/vitest/vitest.mjs",

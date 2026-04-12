@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="../resources/manifest.svg" alt="Manifest logo" width="120" />
+</p>
+
 # Manifest — Docs
 
 Planning and architecture documentation for Manifest.

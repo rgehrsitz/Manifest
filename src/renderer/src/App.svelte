@@ -90,6 +90,7 @@
   // Non-blocking error toast
   let toastMsg:     string | null = $state(null)
   let toastTimer:   ReturnType<typeof setTimeout> | null = null
+  const brandMark = '/manifest-mark.svg'
 
   // ─── Derived ──────────────────────────────────────────────────────────────
 
@@ -550,6 +551,10 @@
     <div class="flex flex-col items-center gap-8 w-full max-w-sm px-6">
 
       <div class="text-center">
+        <div class="mx-auto mb-5 flex h-24 w-24 items-center justify-center rounded-[2rem]
+                    bg-white shadow-[0_20px_45px_-28px_rgba(36,59,72,0.55)] ring-1 ring-stone-200/80">
+          <img src={brandMark} alt="Manifest logo" class="h-14 w-14 drop-shadow-sm" />
+        </div>
         <h1 class="text-2xl font-semibold tracking-tight text-stone-800">Manifest</h1>
         <p class="text-sm text-stone-400 mt-1">Structured projects. Named history. Clear changes.</p>
       </div>
@@ -587,9 +592,14 @@
   <div class="flex flex-col h-full items-center justify-center bg-stone-50">
     <div class="flex flex-col gap-5 w-full max-w-sm px-6">
 
-      <div>
-        <h2 class="text-lg font-semibold text-stone-800">New Project</h2>
-        <p class="text-sm text-stone-400 mt-0.5">A folder will be created at the chosen location.</p>
+      <div class="flex items-center gap-3">
+        <div class="flex h-12 w-12 items-center justify-center rounded-2xl bg-white ring-1 ring-stone-200">
+          <img src={brandMark} alt="Manifest logo" class="h-7 w-7" />
+        </div>
+        <div>
+          <h2 class="text-lg font-semibold text-stone-800">New Project</h2>
+          <p class="text-sm text-stone-400 mt-0.5">A folder will be created at the chosen location.</p>
+        </div>
       </div>
 
       {#if error}
@@ -669,9 +679,15 @@
     <!-- Titlebar -->
     <div class="flex items-center justify-between px-4 py-2.5 border-b border-stone-200 bg-white
                 pl-20 shrink-0 [-webkit-app-region:drag]">
-      <div class="flex flex-col [-webkit-app-region:no-drag]">
-        <span class="text-sm font-semibold text-stone-800">{project.name}</span>
-        <span class="text-xs text-stone-400">{project.nodes.length} nodes</span>
+      <div class="flex items-center gap-3 [-webkit-app-region:no-drag]">
+        <div class="flex h-10 w-10 items-center justify-center rounded-2xl bg-stone-50 ring-1 ring-stone-200">
+          <img src={brandMark} alt="Manifest logo" class="h-5 w-5" />
+        </div>
+        <div class="flex flex-col">
+          <span class="text-[10px] font-semibold uppercase tracking-[0.18em] text-stone-400">Manifest</span>
+          <span class="text-sm font-semibold text-stone-800">{project.name}</span>
+          <span class="text-xs text-stone-400">{project.nodes.length} nodes</span>
+        </div>
       </div>
       <div class="flex items-center gap-2 [-webkit-app-region:no-drag]">
         <button

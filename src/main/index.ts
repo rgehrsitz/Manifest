@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron'
+import { existsSync } from 'fs'
 import { join } from 'path'
 import { createLogger } from './logger'
 import { ProjectManager } from './project-manager'
@@ -23,6 +24,7 @@ const projectManager = new ProjectManager(gitService, projectLogger)
 // ─── Window ──────────────────────────────────────────────────────────────────
 
 function createWindow(): BrowserWindow {
+  const iconPath = getBrandIconPath()
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -30,6 +32,7 @@ function createWindow(): BrowserWindow {
     minHeight: 600,
     show: false,
     title: 'Manifest',
+    icon: iconPath,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -179,6 +182,10 @@ app.whenReady().then(async () => {
   }
 
   registerIpcHandlers()
+  const iconPath = getBrandIconPath()
+  if (process.platform === 'darwin' && iconPath) {
+    app.dock.setIcon(iconPath)
+  }
   createWindow()
 
   app.on('activate', () => {
@@ -205,4 +212,9 @@ function getGitInstallInstructions(): string {
     default:
       return 'Install via your package manager:\n  sudo apt install git\n  sudo dnf install git\n\nOr visit https://git-scm.com'
   }
+}
+
+function getBrandIconPath(): string | undefined {
+  const iconPath = join(app.getAppPath(), 'resources', 'icon.png')
+  return existsSync(iconPath) ? iconPath : undefined
 }
