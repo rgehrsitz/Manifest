@@ -3,16 +3,31 @@
 ## P1 — Must do in Phase 2
 
 ### Playwright/Electron E2E Harness
-**What:** Create `playwright.config.ts` with Electron app launch wiring. Add an `electronApp` test fixture that boots the built app and exposes the first BrowserWindow.
-**Why:** `package.json` has `playwright test` but there is no config file and no Electron launch integration. The 6 Phase 2 E2E tests cannot run without this.
-**Pros:** Unblocks all E2E testing. One-time setup that all future E2E tests build on.
-**Cons:** Requires `@playwright/test` Electron integration (`_electron` launch API). Slight extra setup complexity.
-**Context:** Identified during Phase 2 eng review (Codex outside voice). The Playwright Electron launch API (`_electron.launch({ args: ['out/main/index.js'] })`) is the standard path. Must be done before writing any E2E tests.
-**Effort:** S (human) -> XS (CC+gstack)
-**Priority:** P1 (blocks Phase 2 E2E)
-**Depends on:** Phase 2 build completing successfully
+**Status:** DONE — `playwright.config.ts`, `tests/e2e/fixtures.ts`, and Electron workflow specs are in place.
+**Verification:** `bun run test:e2e` passes with 18 Electron tests.
+**Was:** P1, blocked Phase 2 E2E coverage.
 
 Deferred work from CEO review (2026-04-07).
+
+## P1 — Pilot readiness
+
+### First-User Dogfood Pass
+**What:** Package the app and run a realistic project through create/open/edit/search/snapshot/compare/restore using a generated or hand-authored pilot-style hierarchy.
+**Why:** The core v1 surface now exists and passes unit, E2E, typecheck, and packaging verification. The highest-value next signal is whether the workflows feel clear and durable for a real first user.
+**Pros:** Finds UX friction before adding features. Produces concrete evidence for the import/schema roadmap.
+**Cons:** May surface polish work rather than a single clean feature branch.
+**Effort:** S
+**Priority:** P1
+**Depends on:** Current build and packaging verification passing
+
+### CSV/JSON Import MVP
+**What:** Add a small import path for existing structured data into Manifest hierarchies.
+**Why:** Manual entry is likely the biggest adoption barrier for pilot users with existing spreadsheets or exported datasets.
+**Pros:** Converts Manifest from an empty editor into a migration-friendly tool. Creates a practical reason to pilot the product.
+**Cons:** Column mapping and parent-child inference can grow quickly; start with a constrained MVP informed by dogfood fixtures.
+**Effort:** M (human) -> S (CC+gstack)
+**Priority:** P1.5
+**Depends on:** First-user dogfood pass and at least one representative data shape
 
 ## P1 — Tree Rewrite + Compare Mode (deferred scope items)
 
@@ -48,12 +63,9 @@ These items were explicitly deferred during the 2026-04-10 eng review of the tre
 **Depends on:** Tree rewrite (PR #1), DetailPane signal-based rename landing
 
 ### Fix ErrorCode.GIT_COMMIT_FAILED Mislabel in Snapshot Compare
-**What:** `project-manager.ts` `snapshotCompare` and the new `snapshotLoadCompare` both use `ErrorCode.GIT_COMMIT_FAILED` when a compare fails. "Commit failed" is the wrong label for "read manifest failed."
-**Why:** Code clarity, accurate error reporting to users.
-**Cons:** Adds a new error code, small blast radius.
-**Context:** Identified during code quality review (2026-04-10). Pre-existing issue, out of scope for the tree rewrite PRs.
-**Effort:** XS
-**Priority:** P2 (cleanup, any time)
+**Status:** DONE — compare/load compare failures now use `SNAPSHOT_READ_FAILED`.
+**Verification:** Covered by `tests/unit/main/project-manager-snapshots.test.ts`.
+**Was:** P2 cleanup identified during code quality review (2026-04-10).
 
 ## P2 — Post-v1 or late v1
 
@@ -62,10 +74,10 @@ These items were explicitly deferred during the 2026-04-10 eng review of the tre
 **Why:** Removes the biggest adoption barrier. Nobody wants to re-enter 200 rack items by hand.
 **Pros:** Dramatically lowers onboarding friction. Enables migration from existing tools.
 **Cons:** Column mapping UI needs design. Parent-child inference rules are non-trivial.
-**Context:** Design doc recommends this. Deferred because we need pilot user feedback on actual data shapes before designing the mapping UI.
+**Context:** Design doc recommends this. Promoted into pilot-readiness work as a constrained MVP after dogfood produces at least one representative data shape.
 **Effort:** M (human) -> S (CC+gstack)
-**Priority:** P2
-**Depends on:** Stable manifest.json schema (Phase 2 complete)
+**Priority:** P1.5
+**Depends on:** Stable manifest.json schema, dogfood fixture/data shape
 
 ### User-Defined Property Schema
 **What:** Let users define expected properties per node type (e.g., "Instruments must have serial_number, firmware_version").

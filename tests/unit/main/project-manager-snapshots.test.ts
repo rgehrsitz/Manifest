@@ -22,6 +22,7 @@ const noopSearch = {
 }
 
 let tmpDir: string
+let git: GitService
 let manager: ProjectManager
 let projectDir: string
 
@@ -29,7 +30,7 @@ beforeEach(async () => {
   tmpDir = join(tmpdir(), `manifest-snapshots-${Date.now()}-${Math.random().toString(36).slice(2)}`)
   mkdirSync(tmpDir, { recursive: true })
 
-  const git = new GitService(noopLogger as any)
+  git = new GitService(noopLogger as any)
   manager = new ProjectManager(git, noopLogger as any, noopSearch as any)
 
   const created = await manager.createProject('Snapshot Project', tmpDir)
@@ -93,6 +94,35 @@ describe('snapshot workflow', () => {
       'renamed',
       'property-changed',
     ])
+  })
+
+  it('reports snapshot read failures distinctly from commit failures', async () => {
+    const rootId = manager.getCurrent()!.nodes.find((node) => node.parentId === null)!.id
+    manager.nodeCreate(rootId, 'Rack A')
+    await manager.snapshotCreate('baseline')
+
+    const originalRead = git.readSnapshotManifest.bind(git)
+    ;(git as any).readSnapshotManifest = async () => {
+      throw new Error('snapshot tag not found')
+    }
+
+    try {
+      const compared = await manager.snapshotCompare('baseline', 'missing')
+      expect(compared.ok).toBe(false)
+      if (!compared.ok) {
+        expect(compared.error.code).toBe('SNAPSHOT_READ_FAILED')
+        expect(compared.error.message).toContain('Failed to compare snapshots')
+      }
+
+      const loaded = await manager.snapshotLoadCompare('baseline', 'missing')
+      expect(loaded.ok).toBe(false)
+      if (!loaded.ok) {
+        expect(loaded.error.code).toBe('SNAPSHOT_READ_FAILED')
+        expect(loaded.error.message).toContain('Failed to load compare')
+      }
+    } finally {
+      ;(git as any).readSnapshotManifest = originalRead
+    }
   })
 
   it('restores a previous snapshot onto disk and into current project state', async () => {

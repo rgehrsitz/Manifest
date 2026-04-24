@@ -6,6 +6,7 @@ import type { Result, AppError } from './types'
 export const ErrorCode = {
   GIT_CORRUPT:           'GIT_CORRUPT',
   GIT_COMMIT_FAILED:     'GIT_COMMIT_FAILED',
+  SNAPSHOT_READ_FAILED:  'SNAPSHOT_READ_FAILED',
   GIT_NOT_FOUND:         'GIT_NOT_FOUND',
   DIFF_TIMEOUT:          'DIFF_TIMEOUT',
   INVALID_HIERARCHY:     'INVALID_HIERARCHY',

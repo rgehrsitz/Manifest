@@ -532,7 +532,7 @@ export class ProjectManager {
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
       this.logger.error('snapshot compare failed', { path: this.currentProject.path, from: a, to: b, error: msg })
-      return err(ErrorCode.GIT_COMMIT_FAILED, `Failed to compare snapshots: ${msg}`)
+      return err(ErrorCode.SNAPSHOT_READ_FAILED, `Failed to compare snapshots: ${msg}`)
     }
   }
 
@@ -555,7 +555,7 @@ export class ProjectManager {
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
       this.logger.error('snapshot loadCompare failed', { path: this.currentProject.path, from: a, to: b, error: msg })
-      return err(ErrorCode.GIT_COMMIT_FAILED, `Failed to load compare: ${msg}`)
+      return err(ErrorCode.SNAPSHOT_READ_FAILED, `Failed to load compare: ${msg}`)
     }
   }
 
