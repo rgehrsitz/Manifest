@@ -96,12 +96,12 @@
   const workingCopyDescription = $derived.by(() => {
     if (workingCopyBaseSnapshot) {
       return workingCopyDirty
-        ? `The working copy started from "${workingCopyBaseSnapshot}" and has edits that are not in that snapshot.`
-        : `The working copy currently matches "${workingCopyBaseSnapshot}".`
+        ? 'The current project has changes that are not saved in a snapshot yet.'
+        : `The current project matches "${workingCopyBaseSnapshot}".`
     }
     return workingCopyDirty
-      ? 'The working copy has edits that are not saved in a snapshot yet.'
-      : 'You are editing the working copy. Saved snapshots are read-only history points.'
+      ? 'The current project has changes that are not saved in a snapshot yet.'
+      : 'You are editing the current project. Saved snapshots are read-only history points.'
   })
 
   const groupedDiffs = $derived(
@@ -184,7 +184,7 @@
           {workingCopyDescription}
         </p>
       </div>
-      <h3 class="text-[10px] font-semibold uppercase tracking-wide text-stone-500">Create Snapshot from Working Copy</h3>
+      <h3 class="text-[10px] font-semibold uppercase tracking-wide text-stone-500">Create Snapshot from Current Project</h3>
       <input
         type="text"
         bind:value={snapshotName}
@@ -203,7 +203,7 @@
                disabled:cursor-not-allowed"
         data-testid="create-snapshot-btn"
       >
-        {creating ? 'Creating…' : 'Save Working Copy as Snapshot'}
+        {creating ? 'Creating…' : 'Save Current Project as Snapshot'}
       </button>
     </section>
 
@@ -257,7 +257,7 @@
                          cursor-default"
                   data-testid="restore-snapshot-btn"
                 >
-                  {restoringName === snapshot.name ? '…' : 'Restore to Working Copy'}
+                  {restoringName === snapshot.name ? '…' : 'Revert Current Project'}
                 </button>
               </div>
             </div>

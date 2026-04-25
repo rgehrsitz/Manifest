@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdirSync, readFileSync, rmSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { ProjectManager } from '../../../src/main/project-manager'
@@ -125,7 +125,7 @@ describe('snapshot workflow', () => {
     }
   })
 
-  it('restores a previous snapshot onto disk and into current project state', async () => {
+  it('reverts a previous snapshot onto disk and into current project state', async () => {
     const rootId = manager.getCurrent()!.nodes.find((node) => node.parentId === null)!.id
     manager.nodeCreate(rootId, 'Rack A')
     await manager.snapshotCreate('baseline')
@@ -133,8 +133,13 @@ describe('snapshot workflow', () => {
     const rack = manager.getCurrent()!.nodes.find((node) => node.name === 'Rack A')!
     manager.nodeUpdate(rack.id, { name: 'Rack Alpha', properties: { serial: 'SN-42' } })
 
-    const restored = await manager.snapshotRestore('baseline')
-    expect(restored.ok).toBe(true)
+    const reverted = await manager.snapshotRevert({ name: 'baseline' })
+    expect(reverted.ok).toBe(true)
+    if (!reverted.ok) return
+    expect(reverted.data.event.type).toBe('revert')
+    expect(reverted.data.event.targetSnapshotId).toBe('baseline')
+    expect(reverted.data.safetyRecoveryPoint).not.toBeNull()
+    expect(existsSync(join(projectDir, reverted.data.safetyRecoveryPoint!.manifestPath))).toBe(true)
 
     const current = manager.getCurrent()!
     expect(current.nodes.some((node) => node.name === 'Rack A')).toBe(true)
@@ -143,5 +148,47 @@ describe('snapshot workflow', () => {
     const manifest = JSON.parse(readFileSync(join(projectDir, 'manifest.json'), 'utf8'))
     expect(manifest.nodes.some((node: { name: string }) => node.name === 'Rack A')).toBe(true)
     expect(manifest.nodes.some((node: { name: string }) => node.name === 'Rack Alpha')).toBe(false)
+  })
+
+  it('requires a note when reverting past later snapshots and records lineage on the next snapshot', async () => {
+    const rootId = manager.getCurrent()!.nodes.find((node) => node.parentId === null)!.id
+    manager.nodeCreate(rootId, 'Rack A')
+    const baseline = await manager.snapshotCreate('baseline')
+    expect(baseline.ok).toBe(true)
+
+    const rack = manager.getCurrent()!.nodes.find((node) => node.name === 'Rack A')!
+    manager.nodeUpdate(rack.id, { name: 'Rack Alpha' })
+    const upgraded = await manager.snapshotCreate('upgraded')
+    expect(upgraded.ok).toBe(true)
+
+    const missingNote = await manager.snapshotRevert({ name: 'baseline' })
+    expect(missingNote.ok).toBe(false)
+    if (!missingNote.ok) {
+      expect(missingNote.error.code).toBe('VALIDATION_FAILED')
+    }
+
+    const reverted = await manager.snapshotRevert({
+      name: 'baseline',
+      note: 'Rolled back from upgraded to retry failed test',
+    })
+    expect(reverted.ok).toBe(true)
+    if (!reverted.ok) return
+    expect(reverted.data.event.note).toBe('Rolled back from upgraded to retry failed test')
+    expect(reverted.data.safetyRecoveryPoint).toBeNull()
+
+    const currentRack = manager.getCurrent()!.nodes.find((node) => node.name === 'Rack A')!
+    manager.nodeUpdate(currentRack.id, { properties: { firmware: '2.0.1-alt' } })
+    const alternate = await manager.snapshotCreate('alternate')
+    expect(alternate.ok).toBe(true)
+    if (!alternate.ok) return
+    expect(alternate.data.basedOnSnapshotId).toBe('baseline')
+    expect(alternate.data.createdAfterRevertEventId).toBe(reverted.data.event.id)
+
+    const listed = await manager.snapshotList()
+    expect(listed.ok).toBe(true)
+    if (!listed.ok) return
+    const alternateListed = listed.data.find((snapshot) => snapshot.name === 'alternate')
+    expect(alternateListed?.basedOnSnapshotId).toBe('baseline')
+    expect(alternateListed?.createdAfterRevertEventId).toBe(reverted.data.event.id)
   })
 })

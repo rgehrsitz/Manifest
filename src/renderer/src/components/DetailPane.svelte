@@ -24,7 +24,7 @@
     project,
     renameRequestId = 0,
     readOnly = false,
-    readOnlyReason = 'Exit read-only mode to edit the working copy.',
+    readOnlyReason = 'Exit read-only mode to edit the current project.',
     onUpdate,
     onError,
   }: Props = $props()

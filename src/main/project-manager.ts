@@ -20,10 +20,21 @@
 //                      └──▶ return Result<Project>
 //
 
-import { mkdirSync, writeFileSync, readFileSync, renameSync, statSync } from 'fs'
+import { existsSync, mkdirSync, writeFileSync, readFileSync, renameSync, statSync } from 'fs'
 import { join } from 'path'
 import { v7 as uuidv7 } from 'uuid'
-import type { Project, ManifestNode, SearchResult, Result, Snapshot, DiffEntry } from '../shared/types'
+import type {
+  Project,
+  ManifestNode,
+  SearchResult,
+  Result,
+  Snapshot,
+  DiffEntry,
+  SnapshotRevertRequest,
+  SnapshotRevertResult,
+  SnapshotTimelineEvent,
+  RecoveryPoint,
+} from '../shared/types'
 import { ok, err, ErrorCode } from '../shared/errors'
 import { migrate, getCurrentVersion } from '../shared/migration'
 import { validateNodeName, validatePropertyKey, validatePropertyValue, validateSnapshotName } from '../shared/validation'
@@ -36,6 +47,29 @@ import { SearchIndexService } from './search-index'
 
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024  // 50 MB
 const AUTOSAVE_DEBOUNCE_MS = 2500              // 2.5 seconds
+
+interface SnapshotHistoryState {
+  version: 1
+  currentBaseSnapshotId: string | null
+  pendingRevertEventId: string | null
+  snapshots: Record<string, {
+    id: string
+    basedOnSnapshotId: string | null
+    createdAfterRevertEventId: string | null
+    note: string | null
+  }>
+  events: SnapshotTimelineEvent[]
+  recoveryPoints: RecoveryPoint[]
+}
+
+const EMPTY_HISTORY: SnapshotHistoryState = {
+  version: 1,
+  currentBaseSnapshotId: null,
+  pendingRevertEventId: null,
+  snapshots: {},
+  events: [],
+  recoveryPoints: [],
+}
 
 export class ProjectManager {
   private currentProject: Project | null = null
@@ -487,8 +521,31 @@ export class ProjectManager {
 
     try {
       const snapshot = await this.git.createSnapshot(this.currentProject.path!, name)
+      const history = this.readSnapshotHistory()
+      const event: SnapshotTimelineEvent = {
+        id: uuidv7(),
+        type: 'snapshot',
+        createdAt: snapshot.createdAt,
+        snapshotId: snapshot.id,
+      }
+      const snapshotMeta = {
+        id: snapshot.id,
+        basedOnSnapshotId: history.currentBaseSnapshotId,
+        createdAfterRevertEventId: history.pendingRevertEventId,
+        note: null,
+      }
+      history.snapshots[snapshot.id] = snapshotMeta
+      history.events.push(event)
+      history.currentBaseSnapshotId = snapshot.id
+      history.pendingRevertEventId = null
+      this.writeSnapshotHistory(history)
       this.logger.info('snapshot created', { name, path: this.currentProject.path })
-      return ok(snapshot)
+      return ok({
+        ...snapshot,
+        basedOnSnapshotId: snapshotMeta.basedOnSnapshotId,
+        createdAfterRevertEventId: snapshotMeta.createdAfterRevertEventId,
+        note: snapshotMeta.note,
+      })
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
       const code = msg.includes('already exists') ? ErrorCode.VALIDATION_FAILED : ErrorCode.GIT_COMMIT_FAILED
@@ -507,7 +564,7 @@ export class ProjectManager {
 
     try {
       const snapshots = await this.git.listSnapshots(this.currentProject.path)
-      return ok(snapshots)
+      return ok(this.withSnapshotMetadata(snapshots))
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
       this.logger.error('snapshot list failed', { path: this.currentProject.path, error: msg })
@@ -574,7 +631,7 @@ export class ProjectManager {
     return ok({ projectA: projectA.data, projectB: projectB.data, diffs })
   }
 
-  async snapshotRestore(name: string): Promise<Result<void>> {
+  async snapshotRevert(request: SnapshotRevertRequest): Promise<Result<SnapshotRevertResult>> {
     if (!this.currentProject?.path) {
       return err(ErrorCode.PROJECT_NOT_FOUND, 'No project is currently open')
     }
@@ -582,9 +639,20 @@ export class ProjectManager {
     this.cancelAutosave()
 
     try {
+      const name = request.name
+      const note = request.note?.trim() || null
+      const noteRequirement = await this.requiresRevertNote(name)
+      if (!noteRequirement.ok) return noteRequirement as Result<SnapshotRevertResult>
+      if (noteRequirement.data && !note) {
+        return err(
+          ErrorCode.VALIDATION_FAILED,
+          'A revert note is required because this snapshot has later snapshots in the timeline.'
+        )
+      }
+
       const raw = await this.git.readSnapshotManifest(this.currentProject.path, name)
       const restored = this.parseManifestJson(raw)
-      if (!restored.ok) return restored as Result<void>
+      if (!restored.ok) return restored as Result<SnapshotRevertResult>
 
       const previousProject = this.currentProject
       const restoredProject: Project = {
@@ -592,9 +660,11 @@ export class ProjectManager {
         path: previousProject.path,
       }
 
+      const safetyRecoveryPoint = await this.createSafetyRecoveryPointIfNeeded(previousProject)
+
       const searchResult = this.rebuildSearchIndex(restoredProject, 'rebuild')
       if (!searchResult.ok) {
-        return searchResult
+        return searchResult as Result<SnapshotRevertResult>
       }
 
       this.currentProject = restoredProject
@@ -603,16 +673,39 @@ export class ProjectManager {
       if (!writeResult.ok) {
         this.currentProject = previousProject
         this.restoreSearchIndex(previousProject)
-        return writeResult
+        return writeResult as Result<SnapshotRevertResult>
       }
 
-      this.logger.info('snapshot restored', { name, path: this.currentProject.path })
-      return ok(undefined as void)
+      const event: SnapshotTimelineEvent = {
+        id: uuidv7(),
+        type: 'revert',
+        createdAt: new Date().toISOString(),
+        targetSnapshotId: name,
+        note,
+        safetyRecoveryPointId: safetyRecoveryPoint?.id ?? null,
+      }
+      const history = this.readSnapshotHistory()
+      history.events.push(event)
+      history.currentBaseSnapshotId = name
+      history.pendingRevertEventId = event.id
+      if (safetyRecoveryPoint) {
+        history.recoveryPoints.push(safetyRecoveryPoint)
+      }
+      this.writeSnapshotHistory(history)
+
+      this.logger.info('snapshot reverted', { name, path: this.currentProject.path, eventId: event.id })
+      return ok({ event, safetyRecoveryPoint })
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
-      this.logger.error('snapshot restore failed', { name, path: this.currentProject.path, error: msg })
-      return err(ErrorCode.GIT_COMMIT_FAILED, `Failed to restore snapshot: ${msg}`)
+      this.logger.error('snapshot revert failed', { name: request.name, path: this.currentProject.path, error: msg })
+      return err(ErrorCode.GIT_COMMIT_FAILED, `Failed to revert snapshot: ${msg}`)
     }
+  }
+
+  /** @deprecated Use snapshotRevert. */
+  async snapshotRestore(name: string): Promise<Result<void>> {
+    const reverted = await this.snapshotRevert({ name })
+    return reverted.ok ? ok(undefined as void) : reverted
   }
 
   // ─── Autosave ───────────────────────────────────────────────────────────────
@@ -712,6 +805,118 @@ export class ProjectManager {
     if (!rebuilt.ok) {
       this.search.close()
     }
+  }
+
+  private withSnapshotMetadata(snapshots: Snapshot[]): Snapshot[] {
+    const history = this.readSnapshotHistory()
+    return snapshots.map(snapshot => {
+      const meta = history.snapshots[snapshot.id]
+      return {
+        ...snapshot,
+        basedOnSnapshotId: meta?.basedOnSnapshotId ?? null,
+        createdAfterRevertEventId: meta?.createdAfterRevertEventId ?? null,
+        note: meta?.note ?? null,
+      }
+    })
+  }
+
+  private async requiresRevertNote(targetSnapshotName: string): Promise<Result<boolean>> {
+    if (!this.currentProject?.path) {
+      return err(ErrorCode.PROJECT_NOT_FOUND, 'No project is currently open')
+    }
+
+    const history = this.readSnapshotHistory()
+    const targetEventIndex = history.events.findIndex(
+      event => event.type === 'snapshot' && event.snapshotId === targetSnapshotName
+    )
+    if (targetEventIndex >= 0) {
+      return ok(history.events
+        .slice(targetEventIndex + 1)
+        .some(event => event.type === 'snapshot'))
+    }
+
+    const snapshots = await this.git.listSnapshots(this.currentProject.path)
+    const targetIndex = snapshots.findIndex(snapshot => snapshot.name === targetSnapshotName)
+    if (targetIndex < 0) return ok(false)
+
+    // listSnapshots sorts newest first; any earlier array item is a later timeline snapshot.
+    return ok(targetIndex > 0)
+  }
+
+  private async createSafetyRecoveryPointIfNeeded(project: Project): Promise<RecoveryPoint | null> {
+    if (!project.path) return null
+
+    const current = this.serializeProjectForPersistence(project)
+    let head = ''
+    try {
+      head = this.canonicalizeManifestJson(await this.git.readHeadManifest(project.path))
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      this.logger.warn('could not compare current project to HEAD before revert', { path: project.path, error: msg })
+    }
+
+    if (head && head === current) return null
+
+    const id = `recovery-${uuidv7()}`
+    const recoveryDir = join(project.path, '.manifest', 'recovery')
+    const manifestPath = join('.manifest', 'recovery', `${id}.manifest.json`)
+    mkdirSync(recoveryDir, { recursive: true })
+    writeFileSync(join(project.path, manifestPath), current, 'utf8')
+
+    return {
+      id,
+      createdAt: new Date().toISOString(),
+      reason: 'pre-revert',
+      manifestPath,
+    }
+  }
+
+  private readSnapshotHistory(): SnapshotHistoryState {
+    const projectPath = this.currentProject?.path
+    if (!projectPath) return { ...EMPTY_HISTORY, snapshots: {}, events: [], recoveryPoints: [] }
+
+    const historyPath = this.snapshotHistoryPath(projectPath)
+    if (!existsSync(historyPath)) {
+      return { ...EMPTY_HISTORY, snapshots: {}, events: [], recoveryPoints: [] }
+    }
+
+    try {
+      const parsed = JSON.parse(readFileSync(historyPath, 'utf8')) as Partial<SnapshotHistoryState>
+      return {
+        version: 1,
+        currentBaseSnapshotId: parsed.currentBaseSnapshotId ?? null,
+        pendingRevertEventId: parsed.pendingRevertEventId ?? null,
+        snapshots: parsed.snapshots ?? {},
+        events: parsed.events ?? [],
+        recoveryPoints: parsed.recoveryPoints ?? [],
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      this.logger.warn('snapshot history read failed; starting fresh history metadata', { path: historyPath, error: msg })
+      return { ...EMPTY_HISTORY, snapshots: {}, events: [], recoveryPoints: [] }
+    }
+  }
+
+  private writeSnapshotHistory(history: SnapshotHistoryState): void {
+    const projectPath = this.currentProject?.path
+    if (!projectPath) return
+
+    const manifestDir = join(projectPath, '.manifest')
+    mkdirSync(manifestDir, { recursive: true })
+    writeFileSync(this.snapshotHistoryPath(projectPath), JSON.stringify(history, null, 2), 'utf8')
+  }
+
+  private snapshotHistoryPath(projectPath: string): string {
+    return join(projectPath, '.manifest', 'history.json')
+  }
+
+  private serializeProjectForPersistence(project: Project): string {
+    const { path: _path, ...persistable } = project
+    return JSON.stringify(persistable, null, 2)
+  }
+
+  private canonicalizeManifestJson(raw: string): string {
+    return JSON.stringify(JSON.parse(raw), null, 2)
   }
 
   // Collect id of node + all its descendants.

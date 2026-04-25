@@ -35,11 +35,18 @@ class SerialQueue {
   private async drain(): Promise<void> {
     if (this.running) return
     this.running = true
-    while (this.queue.length > 0) {
-      const task = this.queue.shift()!
-      await task()
+    try {
+      while (this.queue.length > 0) {
+        const task = this.queue.shift()!
+        try {
+          await task()
+        } catch {
+          // task() rejects its caller directly; keep draining later work.
+        }
+      }
+    } finally {
+      this.running = false
     }
-    this.running = false
   }
 }
 
@@ -110,7 +117,7 @@ export class GitService {
       )
       await execFileAsync('git', ['tag', `${SNAPSHOT_TAG_PREFIX}${name}`], { cwd: projectDir })
 
-      const snapshot = await this.readSnapshot(projectDir, name)
+      const snapshot = await this.readSnapshotUnchecked(projectDir, name)
       this.logger.info('snapshot created', { dir: projectDir, name, commitHash: snapshot.commitHash })
       return snapshot
     })
@@ -136,10 +143,14 @@ export class GitService {
         .map((line) => {
           const [refname, commitHash, createdAt, message] = line.split('\t')
           return {
+            id: refname.replace(/^refs\/tags\/snapshot\//, ''),
             name: refname.replace(/^refs\/tags\/snapshot\//, ''),
             commitHash,
             createdAt,
             message,
+            basedOnSnapshotId: null,
+            createdAfterRevertEventId: null,
+            note: null,
           }
         })
 
@@ -157,7 +168,16 @@ export class GitService {
     })
   }
 
-  private async readSnapshot(projectDir: string, name: string): Promise<Snapshot> {
+  async readHeadManifest(projectDir: string): Promise<string> {
+    return this.queue.enqueue(async () => {
+      const { stdout } = await execFileAsync('git', ['show', 'HEAD:manifest.json'], {
+        cwd: projectDir,
+      })
+      return stdout
+    })
+  }
+
+  private async readSnapshotUnchecked(projectDir: string, name: string): Promise<Snapshot> {
     const { stdout } = await execFileAsync(
       'git',
       [
@@ -174,11 +194,16 @@ export class GitService {
     }
 
     const [refname, commitHash, createdAt, message] = line.split('\t')
+    const snapshotName = refname.replace(/^refs\/tags\/snapshot\//, '')
     return {
-      name: refname.replace(/^refs\/tags\/snapshot\//, ''),
+      id: snapshotName,
+      name: snapshotName,
       commitHash,
       createdAt,
       message,
+      basedOnSnapshotId: null,
+      createdAfterRevertEventId: null,
+      note: null,
     }
   }
 }

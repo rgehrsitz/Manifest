@@ -132,11 +132,9 @@
       return `Comparing ${mergedTree.fromSnapshot} -> ${mergedTree.toSnapshot}`
     }
     if (workingCopyBaseSnapshot) {
-      return workingCopyDirty
-        ? `Working copy - modified since ${workingCopyBaseSnapshot}`
-        : `Working copy - matches ${workingCopyBaseSnapshot}`
+      return workingCopyDirty ? 'Unsnapshotted changes' : `Current project matches ${workingCopyBaseSnapshot}`
     }
-    return workingCopyDirty ? 'Working copy - unsnapshotted changes' : 'Working copy'
+    return workingCopyDirty ? 'Unsnapshotted changes' : 'Current Project'
   })
 
   // ─── Lifecycle ────────────────────────────────────────────────────────────
@@ -293,7 +291,7 @@
 
   function handleAddChild(parentId: string) {
     if (compareMode) {
-      showToast('Exit compare to edit the working copy.')
+      showToast('Exit compare to edit the current project.')
       return
     }
     addingChildTo = parentId
@@ -304,7 +302,7 @@
 
   async function commitAddChild() {
     if (compareMode) {
-      showToast('Exit compare to edit the working copy.')
+      showToast('Exit compare to edit the current project.')
       return
     }
     if (!addingChildTo || !addingChildName.trim()) {
@@ -362,7 +360,7 @@
 
   function handleMoveTo(id: string) {
     if (compareMode) {
-      showToast('Exit compare to edit the working copy.')
+      showToast('Exit compare to edit the current project.')
       return
     }
     moveToNodeId = id
@@ -404,7 +402,7 @@
 
   function handleRenameRequest() {
     if (compareMode) {
-      showToast('Exit compare to edit the working copy.')
+      showToast('Exit compare to edit the current project.')
       return
     }
     // Bump the signal counter — DetailPane's $effect will call startEditName().
@@ -416,7 +414,7 @@
     changes: { name?: string; properties?: Record<string, string | number | boolean | null> }
   ) {
     if (compareMode) {
-      showToast('Exit compare to edit the working copy.')
+      showToast('Exit compare to edit the current project.')
       return
     }
     const result = await window.api.node.update(id, changes)
@@ -564,23 +562,58 @@
   }
 
   async function handleSnapshotRestore(name: string) {
-    const confirmed = window.confirm(`Restore snapshot "${name}" into the working copy? Current unsnapshotted changes will be replaced. The snapshot itself will not be changed.`)
+    let note: string | null = null
+    const requiresNote = snapshotHasLaterSnapshots(name)
+
+    if (requiresNote) {
+      note = window.prompt(
+        `Why are you reverting the current project to "${name}"? This note will be saved in the snapshot timeline.`
+      )
+      if (!note?.trim()) {
+        snapshotError = 'A revert note is required because this snapshot has later snapshots in the timeline.'
+        return
+      }
+    }
+
+    const confirmed = window.confirm(`Revert the current project to snapshot "${name}"? The snapshot will not change, and later snapshots will remain in the timeline.`)
     if (!confirmed) return
 
     snapshotRestoringName = name
     snapshotError = null
-    const result = await window.api.snapshot.restore(name)
-    snapshotRestoringName = null
+    try {
+      let result = await window.api.snapshot.revert({ name, note })
 
-    if (result.ok) {
-      await reloadCurrentProject()
-      exitCompareMode()
-      workingCopyBaseSnapshot = name
-      workingCopyDirty = false
-      showToast(`Copied snapshot "${name}" into the working copy`)
-    } else {
-      snapshotError = result.error.message
+      if (!result.ok && result.error.code === 'VALIDATION_FAILED' && result.error.message.includes('revert note is required')) {
+        note = window.prompt(
+          `Why are you reverting the current project to "${name}"? This note will be saved in the snapshot timeline.`
+        )
+        if (note?.trim()) {
+          result = await window.api.snapshot.revert({ name, note })
+        }
+      }
+
+      snapshotRestoringName = null
+
+      if (result.ok) {
+        await reloadCurrentProject()
+        exitCompareMode()
+        workingCopyBaseSnapshot = name
+        workingCopyDirty = false
+        showToast(`Reverted current project to "${name}"`)
+      } else {
+        snapshotError = result.error.message
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      snapshotRestoringName = null
+      snapshotError = `Failed to revert snapshot: ${message}`
     }
+  }
+
+  function snapshotHasLaterSnapshots(name: string): boolean {
+    const index = snapshots.findIndex(snapshot => snapshot.name === name)
+    // Snapshots are listed newest first; any earlier row is a later timeline snapshot.
+    return index > 0
   }
 
   // ─── Utilities ────────────────────────────────────────────────────────────
@@ -930,7 +963,7 @@
           {renameRequestId}
           readOnly={compareMode}
           readOnlyReason={compareMode && mergedTree
-            ? `Viewing ${mergedTree.fromSnapshot} -> ${mergedTree.toSnapshot}. Snapshots are read-only; exit compare to edit the working copy.`
+            ? `Viewing ${mergedTree.fromSnapshot} -> ${mergedTree.toSnapshot}. Snapshots are read-only; exit compare to edit the current project.`
             : undefined}
           onUpdate={handleNodeUpdate}
           onError={showToast}

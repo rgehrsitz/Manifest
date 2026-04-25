@@ -126,7 +126,7 @@ function registerIpcHandlers(): void {
     return result.canceled ? null : result.filePaths[0]
   })
 
-  // ── Phase 3+ stubs ───────────────────────────────────────────────────────
+  // ── Snapshots ────────────────────────────────────────────────────────────
 
   ipcMain.handle(IPC.SNAPSHOT_CREATE, (_, { name }: { name: string }) =>
     projectManager.snapshotCreate(name)
@@ -142,6 +142,10 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC.SNAPSHOT_LOAD_COMPARE, (_, { a, b }: { a: string; b: string }) =>
     projectManager.snapshotLoadCompare(a, b)
+  )
+
+  ipcMain.handle(IPC.SNAPSHOT_REVERT, (_, request: { name: string; note?: string | null }) =>
+    projectManager.snapshotRevert(request)
   )
 
   ipcMain.handle(IPC.SNAPSHOT_RESTORE, (_, { name }: { name: string }) =>

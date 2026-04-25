@@ -46,10 +46,43 @@ export interface DiffEntry {
 }
 
 export interface Snapshot {
+  id: string
   name: string
   commitHash: string
   createdAt: string // ISO 8601
   message: string
+  basedOnSnapshotId: string | null
+  createdAfterRevertEventId: string | null
+  note: string | null
+}
+
+export type TimelineEventType = 'snapshot' | 'revert'
+
+export interface SnapshotTimelineEvent {
+  id: string
+  type: TimelineEventType
+  createdAt: string // ISO 8601
+  snapshotId?: string
+  targetSnapshotId?: string
+  note?: string | null
+  safetyRecoveryPointId?: string | null
+}
+
+export interface RecoveryPoint {
+  id: string
+  createdAt: string // ISO 8601
+  reason: 'pre-revert'
+  manifestPath: string
+}
+
+export interface SnapshotRevertRequest {
+  name: string
+  note?: string | null
+}
+
+export interface SnapshotRevertResult {
+  event: SnapshotTimelineEvent
+  safetyRecoveryPoint: RecoveryPoint | null
 }
 
 export interface SearchResult {
