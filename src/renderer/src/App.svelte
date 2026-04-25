@@ -147,6 +147,20 @@
     return workingCopyDirty ? 'Unsnapshotted changes' : 'Current Project'
   })
 
+  // Tree edits are locked while comparing, reverting, or applying a recovery point.
+  // Each of those operations mutates currentProject in main; interleaving a renderer
+  // mutation can leave the project in a half-restored state.
+  const editingLocked = $derived(
+    compareMode || snapshotRestoringName !== null || recoveryApplyingId !== null
+  )
+
+  function lockReason(): string {
+    if (compareMode) return 'Exit compare to edit the current project.'
+    if (snapshotRestoringName) return 'Wait for revert to finish before editing.'
+    if (recoveryApplyingId) return 'Wait for recovery to finish before editing.'
+    return ''
+  }
+
   // ─── Lifecycle ────────────────────────────────────────────────────────────
 
   onMount(async () => {
@@ -300,8 +314,8 @@
   }
 
   function handleAddChild(parentId: string) {
-    if (compareMode) {
-      showToast('Exit compare to edit the current project.')
+    if (editingLocked) {
+      showToast(lockReason())
       return
     }
     addingChildTo = parentId
@@ -311,8 +325,8 @@
   }
 
   async function commitAddChild() {
-    if (compareMode) {
-      showToast('Exit compare to edit the current project.')
+    if (editingLocked) {
+      showToast(lockReason())
       return
     }
     if (!addingChildTo || !addingChildName.trim()) {
@@ -342,7 +356,7 @@
   }
 
   async function handleMoveUp(id: string) {
-    if (!project || compareMode) return
+    if (!project || editingLocked) return
     const idx = getSiblingIndex(id, project.nodes)
     if (idx <= 0) return
     const result = await window.api.node.move(id, project.nodes.find(n => n.id === id)!.parentId!, idx - 1)
@@ -354,7 +368,7 @@
   }
 
   async function handleMoveDown(id: string) {
-    if (!project || compareMode) return
+    if (!project || editingLocked) return
     const node = project.nodes.find(n => n.id === id)
     if (!node) return
     const siblings = project.nodes.filter(n => n.parentId === node.parentId)
@@ -369,15 +383,15 @@
   }
 
   function handleMoveTo(id: string) {
-    if (compareMode) {
-      showToast('Exit compare to edit the current project.')
+    if (editingLocked) {
+      showToast(lockReason())
       return
     }
     moveToNodeId = id
   }
 
   async function confirmMoveTo(targetParentId: string) {
-    if (!moveToNodeId || compareMode) return
+    if (!moveToNodeId || editingLocked) return
     const result = await window.api.node.move(moveToNodeId, targetParentId, 999)
     moveToNodeId = null
     if (result.ok) {
@@ -388,7 +402,7 @@
   }
 
   async function handleDelete(id: string) {
-    if (!project || compareMode) return
+    if (!project || editingLocked) return
     const node = project.nodes.find(n => n.id === id)
     if (!node) return
 
@@ -411,8 +425,8 @@
   }
 
   function handleRenameRequest() {
-    if (compareMode) {
-      showToast('Exit compare to edit the current project.')
+    if (editingLocked) {
+      showToast(lockReason())
       return
     }
     // Bump the signal counter — DetailPane's $effect will call startEditName().
@@ -423,8 +437,8 @@
     id: string,
     changes: { name?: string; properties?: Record<string, string | number | boolean | null> }
   ) {
-    if (compareMode) {
-      showToast('Exit compare to edit the current project.')
+    if (editingLocked) {
+      showToast(lockReason())
       return
     }
     const result = await window.api.node.update(id, changes)
@@ -969,7 +983,7 @@
                 onRenameRequest={handleRenameRequest}
                 onDelete={handleDelete}
                 onMoveTo={handleMoveTo}
-                editingDisabled={compareMode}
+                editingDisabled={editingLocked}
               />
             </div>
 
@@ -1027,10 +1041,14 @@
           node={selectedNode}
           project={detailProject}
           {renameRequestId}
-          readOnly={compareMode}
+          readOnly={editingLocked}
           readOnlyReason={compareMode && mergedTree
             ? `Viewing ${mergedTree.fromSnapshot} -> ${mergedTree.toSnapshot}. Snapshots are read-only; exit compare to edit the current project.`
-            : undefined}
+            : snapshotRestoringName
+              ? 'Reverting current project — editing will resume when revert finishes.'
+              : recoveryApplyingId
+                ? 'Applying recovery point — editing will resume when recovery finishes.'
+                : undefined}
           onUpdate={handleNodeUpdate}
           onError={showToast}
         />

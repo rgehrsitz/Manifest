@@ -13,6 +13,10 @@
 
   let { recoveryPoint, applying, error, onConfirm, onCancel }: Props = $props()
 
+  const reasonLabel: Record<RecoveryPoint['reason'], string> = {
+    'pre-revert': 'Saved automatically before a revert',
+  }
+
   function handleKeyDown(e: KeyboardEvent) {
     if (e.key === 'Escape' && !applying) onCancel()
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) onConfirm()
@@ -51,7 +55,7 @@
       <div class="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2">
         <p class="text-[10px] font-semibold uppercase tracking-wide text-stone-500">Recovery Point</p>
         <p class="mt-0.5 text-xs text-stone-700">{new Date(recoveryPoint.createdAt).toLocaleString()}</p>
-        <p class="mt-1 break-all text-[10px] text-stone-500">{recoveryPoint.manifestPath}</p>
+        <p class="mt-1 text-[10px] text-stone-500">{reasonLabel[recoveryPoint.reason]}</p>
       </div>
     </div>
 

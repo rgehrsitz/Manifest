@@ -292,8 +292,8 @@
               {/if}
               {#if recoveryPoint}
                 <div class="mt-2 flex items-start justify-between gap-2">
-                  <p class="min-w-0 break-all text-[10px] text-stone-500">
-                    Recovery point: {recoveryPoint.manifestPath}
+                  <p class="min-w-0 text-[10px] text-stone-500">
+                    Recovery point saved before revert
                   </p>
                   <button
                     onclick={() => onApplyRecovery(recoveryPoint.id)}

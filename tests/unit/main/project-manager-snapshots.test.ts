@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { ProjectManager } from '../../../src/main/project-manager'
@@ -214,5 +214,62 @@ describe('snapshot workflow', () => {
     ])
     expect(timeline.data.events.find((event) => event.type === 'revert')?.note)
       .toBe('Rolled back from upgraded to retry failed test')
+  })
+
+  it('caps stored recovery points at MAX_RECOVERY_POINTS and deletes the oldest files', async () => {
+    const rootId = manager.getCurrent()!.nodes.find((node) => node.parentId === null)!.id
+    const baseline = await manager.snapshotCreate('baseline')
+    expect(baseline.ok).toBe(true)
+
+    // 12 revert cycles, each preceded by an unsnapshotted edit so a recovery
+    // point is created. With MAX_RECOVERY_POINTS = 10, the two oldest must be
+    // pruned from history.json AND deleted from disk.
+    const recoveryFiles: string[] = []
+    for (let i = 0; i < 12; i++) {
+      const created = manager.nodeCreate(rootId, `Probe ${i}`)
+      expect(created.ok).toBe(true)
+      const reverted = await manager.snapshotRevert({ name: 'baseline' })
+      expect(reverted.ok).toBe(true)
+      if (!reverted.ok) return
+      expect(reverted.data.safetyRecoveryPoint).not.toBeNull()
+      recoveryFiles.push(reverted.data.safetyRecoveryPoint!.manifestPath)
+    }
+
+    const timeline = await manager.snapshotTimeline()
+    expect(timeline.ok).toBe(true)
+    if (!timeline.ok) return
+    expect(timeline.data.recoveryPoints.length).toBe(10)
+
+    // The two oldest recovery files should have been deleted; the newest 10 remain.
+    expect(existsSync(join(projectDir, recoveryFiles[0]))).toBe(false)
+    expect(existsSync(join(projectDir, recoveryFiles[1]))).toBe(false)
+    for (let i = 2; i < 12; i++) {
+      expect(existsSync(join(projectDir, recoveryFiles[i]))).toBe(true)
+    }
+  })
+
+  it('reads malformed and newer-version history files by starting fresh', async () => {
+    const rootId = manager.getCurrent()!.nodes.find((node) => node.parentId === null)!.id
+    manager.nodeCreate(rootId, 'Rack')
+    await manager.snapshotCreate('baseline')
+
+    const historyPath = join(projectDir, '.manifest', 'history.json')
+
+    // Malformed JSON — read should fall back to empty history; timeline still
+    // works (synthesized from git tags).
+    writeFileSync(historyPath, '{not valid json', 'utf8')
+    const malformed = await manager.snapshotTimeline()
+    expect(malformed.ok).toBe(true)
+    if (!malformed.ok) return
+    expect(malformed.data.events.length).toBe(1)
+    expect(malformed.data.events[0].snapshotId).toBe('baseline')
+
+    // Newer-than-known version — refuse silently and start fresh.
+    writeFileSync(historyPath, JSON.stringify({ version: 999, events: [], recoveryPoints: [] }), 'utf8')
+    const newer = await manager.snapshotTimeline()
+    expect(newer.ok).toBe(true)
+    if (!newer.ok) return
+    expect(newer.data.events.length).toBe(1)
+    expect(newer.data.recoveryPoints).toEqual([])
   })
 })

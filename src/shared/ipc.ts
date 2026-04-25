@@ -41,7 +41,6 @@ export const IPC = {
   SNAPSHOT_REVERT:       'snapshot:revert',
   SNAPSHOT_TIMELINE:     'snapshot:timeline',
   RECOVERY_APPLY:        'recovery:apply',
-  SNAPSHOT_RESTORE:      'snapshot:restore',
   GIT_CHECK:           'git:check',
   // UI utility channels (not domain operations)
   DIALOG_OPEN_FOLDER:  'dialog:openFolder',
@@ -86,8 +85,6 @@ export interface ManifestAPI {
     revert(request: SnapshotRevertRequest): Promise<Result<SnapshotRevertResult>>
     timeline(): Promise<Result<SnapshotTimeline>>
     applyRecovery(request: RecoveryPointApplyRequest): Promise<Result<RecoveryPointApplyResult>>
-    /** @deprecated Use revert(). */
-    restore(name: string): Promise<Result<void>>
   }
   git: {
     check(): Promise<Result<GitStatus>>

@@ -20,7 +20,7 @@
 //                      └──▶ return Result<Project>
 //
 
-import { existsSync, mkdirSync, writeFileSync, readFileSync, renameSync, statSync } from 'fs'
+import { existsSync, mkdirSync, writeFileSync, readFileSync, renameSync, statSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import { v7 as uuidv7 } from 'uuid'
 import type {
@@ -40,6 +40,11 @@ import type {
 } from '../shared/types'
 import { ok, err, ErrorCode } from '../shared/errors'
 import { migrate, getCurrentVersion } from '../shared/migration'
+import {
+  emptySnapshotHistory,
+  migrateSnapshotHistory,
+  type SnapshotHistoryState,
+} from '../shared/snapshot-history-migration'
 import { validateNodeName, validatePropertyKey, validatePropertyValue, validateSnapshotName } from '../shared/validation'
 import { diffProjects } from '../shared/diff-engine'
 import { buildMergedTree } from '../shared/merged-tree'
@@ -50,29 +55,8 @@ import { SearchIndexService } from './search-index'
 
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024  // 50 MB
 const AUTOSAVE_DEBOUNCE_MS = 2500              // 2.5 seconds
+const MAX_RECOVERY_POINTS = 10                 // cap stored auto-saved recovery points
 
-interface SnapshotHistoryState {
-  version: 1
-  currentBaseSnapshotId: string | null
-  pendingRevertEventId: string | null
-  snapshots: Record<string, {
-    id: string
-    basedOnSnapshotId: string | null
-    createdAfterRevertEventId: string | null
-    note: string | null
-  }>
-  events: SnapshotTimelineEvent[]
-  recoveryPoints: RecoveryPoint[]
-}
-
-const EMPTY_HISTORY: SnapshotHistoryState = {
-  version: 1,
-  currentBaseSnapshotId: null,
-  pendingRevertEventId: null,
-  snapshots: {},
-  events: [],
-  recoveryPoints: [],
-}
 
 export class ProjectManager {
   private currentProject: Project | null = null
@@ -597,9 +581,16 @@ export class ProjectManager {
           createdAt: snapshot.createdAt,
           snapshotId: snapshot.id,
         }))
-      const events = history.events.length > 0
-        ? [...history.events, ...syntheticSnapshotEvents]
-        : syntheticSnapshotEvents.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+      // Recorded events keep their push order (the order they actually happened).
+      // Sorting them by createdAt would shuffle revert/recover events relative to
+      // snapshot events, because git tags carry second-resolution timestamps while
+      // revert/recover events are recorded at millisecond resolution — so a snapshot
+      // and a revert created in the same wall-clock second can swap.
+      // Synthetic events (for snapshots that predate timeline tracking) are sorted
+      // by createdAt and prepended.
+      const sortedSynthetic = [...syntheticSnapshotEvents]
+        .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+      const events = [...sortedSynthetic, ...history.events]
 
       return ok({
         events,
@@ -731,6 +722,7 @@ export class ProjectManager {
       if (safetyRecoveryPoint) {
         history.recoveryPoints.push(safetyRecoveryPoint)
       }
+      this.pruneRecoveryPoints(history)
       this.writeSnapshotHistory(history)
 
       this.logger.info('snapshot reverted', { name, path: this.currentProject.path, eventId: event.id })
@@ -799,6 +791,7 @@ export class ProjectManager {
       if (safetyRecoveryPoint) {
         history.recoveryPoints.push(safetyRecoveryPoint)
       }
+      this.pruneRecoveryPoints(history)
       this.writeSnapshotHistory(history)
 
       this.logger.info('recovery point applied', { id: request.id, path: this.currentProject.path, eventId: event.id })
@@ -808,12 +801,6 @@ export class ProjectManager {
       this.logger.error('recovery point apply failed', { id: request.id, path: this.currentProject.path, error: msg })
       return err(ErrorCode.SNAPSHOT_READ_FAILED, `Failed to apply recovery point: ${msg}`)
     }
-  }
-
-  /** @deprecated Use snapshotRevert. */
-  async snapshotRestore(name: string): Promise<Result<void>> {
-    const reverted = await this.snapshotRevert({ name })
-    return reverted.ok ? ok(undefined as void) : reverted
   }
 
   // ─── Autosave ───────────────────────────────────────────────────────────────
@@ -979,29 +966,46 @@ export class ProjectManager {
     }
   }
 
+  // Keep only the most recent MAX_RECOVERY_POINTS entries on disk and in history.
+  // Mutates `history.recoveryPoints` in place; caller must writeSnapshotHistory.
+  private pruneRecoveryPoints(history: SnapshotHistoryState): void {
+    const projectPath = this.currentProject?.path
+    if (!projectPath) return
+    if (history.recoveryPoints.length <= MAX_RECOVERY_POINTS) return
+
+    const sorted = [...history.recoveryPoints].sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    )
+    const removeCount = sorted.length - MAX_RECOVERY_POINTS
+    const toRemove = sorted.slice(0, removeCount)
+    const removeIds = new Set(toRemove.map(p => p.id))
+
+    for (const point of toRemove) {
+      const filePath = join(projectPath, point.manifestPath)
+      try {
+        if (existsSync(filePath)) unlinkSync(filePath)
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e)
+        this.logger.warn('recovery point file delete failed', { id: point.id, path: filePath, error: msg })
+      }
+    }
+    history.recoveryPoints = history.recoveryPoints.filter(p => !removeIds.has(p.id))
+  }
+
   private readSnapshotHistory(): SnapshotHistoryState {
     const projectPath = this.currentProject?.path
-    if (!projectPath) return { ...EMPTY_HISTORY, snapshots: {}, events: [], recoveryPoints: [] }
+    if (!projectPath) return emptySnapshotHistory()
 
     const historyPath = this.snapshotHistoryPath(projectPath)
-    if (!existsSync(historyPath)) {
-      return { ...EMPTY_HISTORY, snapshots: {}, events: [], recoveryPoints: [] }
-    }
+    if (!existsSync(historyPath)) return emptySnapshotHistory()
 
     try {
-      const parsed = JSON.parse(readFileSync(historyPath, 'utf8')) as Partial<SnapshotHistoryState>
-      return {
-        version: 1,
-        currentBaseSnapshotId: parsed.currentBaseSnapshotId ?? null,
-        pendingRevertEventId: parsed.pendingRevertEventId ?? null,
-        snapshots: parsed.snapshots ?? {},
-        events: parsed.events ?? [],
-        recoveryPoints: parsed.recoveryPoints ?? [],
-      }
+      const parsed = JSON.parse(readFileSync(historyPath, 'utf8'))
+      return migrateSnapshotHistory(parsed)
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
       this.logger.warn('snapshot history read failed; starting fresh history metadata', { path: historyPath, error: msg })
-      return { ...EMPTY_HISTORY, snapshots: {}, events: [], recoveryPoints: [] }
+      return emptySnapshotHistory()
     }
   }
 

@@ -155,10 +155,6 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC.RECOVERY_APPLY, (_, request: { id: string }) =>
     projectManager.recoveryPointApply(request)
   )
-
-  ipcMain.handle(IPC.SNAPSHOT_RESTORE, (_, { name }: { name: string }) =>
-    projectManager.snapshotRestore(name)
-  )
 }
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────
