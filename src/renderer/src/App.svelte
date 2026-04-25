@@ -9,6 +9,7 @@
   import Tree from './components/Tree.svelte'
   import DetailPane from './components/DetailPane.svelte'
   import MoveToDialog from './components/MoveToDialog.svelte'
+  import RevertDialog from './components/RevertDialog.svelte'
   import SnapshotsPanel from './components/SnapshotsPanel.svelte'
 
   type AppState = 'welcome' | 'creating' | 'loading' | 'open'
@@ -51,6 +52,9 @@
   let snapshotComparing: boolean = $state(false)
   let snapshotRestoringName: string | null = $state(null)
   let snapshotError: string | null = $state(null)
+  let revertDialogSnapshotName: string | null = $state(null)
+  let revertDialogNoteRequired: boolean = $state(false)
+  let revertDialogError: string | null = $state(null)
   let workingCopyBaseSnapshot: string | null = $state(null)
   let workingCopyDirty: boolean = $state(false)
 
@@ -574,39 +578,35 @@
   }
 
   async function handleSnapshotRestore(name: string) {
-    let note: string | null = null
-    const requiresNote = snapshotHasLaterSnapshots(name)
+    revertDialogSnapshotName = name
+    revertDialogNoteRequired = false
+    revertDialogError = null
+    snapshotError = null
+  }
 
-    if (requiresNote) {
-      note = window.prompt(
-        `Why are you reverting the current project to "${name}"? This note will be saved in the snapshot timeline.`
-      )
-      if (!note?.trim()) {
-        snapshotError = 'A revert note is required because this snapshot has later snapshots in the timeline.'
-        return
-      }
-    }
-
-    const confirmed = window.confirm(`Revert the current project to snapshot "${name}"? The snapshot will not change, and later snapshots will remain in the timeline.`)
-    if (!confirmed) return
-
+  async function confirmSnapshotRevert(note: string | null) {
+    const name = revertDialogSnapshotName
+    if (!name) return
     snapshotRestoringName = name
     snapshotError = null
+    revertDialogError = null
+
     try {
-      let result = await window.api.snapshot.revert({ name, note })
+      const result = await window.api.snapshot.revert({ name, note })
 
       if (!result.ok && result.error.code === 'VALIDATION_FAILED' && result.error.message.includes('revert note is required')) {
-        note = window.prompt(
-          `Why are you reverting the current project to "${name}"? This note will be saved in the snapshot timeline.`
-        )
-        if (note?.trim()) {
-          result = await window.api.snapshot.revert({ name, note })
-        }
+        snapshotRestoringName = null
+        revertDialogNoteRequired = true
+        revertDialogError = result.error.message
+        return
       }
 
       snapshotRestoringName = null
 
       if (result.ok) {
+        revertDialogSnapshotName = null
+        revertDialogNoteRequired = false
+        revertDialogError = null
         await reloadCurrentProject()
         await refreshSnapshots()
         exitCompareMode()
@@ -614,19 +614,20 @@
         workingCopyDirty = false
         showToast(`Reverted current project to "${name}"`)
       } else {
-        snapshotError = result.error.message
+        revertDialogError = result.error.message
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
       snapshotRestoringName = null
-      snapshotError = `Failed to revert snapshot: ${message}`
+      revertDialogError = `Failed to revert snapshot: ${message}`
     }
   }
 
-  function snapshotHasLaterSnapshots(name: string): boolean {
-    const index = snapshots.findIndex(snapshot => snapshot.name === name)
-    // Snapshots are listed newest first; any earlier row is a later timeline snapshot.
-    return index > 0
+  function cancelSnapshotRevert() {
+    if (snapshotRestoringName) return
+    revertDialogSnapshotName = null
+    revertDialogNoteRequired = false
+    revertDialogError = null
   }
 
   // ─── Utilities ────────────────────────────────────────────────────────────
@@ -1021,6 +1022,17 @@
             onRestore={handleSnapshotRestore}
           />
         </div>
+      {/if}
+
+      {#if revertDialogSnapshotName}
+        <RevertDialog
+          snapshotName={revertDialogSnapshotName}
+          noteRequired={revertDialogNoteRequired}
+          error={revertDialogError}
+          reverting={snapshotRestoringName === revertDialogSnapshotName}
+          onConfirm={confirmSnapshotRevert}
+          onCancel={cancelSnapshotRevert}
+        />
       {/if}
 
     </div>

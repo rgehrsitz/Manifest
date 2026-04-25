@@ -108,15 +108,17 @@ test('creates, compares, and reverts snapshots from the renderer surface', async
   await expect(appPage.getByTestId('snapshot-diff-list')).toHaveCount(0)
   await expect(appPage.getByTestId('project-mode-badge')).toHaveText('Current project matches with-rack')
 
-  await appPage.evaluate(() => {
-    window.prompt = () => 'Rolled back to retry the lab test'
-    window.confirm = () => true
-  })
   await appPage
     .getByTestId('snapshot-row')
     .filter({ hasText: 'baseline' })
     .getByTestId('restore-snapshot-btn')
     .click()
+  await expect(appPage.getByTestId('revert-dialog')).toBeVisible()
+  await appPage.getByTestId('revert-confirm-btn').click()
+  await expect(appPage.getByTestId('revert-dialog-error')).toContainText('revert note is required')
+  await appPage.getByTestId('revert-note-input').fill('Rolled back to retry the lab test')
+  await appPage.getByTestId('revert-confirm-btn').click()
+  await expect(appPage.getByTestId('revert-dialog')).toHaveCount(0)
 
   await expect(appPage.getByTestId('snapshot-diff-list')).toHaveCount(0)
   await expect(appPage.getByTestId('project-mode-badge')).toHaveText('Current project matches baseline')
