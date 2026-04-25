@@ -146,13 +146,20 @@ describe('snapshot workflow', () => {
     expect(timeline.data.events.some((event) => event.id === reverted.data.event.id)).toBe(true)
     expect(timeline.data.recoveryPoints.some((point) => point.id === reverted.data.safetyRecoveryPoint!.id)).toBe(true)
 
+    expect(manager.getCurrent()!.nodes.some((node) => node.name === 'Rack A')).toBe(true)
+    expect(manager.getCurrent()!.nodes.some((node) => node.name === 'Rack Alpha')).toBe(false)
+
+    const recovered = await manager.recoveryPointApply({ id: reverted.data.safetyRecoveryPoint!.id })
+    expect(recovered.ok).toBe(true)
+    if (!recovered.ok) return
+    expect(recovered.data.event.type).toBe('recover')
+    expect(recovered.data.event.recoveryPointId).toBe(reverted.data.safetyRecoveryPoint!.id)
+
     const current = manager.getCurrent()!
-    expect(current.nodes.some((node) => node.name === 'Rack A')).toBe(true)
-    expect(current.nodes.some((node) => node.name === 'Rack Alpha')).toBe(false)
+    expect(current.nodes.some((node) => node.name === 'Rack Alpha')).toBe(true)
 
     const manifest = JSON.parse(readFileSync(join(projectDir, 'manifest.json'), 'utf8'))
-    expect(manifest.nodes.some((node: { name: string }) => node.name === 'Rack A')).toBe(true)
-    expect(manifest.nodes.some((node: { name: string }) => node.name === 'Rack Alpha')).toBe(false)
+    expect(manifest.nodes.some((node: { name: string }) => node.name === 'Rack Alpha')).toBe(true)
   })
 
   it('requires a note when reverting past later snapshots and records lineage on the next snapshot', async () => {

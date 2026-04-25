@@ -56,7 +56,7 @@ export interface Snapshot {
   note: string | null
 }
 
-export type TimelineEventType = 'snapshot' | 'revert'
+export type TimelineEventType = 'snapshot' | 'revert' | 'recover'
 
 export interface SnapshotTimelineEvent {
   id: string
@@ -64,6 +64,7 @@ export interface SnapshotTimelineEvent {
   createdAt: string // ISO 8601
   snapshotId?: string
   targetSnapshotId?: string
+  recoveryPointId?: string
   note?: string | null
   safetyRecoveryPointId?: string | null
 }
@@ -81,6 +82,15 @@ export interface SnapshotRevertRequest {
 }
 
 export interface SnapshotRevertResult {
+  event: SnapshotTimelineEvent
+  safetyRecoveryPoint: RecoveryPoint | null
+}
+
+export interface RecoveryPointApplyRequest {
+  id: string
+}
+
+export interface RecoveryPointApplyResult {
   event: SnapshotTimelineEvent
   safetyRecoveryPoint: RecoveryPoint | null
 }

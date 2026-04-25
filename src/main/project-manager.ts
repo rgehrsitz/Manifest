@@ -25,6 +25,8 @@ import { join } from 'path'
 import { v7 as uuidv7 } from 'uuid'
 import type {
   Project,
+  RecoveryPointApplyRequest,
+  RecoveryPointApplyResult,
   ManifestNode,
   SearchResult,
   Result,
@@ -737,6 +739,74 @@ export class ProjectManager {
       const msg = e instanceof Error ? e.message : String(e)
       this.logger.error('snapshot revert failed', { name: request.name, path: this.currentProject.path, error: msg })
       return err(ErrorCode.GIT_COMMIT_FAILED, `Failed to revert snapshot: ${msg}`)
+    }
+  }
+
+  async recoveryPointApply(request: RecoveryPointApplyRequest): Promise<Result<RecoveryPointApplyResult>> {
+    if (!this.currentProject?.path) {
+      return err(ErrorCode.PROJECT_NOT_FOUND, 'No project is currently open')
+    }
+
+    this.cancelAutosave()
+
+    try {
+      const history = this.readSnapshotHistory()
+      const recoveryPoint = history.recoveryPoints.find(point => point.id === request.id)
+      if (!recoveryPoint) {
+        return err(ErrorCode.VALIDATION_FAILED, `Recovery point not found: ${request.id}`)
+      }
+
+      const manifestPath = join(this.currentProject.path, recoveryPoint.manifestPath)
+      if (!existsSync(manifestPath)) {
+        return err(ErrorCode.SNAPSHOT_READ_FAILED, `Recovery manifest not found: ${recoveryPoint.manifestPath}`)
+      }
+
+      const recovered = this.parseManifestJson(readFileSync(manifestPath, 'utf8'))
+      if (!recovered.ok) return recovered as Result<RecoveryPointApplyResult>
+
+      const previousProject = this.currentProject
+      const recoveredProject: Project = {
+        ...recovered.data,
+        path: previousProject.path,
+      }
+
+      const safetyRecoveryPoint = await this.createSafetyRecoveryPointIfNeeded(previousProject)
+
+      const searchResult = this.rebuildSearchIndex(recoveredProject, 'rebuild')
+      if (!searchResult.ok) {
+        return searchResult as Result<RecoveryPointApplyResult>
+      }
+
+      this.currentProject = recoveredProject
+
+      const writeResult = await this.writeManifest(this.currentProject, { touchModified: false })
+      if (!writeResult.ok) {
+        this.currentProject = previousProject
+        this.restoreSearchIndex(previousProject)
+        return writeResult as Result<RecoveryPointApplyResult>
+      }
+
+      const event: SnapshotTimelineEvent = {
+        id: uuidv7(),
+        type: 'recover',
+        createdAt: new Date().toISOString(),
+        recoveryPointId: recoveryPoint.id,
+        safetyRecoveryPointId: safetyRecoveryPoint?.id ?? null,
+      }
+      history.events.push(event)
+      history.currentBaseSnapshotId = null
+      history.pendingRevertEventId = event.id
+      if (safetyRecoveryPoint) {
+        history.recoveryPoints.push(safetyRecoveryPoint)
+      }
+      this.writeSnapshotHistory(history)
+
+      this.logger.info('recovery point applied', { id: request.id, path: this.currentProject.path, eventId: event.id })
+      return ok({ event, safetyRecoveryPoint })
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      this.logger.error('recovery point apply failed', { id: request.id, path: this.currentProject.path, error: msg })
+      return err(ErrorCode.SNAPSHOT_READ_FAILED, `Failed to apply recovery point: ${msg}`)
     }
   }
 

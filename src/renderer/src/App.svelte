@@ -9,6 +9,7 @@
   import Tree from './components/Tree.svelte'
   import DetailPane from './components/DetailPane.svelte'
   import MoveToDialog from './components/MoveToDialog.svelte'
+  import RecoveryDialog from './components/RecoveryDialog.svelte'
   import RevertDialog from './components/RevertDialog.svelte'
   import SnapshotsPanel from './components/SnapshotsPanel.svelte'
 
@@ -55,6 +56,9 @@
   let revertDialogSnapshotName: string | null = $state(null)
   let revertDialogNoteRequired: boolean = $state(false)
   let revertDialogError: string | null = $state(null)
+  let recoveryDialogPoint: RecoveryPoint | null = $state(null)
+  let recoveryApplyingId: string | null = $state(null)
+  let recoveryDialogError: string | null = $state(null)
   let workingCopyBaseSnapshot: string | null = $state(null)
   let workingCopyDirty: boolean = $state(false)
 
@@ -630,6 +634,54 @@
     revertDialogError = null
   }
 
+  async function handleApplyRecovery(id: string) {
+    const recoveryPoint = snapshotRecoveryPoints.find(point => point.id === id)
+    if (!recoveryPoint) {
+      snapshotError = `Recovery point not found: ${id}`
+      return
+    }
+
+    recoveryDialogPoint = recoveryPoint
+    recoveryDialogError = null
+    snapshotError = null
+  }
+
+  async function confirmRecoveryPointApply() {
+    if (!recoveryDialogPoint) return
+
+    recoveryApplyingId = recoveryDialogPoint.id
+    recoveryDialogError = null
+    snapshotError = null
+
+    try {
+      const result = await window.api.snapshot.applyRecovery({ id: recoveryDialogPoint.id })
+      recoveryApplyingId = null
+
+      if (result.ok) {
+        recoveryDialogPoint = null
+        recoveryDialogError = null
+        await reloadCurrentProject()
+        await refreshSnapshots()
+        exitCompareMode()
+        workingCopyBaseSnapshot = null
+        workingCopyDirty = true
+        showToast('Recovered current project from recovery point')
+      } else {
+        recoveryDialogError = result.error.message
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      recoveryApplyingId = null
+      recoveryDialogError = `Failed to apply recovery point: ${message}`
+    }
+  }
+
+  function cancelRecoveryPointApply() {
+    if (recoveryApplyingId) return
+    recoveryDialogPoint = null
+    recoveryDialogError = null
+  }
+
   // ─── Utilities ────────────────────────────────────────────────────────────
 
   function getDescendantCount(nodeId: string, nodes: ManifestNode[]): number {
@@ -1009,6 +1061,7 @@
             creating={snapshotCreating}
             comparing={snapshotComparing}
             restoringName={snapshotRestoringName}
+            recoveringId={recoveryApplyingId}
             error={snapshotError}
             {workingCopyBaseSnapshot}
             {workingCopyDirty}
@@ -1020,6 +1073,7 @@
             onCompare={handleSnapshotCompare}
             onExitCompare={exitCompareMode}
             onRestore={handleSnapshotRestore}
+            onApplyRecovery={handleApplyRecovery}
           />
         </div>
       {/if}
@@ -1032,6 +1086,16 @@
           reverting={snapshotRestoringName === revertDialogSnapshotName}
           onConfirm={confirmSnapshotRevert}
           onCancel={cancelSnapshotRevert}
+        />
+      {/if}
+
+      {#if recoveryDialogPoint}
+        <RecoveryDialog
+          recoveryPoint={recoveryDialogPoint}
+          applying={recoveryApplyingId === recoveryDialogPoint.id}
+          error={recoveryDialogError}
+          onConfirm={confirmRecoveryPointApply}
+          onCancel={cancelRecoveryPointApply}
         />
       {/if}
 

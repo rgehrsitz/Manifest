@@ -22,6 +22,7 @@
     creating: boolean
     comparing: boolean
     restoringName: string | null
+    recoveringId: string | null
     error: string | null
     workingCopyBaseSnapshot?: string | null
     workingCopyDirty?: boolean
@@ -35,6 +36,7 @@
     onCompare: (from: string, to: string) => Promise<void>
     onExitCompare: () => void
     onRestore: (name: string) => Promise<void>
+    onApplyRecovery: (id: string) => Promise<void>
   }
 
   let {
@@ -47,6 +49,7 @@
     creating,
     comparing,
     restoringName,
+    recoveringId,
     error,
     workingCopyBaseSnapshot = null,
     workingCopyDirty = false,
@@ -58,6 +61,7 @@
     onCompare,
     onExitCompare,
     onRestore,
+    onApplyRecovery,
   }: Props = $props()
 
   let snapshotName = $state('')
@@ -145,9 +149,9 @@
   }
 
   function timelineBadgeClass(type: SnapshotTimelineEvent['type']): string {
-    return type === 'snapshot'
-      ? 'border-sky-200 bg-sky-50 text-sky-700'
-      : 'border-amber-200 bg-amber-50 text-amber-700'
+    if (type === 'snapshot') return 'border-sky-200 bg-sky-50 text-sky-700'
+    if (type === 'recover') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
+    return 'border-amber-200 bg-amber-50 text-amber-700'
   }
 
   function snapshotById(id: string | undefined): Snapshot | null {
@@ -163,6 +167,9 @@
   function timelineTitle(event: SnapshotTimelineEvent): string {
     if (event.type === 'snapshot') {
       return `Saved snapshot "${event.snapshotId ?? 'unknown'}"`
+    }
+    if (event.type === 'recover') {
+      return 'Recovered current project from a recovery point'
     }
     return `Reverted current project to "${event.targetSnapshotId ?? 'unknown'}"`
   }
@@ -284,9 +291,21 @@
                 </p>
               {/if}
               {#if recoveryPoint}
-                <p class="mt-1 break-all text-[10px] text-stone-500">
-                  Recovery point: {recoveryPoint.manifestPath}
-                </p>
+                <div class="mt-2 flex items-start justify-between gap-2">
+                  <p class="min-w-0 break-all text-[10px] text-stone-500">
+                    Recovery point: {recoveryPoint.manifestPath}
+                  </p>
+                  <button
+                    onclick={() => onApplyRecovery(recoveryPoint.id)}
+                    disabled={recoveringId !== null || restoringName !== null}
+                    class="shrink-0 rounded border border-stone-200 bg-white px-2 py-1 text-[10px]
+                           font-medium text-stone-600 hover:bg-stone-50 disabled:bg-stone-100
+                           disabled:text-stone-400 cursor-default"
+                    data-testid="apply-recovery-btn"
+                  >
+                    {recoveringId === recoveryPoint.id ? '...' : 'Recover'}
+                  </button>
+                </div>
               {/if}
             </div>
           {/each}

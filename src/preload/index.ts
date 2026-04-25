@@ -49,6 +49,8 @@ const api: ManifestAPI = {
       ipcRenderer.invoke(IPC.SNAPSHOT_REVERT, request),
     timeline: () =>
       ipcRenderer.invoke(IPC.SNAPSHOT_TIMELINE, {}),
+    applyRecovery: (request) =>
+      ipcRenderer.invoke(IPC.RECOVERY_APPLY, request),
     restore: (name) =>
       ipcRenderer.invoke(IPC.SNAPSHOT_RESTORE, { name }),
   },

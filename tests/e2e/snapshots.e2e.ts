@@ -107,6 +107,8 @@ test('creates, compares, and reverts snapshots from the renderer surface', async
   await appPage.getByRole('button', { name: 'Exit compare' }).click()
   await expect(appPage.getByTestId('snapshot-diff-list')).toHaveCount(0)
   await expect(appPage.getByTestId('project-mode-badge')).toHaveText('Current project matches with-rack')
+  await addChildNode(appPage, projectName, 'Temporary Probe')
+  await expect(appPage.getByTestId('project-mode-badge')).toHaveText('Unsnapshotted changes')
 
   await appPage
     .getByTestId('snapshot-row')
@@ -127,6 +129,20 @@ test('creates, compares, and reverts snapshots from the renderer surface', async
   await expect(appPage.getByText('Rolled back to retry the lab test')).toBeVisible()
   await expect(appPage.getByTestId('compare-from-select')).toBeVisible()
   await expect(treeRow(appPage, 'Rack A')).toHaveCount(0)
+  await expect(treeRow(appPage, 'Temporary Probe')).toHaveCount(0)
+
+  await appPage
+    .getByTestId('snapshot-timeline-event')
+    .filter({ hasText: 'Reverted current project to "baseline"' })
+    .getByTestId('apply-recovery-btn')
+    .click()
+  await expect(appPage.getByTestId('recovery-dialog')).toBeVisible()
+  await appPage.getByTestId('recovery-confirm-btn').click()
+  await expect(appPage.getByTestId('recovery-dialog')).toHaveCount(0)
+  await expect(appPage.getByTestId('project-mode-badge')).toHaveText('Unsnapshotted changes')
+  await expect(treeRow(appPage, 'Rack A')).toBeVisible()
+  await expect(treeRow(appPage, 'Temporary Probe')).toBeVisible()
+  await expect(appPage.getByTestId('snapshot-timeline-event').filter({ hasText: 'Recovered current project from a recovery point' })).toBeVisible()
 })
 
 test('surfaces removed nodes in snapshot compare mode', async ({ appPage, electronApp, workspaceDir }) => {

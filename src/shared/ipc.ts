@@ -14,6 +14,8 @@ import type {
   SearchResult,
   GitStatus,
   Result,
+  RecoveryPointApplyRequest,
+  RecoveryPointApplyResult,
   SnapshotRevertRequest,
   SnapshotRevertResult,
   SnapshotTimeline,
@@ -38,6 +40,7 @@ export const IPC = {
   SNAPSHOT_LOAD_COMPARE: 'snapshot:loadCompare',
   SNAPSHOT_REVERT:       'snapshot:revert',
   SNAPSHOT_TIMELINE:     'snapshot:timeline',
+  RECOVERY_APPLY:        'recovery:apply',
   SNAPSHOT_RESTORE:      'snapshot:restore',
   GIT_CHECK:           'git:check',
   // UI utility channels (not domain operations)
@@ -82,6 +85,7 @@ export interface ManifestAPI {
     loadCompare(a: string, b: string): Promise<Result<MergedTree>>
     revert(request: SnapshotRevertRequest): Promise<Result<SnapshotRevertResult>>
     timeline(): Promise<Result<SnapshotTimeline>>
+    applyRecovery(request: RecoveryPointApplyRequest): Promise<Result<RecoveryPointApplyResult>>
     /** @deprecated Use revert(). */
     restore(name: string): Promise<Result<void>>
   }
