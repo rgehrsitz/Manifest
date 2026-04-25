@@ -24,19 +24,8 @@ const noopGit = {
   run: async () => ({ stdout: '', stderr: '' }),
 }
 
-// No-op search stub — better-sqlite3 is not available in Bun's test runner
-// (it's a Node.js native module; fine in Electron production). Inject a stub
-// so ProjectManager can be exercised without a real SQLite DB.
-const noopSearch = {
-  rebuild:     () => {},
-  close:       () => {},
-  upsertNode:  () => {},
-  deleteNodes: () => {},
-  query:       () => [],
-}
-
 function makeManager(): ProjectManager {
-  return new ProjectManager(noopGit as any, noopLogger as any, noopSearch as any)
+  return new ProjectManager(noopGit as any, noopLogger as any)
 }
 
 let tmpDir: string
@@ -339,11 +328,10 @@ describe('nodeMove — reparent', () => {
 })
 
 // ─── searchNodes ──────────────────────────────────────────────────────────────
-// These tests verify the full search round-trip (index write → query). They
-// are skipped here because the noopSearch stub returns [] for all queries.
-// A dedicated search-index.test.ts using bun:sqlite covers this path.
+// Full search round-trip: ProjectManager writes through SearchIndexService into
+// a real better-sqlite3 FTS5 index in the project's tmp dir, then queries it.
 
-describe.skip('searchNodes', () => {
+describe('searchNodes', () => {
   beforeEach(() => {
     manager.nodeCreate('root-id', 'Oscilloscope')
     const osc = manager.getCurrent()!.nodes.find(n => n.name === 'Oscilloscope')!
