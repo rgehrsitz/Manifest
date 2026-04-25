@@ -1,7 +1,7 @@
 <svelte:options runes />
 
 <script lang="ts">
-  import type { Snapshot } from '../../../shared/types'
+  import type { RecoveryPoint, Snapshot, SnapshotTimelineEvent } from '../../../shared/types'
   import type { MergedTree } from '../../../shared/merged-tree'
   import {
     severityBadgeClass,
@@ -14,6 +14,8 @@
 
   interface Props {
     snapshots: Snapshot[]
+    timelineEvents: SnapshotTimelineEvent[]
+    recoveryPoints: RecoveryPoint[]
     mergedTree: MergedTree | null
     compareLoaded: boolean
     loading: boolean
@@ -37,6 +39,8 @@
 
   let {
     snapshots,
+    timelineEvents,
+    recoveryPoints,
     mergedTree,
     compareLoaded,
     loading,
@@ -139,6 +143,36 @@
     if (name === compareTo)   return 'bg-sky-100 text-sky-700'
     return 'bg-stone-100 text-stone-500'
   }
+
+  function timelineBadgeClass(type: SnapshotTimelineEvent['type']): string {
+    return type === 'snapshot'
+      ? 'border-sky-200 bg-sky-50 text-sky-700'
+      : 'border-amber-200 bg-amber-50 text-amber-700'
+  }
+
+  function snapshotById(id: string | undefined): Snapshot | null {
+    if (!id) return null
+    return snapshots.find(snapshot => snapshot.id === id || snapshot.name === id) ?? null
+  }
+
+  function recoveryPointById(id: string | null | undefined): RecoveryPoint | null {
+    if (!id) return null
+    return recoveryPoints.find(point => point.id === id) ?? null
+  }
+
+  function timelineTitle(event: SnapshotTimelineEvent): string {
+    if (event.type === 'snapshot') {
+      return `Saved snapshot "${event.snapshotId ?? 'unknown'}"`
+    }
+    return `Reverted current project to "${event.targetSnapshotId ?? 'unknown'}"`
+  }
+
+  function lineageText(event: SnapshotTimelineEvent): string | null {
+    if (event.type !== 'snapshot') return null
+    const snapshot = snapshotById(event.snapshotId)
+    if (!snapshot?.basedOnSnapshotId) return null
+    return `Based on ${snapshot.basedOnSnapshotId}`
+  }
 </script>
 
 <!--
@@ -207,6 +241,59 @@
       </button>
     </section>
 
+    <!-- Timeline -->
+    <section class="px-4 py-3 border-b border-stone-100 space-y-2" data-testid="snapshot-timeline">
+      <h3 class="text-[10px] font-semibold uppercase tracking-wide text-stone-500">
+        Snapshot Timeline {#if !loading}({timelineEvents.length}){/if}
+      </h3>
+
+      {#if loading}
+        <p class="text-xs text-stone-400">Loading…</p>
+      {:else if timelineEvents.length === 0}
+        <div class="rounded-lg border border-dashed border-stone-200 bg-stone-50 px-3 py-4
+                    text-xs text-stone-400 text-center">
+          No timeline events yet.
+        </div>
+      {:else}
+        <div class="space-y-2">
+          {#each timelineEvents as event (event.id)}
+            {@const recoveryPoint = recoveryPointById(event.safetyRecoveryPointId)}
+            {@const lineage = lineageText(event)}
+            <div
+              class="rounded-lg border border-stone-200 bg-white px-3 py-2"
+              data-testid="snapshot-timeline-event"
+            >
+              <div class="flex items-start justify-between gap-2">
+                <div class="min-w-0">
+                  <p class="text-xs font-medium text-stone-800">{timelineTitle(event)}</p>
+                  <p class="mt-0.5 text-[10px] text-stone-400">
+                    {new Date(event.createdAt).toLocaleString()}
+                  </p>
+                </div>
+                <span class={`shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase
+                             tracking-wide ${timelineBadgeClass(event.type)}`}>
+                  {event.type}
+                </span>
+              </div>
+              {#if lineage}
+                <p class="mt-1 text-[10px] text-stone-500">{lineage}</p>
+              {/if}
+              {#if event.note}
+                <p class="mt-1 rounded border border-amber-100 bg-amber-50 px-2 py-1 text-[10px] text-amber-800">
+                  {event.note}
+                </p>
+              {/if}
+              {#if recoveryPoint}
+                <p class="mt-1 break-all text-[10px] text-stone-500">
+                  Recovery point: {recoveryPoint.manifestPath}
+                </p>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </section>
+
     <!-- Saved snapshots list -->
     <section class="px-4 py-3 border-b border-stone-100 space-y-2">
       <h3 class="text-[10px] font-semibold uppercase tracking-wide text-stone-500">
@@ -251,10 +338,11 @@
                 </div>
                 <button
                   onclick={() => onRestore(snapshot.name)}
-                  disabled={restoringName === snapshot.name}
+                  disabled={restoringName !== null}
+                  aria-label={`Revert Current Project to This Snapshot: ${snapshot.name}`}
                   class="shrink-0 rounded border border-stone-200 bg-white px-2 py-1 text-[10px]
                          font-medium text-stone-600 hover:bg-stone-50 disabled:text-stone-400
-                         cursor-default"
+                         disabled:bg-stone-100 cursor-default"
                   data-testid="restore-snapshot-btn"
                 >
                   {restoringName === snapshot.name ? '…' : 'Revert Current Project'}

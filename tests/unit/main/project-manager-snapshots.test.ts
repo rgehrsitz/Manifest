@@ -140,6 +140,11 @@ describe('snapshot workflow', () => {
     expect(reverted.data.event.targetSnapshotId).toBe('baseline')
     expect(reverted.data.safetyRecoveryPoint).not.toBeNull()
     expect(existsSync(join(projectDir, reverted.data.safetyRecoveryPoint!.manifestPath))).toBe(true)
+    const timeline = await manager.snapshotTimeline()
+    expect(timeline.ok).toBe(true)
+    if (!timeline.ok) return
+    expect(timeline.data.events.some((event) => event.id === reverted.data.event.id)).toBe(true)
+    expect(timeline.data.recoveryPoints.some((point) => point.id === reverted.data.safetyRecoveryPoint!.id)).toBe(true)
 
     const current = manager.getCurrent()!
     expect(current.nodes.some((node) => node.name === 'Rack A')).toBe(true)
@@ -190,5 +195,17 @@ describe('snapshot workflow', () => {
     const alternateListed = listed.data.find((snapshot) => snapshot.name === 'alternate')
     expect(alternateListed?.basedOnSnapshotId).toBe('baseline')
     expect(alternateListed?.createdAfterRevertEventId).toBe(reverted.data.event.id)
+
+    const timeline = await manager.snapshotTimeline()
+    expect(timeline.ok).toBe(true)
+    if (!timeline.ok) return
+    expect(timeline.data.events.map((event) => event.type)).toEqual([
+      'snapshot',
+      'snapshot',
+      'revert',
+      'snapshot',
+    ])
+    expect(timeline.data.events.find((event) => event.type === 'revert')?.note)
+      .toBe('Rolled back from upgraded to retry failed test')
   })
 })

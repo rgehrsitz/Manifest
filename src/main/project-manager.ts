@@ -33,6 +33,7 @@ import type {
   SnapshotRevertRequest,
   SnapshotRevertResult,
   SnapshotTimelineEvent,
+  SnapshotTimeline,
   RecoveryPoint,
 } from '../shared/types'
 import { ok, err, ErrorCode } from '../shared/errors'
@@ -569,6 +570,43 @@ export class ProjectManager {
       const msg = e instanceof Error ? e.message : String(e)
       this.logger.error('snapshot list failed', { path: this.currentProject.path, error: msg })
       return err(ErrorCode.GIT_COMMIT_FAILED, `Failed to list snapshots: ${msg}`)
+    }
+  }
+
+  async snapshotTimeline(): Promise<Result<SnapshotTimeline>> {
+    if (!this.currentProject?.path) {
+      return err(ErrorCode.PROJECT_NOT_FOUND, 'No project is currently open')
+    }
+
+    try {
+      const history = this.readSnapshotHistory()
+      const snapshots = await this.git.listSnapshots(this.currentProject.path)
+      const recordedSnapshotIds = new Set(
+        history.events
+          .filter(event => event.type === 'snapshot')
+          .map(event => event.snapshotId)
+          .filter((id): id is string => Boolean(id))
+      )
+      const syntheticSnapshotEvents: SnapshotTimelineEvent[] = snapshots
+        .filter(snapshot => !recordedSnapshotIds.has(snapshot.id))
+        .map(snapshot => ({
+          id: `snapshot:${snapshot.id}`,
+          type: 'snapshot',
+          createdAt: snapshot.createdAt,
+          snapshotId: snapshot.id,
+        }))
+      const events = history.events.length > 0
+        ? [...history.events, ...syntheticSnapshotEvents]
+        : syntheticSnapshotEvents.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+
+      return ok({
+        events,
+        recoveryPoints: history.recoveryPoints,
+      })
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      this.logger.error('snapshot timeline failed', { path: this.currentProject.path, error: msg })
+      return err(ErrorCode.SNAPSHOT_READ_FAILED, `Failed to read snapshot timeline: ${msg}`)
     }
   }
 

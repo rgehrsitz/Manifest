@@ -85,6 +85,11 @@ export interface SnapshotRevertResult {
   safetyRecoveryPoint: RecoveryPoint | null
 }
 
+export interface SnapshotTimeline {
+  events: SnapshotTimelineEvent[]
+  recoveryPoints: RecoveryPoint[]
+}
+
 export interface SearchResult {
   nodeId: string
   nodeName: string

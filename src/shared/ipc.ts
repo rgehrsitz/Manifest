@@ -16,6 +16,7 @@ import type {
   Result,
   SnapshotRevertRequest,
   SnapshotRevertResult,
+  SnapshotTimeline,
 } from './types'
 import type { MergedTree } from './merged-tree'
 
@@ -36,6 +37,7 @@ export const IPC = {
   SNAPSHOT_COMPARE:      'snapshot:compare',
   SNAPSHOT_LOAD_COMPARE: 'snapshot:loadCompare',
   SNAPSHOT_REVERT:       'snapshot:revert',
+  SNAPSHOT_TIMELINE:     'snapshot:timeline',
   SNAPSHOT_RESTORE:      'snapshot:restore',
   GIT_CHECK:           'git:check',
   // UI utility channels (not domain operations)
@@ -79,6 +81,7 @@ export interface ManifestAPI {
     /** Full compare: returns merged tree with per-node diffs embedded. */
     loadCompare(a: string, b: string): Promise<Result<MergedTree>>
     revert(request: SnapshotRevertRequest): Promise<Result<SnapshotRevertResult>>
+    timeline(): Promise<Result<SnapshotTimeline>>
     /** @deprecated Use revert(). */
     restore(name: string): Promise<Result<void>>
   }

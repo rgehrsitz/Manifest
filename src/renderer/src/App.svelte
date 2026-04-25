@@ -2,7 +2,7 @@
 
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte'
-  import type { Project, ManifestNode, Snapshot } from '../../shared/types'
+  import type { Project, ManifestNode, RecoveryPoint, Snapshot, SnapshotTimelineEvent } from '../../shared/types'
   import type { MergedTree } from '../../shared/merged-tree'
   import { buildTree, getSiblingIndex, getAncestorIds } from './lib/tree'
   import { flattenTree } from './lib/tree-rows'
@@ -44,6 +44,8 @@
   // Snapshot/history UI state
   let snapshotPanelOpen: boolean = $state(false)
   let snapshots: Snapshot[] = $state([])
+  let snapshotTimelineEvents: SnapshotTimelineEvent[] = $state([])
+  let snapshotRecoveryPoints: RecoveryPoint[] = $state([])
   let snapshotLoading: boolean = $state(false)
   let snapshotCreating: boolean = $state(false)
   let snapshotComparing: boolean = $state(false)
@@ -463,13 +465,23 @@
     snapshotLoading = true
     snapshotError = null
 
-    const result = await window.api.snapshot.list()
+    const [result, timelineResult] = await Promise.all([
+      window.api.snapshot.list(),
+      window.api.snapshot.timeline(),
+    ])
     snapshotLoading = false
 
     if (result.ok) {
       snapshots = result.data
     } else {
       snapshotError = result.error.message
+    }
+
+    if (timelineResult.ok) {
+      snapshotTimelineEvents = timelineResult.data.events
+      snapshotRecoveryPoints = timelineResult.data.recoveryPoints
+    } else {
+      snapshotError = timelineResult.error.message
     }
   }
 
@@ -596,6 +608,7 @@
 
       if (result.ok) {
         await reloadCurrentProject()
+        await refreshSnapshots()
         exitCompareMode()
         workingCopyBaseSnapshot = name
         workingCopyDirty = false
@@ -987,6 +1000,8 @@
         <div style="width: {panelWidth}px" class="shrink-0 overflow-hidden">
           <SnapshotsPanel
             {snapshots}
+            timelineEvents={snapshotTimelineEvents}
+            recoveryPoints={snapshotRecoveryPoints}
             {mergedTree}
             compareLoaded={compareMode}
             loading={snapshotLoading}

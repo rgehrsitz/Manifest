@@ -84,6 +84,7 @@ test('creates, compares, and reverts snapshots from the renderer surface', async
 
   await createSnapshot(appPage, 'baseline')
   await expect(appPage.getByTestId('project-mode-badge')).toHaveText('Current project matches baseline')
+  await expect(appPage.getByTestId('snapshot-timeline-event').filter({ hasText: 'Saved snapshot "baseline"' })).toBeVisible()
 
   await appPage.getByRole('button', { name: 'Close snapshots' }).click()
   await expect(appPage.getByTestId('snapshots-panel')).toHaveCount(0)
@@ -120,6 +121,8 @@ test('creates, compares, and reverts snapshots from the renderer surface', async
   await expect(appPage.getByTestId('snapshot-diff-list')).toHaveCount(0)
   await expect(appPage.getByTestId('project-mode-badge')).toHaveText('Current project matches baseline')
   await expect(appPage.getByTestId('snapshots-panel')).toBeVisible()
+  await expect(appPage.getByTestId('snapshot-timeline-event').filter({ hasText: 'Reverted current project to "baseline"' })).toBeVisible()
+  await expect(appPage.getByText('Rolled back to retry the lab test')).toBeVisible()
   await expect(appPage.getByTestId('compare-from-select')).toBeVisible()
   await expect(treeRow(appPage, 'Rack A')).toHaveCount(0)
 })

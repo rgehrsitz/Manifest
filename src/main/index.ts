@@ -148,6 +148,10 @@ function registerIpcHandlers(): void {
     projectManager.snapshotRevert(request)
   )
 
+  ipcMain.handle(IPC.SNAPSHOT_TIMELINE, () =>
+    projectManager.snapshotTimeline()
+  )
+
   ipcMain.handle(IPC.SNAPSHOT_RESTORE, (_, { name }: { name: string }) =>
     projectManager.snapshotRestore(name)
   )
