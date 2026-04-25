@@ -902,8 +902,11 @@ export class ProjectManager {
     if (!projectPath) return
 
     const manifestDir = join(projectPath, '.manifest')
+    const historyPath = this.snapshotHistoryPath(projectPath)
+    const tmpPath = `${historyPath}.tmp`
     mkdirSync(manifestDir, { recursive: true })
-    writeFileSync(this.snapshotHistoryPath(projectPath), JSON.stringify(history, null, 2), 'utf8')
+    writeFileSync(tmpPath, JSON.stringify(history, null, 2), 'utf8')
+    renameSync(tmpPath, historyPath)
   }
 
   private snapshotHistoryPath(projectPath: string): string {
