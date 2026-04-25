@@ -21,6 +21,8 @@
     comparing: boolean
     restoringName: string | null
     error: string | null
+    workingCopyBaseSnapshot?: string | null
+    workingCopyDirty?: boolean
     /** Node id currently selected in the tree — highlights the matching diff row. */
     highlightedNodeId?: string | null
     /** Called when the user clicks a diff row — App selects the node in the tree. */
@@ -42,6 +44,8 @@
     comparing,
     restoringName,
     error,
+    workingCopyBaseSnapshot = null,
+    workingCopyDirty = false,
     highlightedNodeId = null,
     onDiffNodeSelect,
     onClose,
@@ -88,6 +92,17 @@
       count: allDiffs.filter(e => e.changeType === changeType).length,
     }))
   )
+
+  const workingCopyDescription = $derived.by(() => {
+    if (workingCopyBaseSnapshot) {
+      return workingCopyDirty
+        ? `The working copy started from "${workingCopyBaseSnapshot}" and has edits that are not in that snapshot.`
+        : `The working copy currently matches "${workingCopyBaseSnapshot}".`
+    }
+    return workingCopyDirty
+      ? 'The working copy has edits that are not saved in a snapshot yet.'
+      : 'You are editing the working copy. Saved snapshots are read-only history points.'
+  })
 
   const groupedDiffs = $derived(
     severityOrder
@@ -163,7 +178,13 @@
 
     <!-- Create snapshot -->
     <section class="px-4 py-3 border-b border-stone-100 space-y-2">
-      <h3 class="text-[10px] font-semibold uppercase tracking-wide text-stone-500">Create Snapshot</h3>
+      <div class="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+        <p class="text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Current State</p>
+        <p class="mt-0.5 text-xs text-emerald-800">
+          {workingCopyDescription}
+        </p>
+      </div>
+      <h3 class="text-[10px] font-semibold uppercase tracking-wide text-stone-500">Create Snapshot from Working Copy</h3>
       <input
         type="text"
         bind:value={snapshotName}
@@ -182,7 +203,7 @@
                disabled:cursor-not-allowed"
         data-testid="create-snapshot-btn"
       >
-        {creating ? 'Creating…' : 'Create Snapshot'}
+        {creating ? 'Creating…' : 'Save Working Copy as Snapshot'}
       </button>
     </section>
 
@@ -236,7 +257,7 @@
                          cursor-default"
                   data-testid="restore-snapshot-btn"
                 >
-                  {restoringName === snapshot.name ? '…' : 'Restore'}
+                  {restoringName === snapshot.name ? '…' : 'Restore to Working Copy'}
                 </button>
               </div>
             </div>

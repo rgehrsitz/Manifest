@@ -49,6 +49,8 @@
   let snapshotComparing: boolean = $state(false)
   let snapshotRestoringName: string | null = $state(null)
   let snapshotError: string | null = $state(null)
+  let workingCopyBaseSnapshot: string | null = $state(null)
+  let workingCopyDirty: boolean = $state(false)
 
   // Compare mode state — separate from normal expanded state so user's tree
   // position is preserved when exiting compare mode.
@@ -111,7 +113,30 @@
 
   const selectedNode = $derived.by(() => {
     if (!selectedId || !project) return null
+    if (compareMode && mergedTree) {
+      return mergedTree.nodes.find((node) => node.id === selectedId) ?? null
+    }
     return project.nodes.find((node) => node.id === selectedId) ?? null
+  })
+
+  const detailProject = $derived.by(() => {
+    if (!project) return null
+    if (compareMode && mergedTree) {
+      return { ...project, nodes: mergedTree.nodes }
+    }
+    return project
+  })
+
+  const projectModeLabel = $derived.by(() => {
+    if (compareMode && mergedTree) {
+      return `Comparing ${mergedTree.fromSnapshot} -> ${mergedTree.toSnapshot}`
+    }
+    if (workingCopyBaseSnapshot) {
+      return workingCopyDirty
+        ? `Working copy - modified since ${workingCopyBaseSnapshot}`
+        : `Working copy - matches ${workingCopyBaseSnapshot}`
+    }
+    return workingCopyDirty ? 'Working copy - unsnapshotted changes' : 'Working copy'
   })
 
   // ─── Lifecycle ────────────────────────────────────────────────────────────
@@ -172,6 +197,10 @@
     }
   }
 
+  function markWorkingCopyChanged() {
+    workingCopyDirty = true
+  }
+
   async function reloadCurrentProject() {
     const result = await window.api.project.getCurrent()
     if (result.ok && result.data) {
@@ -191,6 +220,8 @@
     if (result.ok) {
       project = result.data
       selectRoot(result.data)
+      workingCopyBaseSnapshot = null
+      workingCopyDirty = false
       appState = 'open'
     } else {
       error = result.error.message
@@ -212,6 +243,8 @@
     if (result.ok) {
       project = result.data
       selectRoot(result.data)
+      workingCopyBaseSnapshot = null
+      workingCopyDirty = false
       appState = 'open'
     } else {
       error = result.error.message
@@ -232,6 +265,8 @@
     snapshotPanelOpen = false
     snapshots = []
     snapshotError = null
+    workingCopyBaseSnapshot = null
+    workingCopyDirty = false
     compareMode = false
     mergedTree = null
     compareExpanded = new Set()
@@ -257,6 +292,10 @@
   }
 
   function handleAddChild(parentId: string) {
+    if (compareMode) {
+      showToast('Exit compare to edit the working copy.')
+      return
+    }
     addingChildTo = parentId
     addingChildName = ''
     addingChildError = null
@@ -264,6 +303,10 @@
   }
 
   async function commitAddChild() {
+    if (compareMode) {
+      showToast('Exit compare to edit the working copy.')
+      return
+    }
     if (!addingChildTo || !addingChildName.trim()) {
       addingChildError = 'Name is required'
       return
@@ -271,6 +314,7 @@
     const result = await window.api.node.create(addingChildTo, addingChildName.trim())
     if (result.ok) {
       applyProject(result.data)
+      markWorkingCopyChanged()
       // Select the new node (last child of parent).
       const newNode = result.data.nodes
         .filter(n => n.parentId === addingChildTo)
@@ -290,40 +334,53 @@
   }
 
   async function handleMoveUp(id: string) {
-    if (!project) return
+    if (!project || compareMode) return
     const idx = getSiblingIndex(id, project.nodes)
     if (idx <= 0) return
     const result = await window.api.node.move(id, project.nodes.find(n => n.id === id)!.parentId!, idx - 1)
-    if (result.ok) applyProject(result.data)
+    if (result.ok) {
+      applyProject(result.data)
+      markWorkingCopyChanged()
+    }
     else showToast(result.error.message)
   }
 
   async function handleMoveDown(id: string) {
-    if (!project) return
+    if (!project || compareMode) return
     const node = project.nodes.find(n => n.id === id)
     if (!node) return
     const siblings = project.nodes.filter(n => n.parentId === node.parentId)
     const idx = getSiblingIndex(id, project.nodes)
     if (idx >= siblings.length - 1) return
     const result = await window.api.node.move(id, node.parentId!, idx + 1)
-    if (result.ok) applyProject(result.data)
+    if (result.ok) {
+      applyProject(result.data)
+      markWorkingCopyChanged()
+    }
     else showToast(result.error.message)
   }
 
   function handleMoveTo(id: string) {
+    if (compareMode) {
+      showToast('Exit compare to edit the working copy.')
+      return
+    }
     moveToNodeId = id
   }
 
   async function confirmMoveTo(targetParentId: string) {
-    if (!moveToNodeId) return
+    if (!moveToNodeId || compareMode) return
     const result = await window.api.node.move(moveToNodeId, targetParentId, 999)
     moveToNodeId = null
-    if (result.ok) applyProject(result.data)
+    if (result.ok) {
+      applyProject(result.data)
+      markWorkingCopyChanged()
+    }
     else showToast(result.error.message)
   }
 
   async function handleDelete(id: string) {
-    if (!project) return
+    if (!project || compareMode) return
     const node = project.nodes.find(n => n.id === id)
     if (!node) return
 
@@ -338,11 +395,18 @@
     }
 
     const result = await window.api.node.delete(id)
-    if (result.ok) applyProject(result.data)
+    if (result.ok) {
+      applyProject(result.data)
+      markWorkingCopyChanged()
+    }
     else showToast(result.error.message)
   }
 
   function handleRenameRequest() {
+    if (compareMode) {
+      showToast('Exit compare to edit the working copy.')
+      return
+    }
     // Bump the signal counter — DetailPane's $effect will call startEditName().
     renameRequestId += 1
   }
@@ -351,8 +415,15 @@
     id: string,
     changes: { name?: string; properties?: Record<string, string | number | boolean | null> }
   ) {
+    if (compareMode) {
+      showToast('Exit compare to edit the working copy.')
+      return
+    }
     const result = await window.api.node.update(id, changes)
-    if (result.ok) applyProject(result.data)
+    if (result.ok) {
+      applyProject(result.data)
+      markWorkingCopyChanged()
+    }
     else showToast(result.error.message)
   }
 
@@ -445,6 +516,8 @@
     snapshotCreating = false
 
     if (result.ok) {
+      workingCopyBaseSnapshot = result.data.name
+      workingCopyDirty = false
       await refreshSnapshots()
       showToast(`Snapshot "${result.data.name}" created`)
     } else {
@@ -491,7 +564,7 @@
   }
 
   async function handleSnapshotRestore(name: string) {
-    const confirmed = window.confirm(`Restore snapshot "${name}"? Current unsnapshotted changes will be replaced.`)
+    const confirmed = window.confirm(`Restore snapshot "${name}" into the working copy? Current unsnapshotted changes will be replaced. The snapshot itself will not be changed.`)
     if (!confirmed) return
 
     snapshotRestoringName = name
@@ -502,7 +575,9 @@
     if (result.ok) {
       await reloadCurrentProject()
       exitCompareMode()
-      showToast(`Restored snapshot "${name}"`)
+      workingCopyBaseSnapshot = name
+      workingCopyDirty = false
+      showToast(`Copied snapshot "${name}" into the working copy`)
     } else {
       snapshotError = result.error.message
     }
@@ -688,6 +763,14 @@
           <span class="text-sm font-semibold text-stone-800">{project.name}</span>
           <span class="text-xs text-stone-400">{project.nodes.length} nodes</span>
         </div>
+        <div
+          class="max-w-[320px] truncate rounded-full border px-2.5 py-1 text-xs font-medium
+                 {compareMode ? 'border-sky-200 bg-sky-50 text-sky-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}"
+          data-testid="project-mode-badge"
+          title={projectModeLabel}
+        >
+          {projectModeLabel}
+        </div>
       </div>
       <div class="flex items-center gap-2 [-webkit-app-region:no-drag]">
         <button
@@ -787,6 +870,7 @@
                 onRenameRequest={handleRenameRequest}
                 onDelete={handleDelete}
                 onMoveTo={handleMoveTo}
+                editingDisabled={compareMode}
               />
             </div>
 
@@ -839,13 +923,19 @@
 
       <!-- ── Right pane: detail ─────────────────────────────────────────── -->
       <div class="flex-1 overflow-hidden" data-testid="detail-pane">
+        {#if detailProject}
         <DetailPane
           node={selectedNode}
-          {project}
+          project={detailProject}
           {renameRequestId}
+          readOnly={compareMode}
+          readOnlyReason={compareMode && mergedTree
+            ? `Viewing ${mergedTree.fromSnapshot} -> ${mergedTree.toSnapshot}. Snapshots are read-only; exit compare to edit the working copy.`
+            : undefined}
           onUpdate={handleNodeUpdate}
           onError={showToast}
         />
+        {/if}
       </div>
 
       <!-- ── Snapshots panel (docked, non-blocking) ─────────────────────── -->
@@ -871,6 +961,8 @@
             comparing={snapshotComparing}
             restoringName={snapshotRestoringName}
             error={snapshotError}
+            {workingCopyBaseSnapshot}
+            {workingCopyDirty}
             highlightedNodeId={selectedId}
             onDiffNodeSelect={handleDiffNodeSelect}
             onClose={closeSnapshots}

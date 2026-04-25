@@ -20,6 +20,7 @@
     onRenameRequest: () => void
     onDelete: (id: string) => void
     onMoveTo: (id: string) => void
+    editingDisabled?: boolean
   }
 
   let {
@@ -33,6 +34,7 @@
     onRenameRequest,
     onDelete,
     onMoveTo,
+    editingDisabled = false,
   }: Props = $props()
 
   // ─── Context menu ────────────────────────────────────────────────────────────
@@ -52,6 +54,7 @@
   let contextMenu = $state<ContextMenuState | null>(null)
 
   function handleRowContextMenu(row: VisibleRow, x: number, y: number) {
+    if (editingDisabled) return
     if (row.kind === 'ghost') return
     // Select the node first so the menu acts on the right item.
     onSelect(row.node.id)
@@ -181,6 +184,7 @@
       }
       case 'F2': {
         e.preventDefault()
+        if (editingDisabled) return
         const row = rows[idx]
         if (row && row.kind !== 'ghost') {
           onSelect(row.node.id)

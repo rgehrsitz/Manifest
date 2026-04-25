@@ -10,6 +10,8 @@
     project: Project
     /** Bumped by App.svelte when the user presses F2 or "Rename" in the tree context menu. */
     renameRequestId?: number
+    readOnly?: boolean
+    readOnlyReason?: string
     onUpdate: (id: string, changes: {
       name?: string
       properties?: Record<string, string | number | boolean | null>
@@ -17,7 +19,15 @@
     onError: (msg: string) => void
   }
 
-  let { node, project, renameRequestId = 0, onUpdate, onError }: Props = $props()
+  let {
+    node,
+    project,
+    renameRequestId = 0,
+    readOnly = false,
+    readOnlyReason = 'Exit read-only mode to edit the working copy.',
+    onUpdate,
+    onError,
+  }: Props = $props()
 
   // When renameRequestId increments, start editing the name.
   // Skip the initial value (0) so we don't auto-edit on mount.
@@ -37,7 +47,7 @@
   let nameInputEl = $state<HTMLInputElement | null>(null)
 
   function startEditName() {
-    if (!node) return
+    if (!node || readOnly) return
     nameInput = node.name
     nameError = null
     editingName = true
@@ -49,7 +59,7 @@
   }
 
   async function commitName() {
-    if (!node) return
+    if (!node || readOnly) return
     const trimmed = nameInput.trim()
     if (trimmed === node.name) { editingName = false; return }
 
@@ -86,7 +96,10 @@
   let newValueError = $state<string | null>(null)
 
   async function addProperty() {
-    if (!node) return
+    if (!node || readOnly) {
+      onError(readOnlyReason)
+      return
+    }
     const k = newKey.trim()
     const v = newValue.trim()
     if (!k) { newKeyError = 'Key is required'; return }
@@ -109,7 +122,7 @@
   }
 
   async function deleteProperty(key: string) {
-    if (!node) return
+    if (!node || readOnly) return
     const props = { ...(node.properties ?? {}) }
     delete props[key]
     await onUpdate(node.id, { properties: props })
@@ -121,13 +134,14 @@
   let propValueInputEl = $state<HTMLInputElement | null>(null)
 
   function startEditProp(key: string) {
+    if (readOnly) return
     editingPropKey = key
     editingPropValue = String(node?.properties?.[key] ?? '')
     editingPropError = null
   }
 
   async function commitProp(key: string) {
-    if (!node) return
+    if (!node || readOnly) return
     const v = editingPropValue.trim()
     const valVal = validatePropertyValue(v)
     if (!valVal.valid) { editingPropError = valVal.message ?? 'Invalid value'; return }
@@ -180,6 +194,15 @@
 
     <!-- Header / name -->
     <div class="px-5 py-4 border-b border-stone-100">
+      {#if readOnly}
+        <div
+          class="mb-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800"
+          data-testid="detail-readonly-banner"
+        >
+          {readOnlyReason}
+        </div>
+      {/if}
+
       {#if editingName}
         <div class="flex flex-col gap-1">
           <input
@@ -202,12 +225,14 @@
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
-          class="group flex items-center gap-2 cursor-text"
+          class="group flex items-center gap-2 {readOnly ? '' : 'cursor-text'}"
           onclick={startEditName}
           data-testid="node-name"
         >
           <h2 class="text-lg font-semibold text-stone-900 truncate">{node.name}</h2>
-          <span class="text-xs text-stone-300 group-hover:text-stone-400 shrink-0">Edit</span>
+          {#if !readOnly}
+            <span class="text-xs text-stone-300 group-hover:text-stone-400 shrink-0">Edit</span>
+          {/if}
         </div>
       {/if}
 
@@ -262,8 +287,9 @@
 
               <button
                 class="text-stone-300 hover:text-red-400 opacity-0 group-hover:opacity-100
-                       transition-opacity text-xs shrink-0"
+                       transition-opacity text-xs shrink-0 disabled:opacity-0"
                 onclick={() => deleteProperty(key)}
+                disabled={readOnly}
                 aria-label="Delete property {key}"
                 data-testid="delete-prop"
               >✕</button>
@@ -278,6 +304,7 @@
       {/if}
 
       <!-- Add property form -->
+      {#if !readOnly}
       <div class="border-t border-stone-100 pt-3">
         <p class="text-xs font-semibold text-stone-400 uppercase tracking-wide mb-2">
           Add Property
@@ -321,6 +348,7 @@
           >Add</button>
         </div>
       </div>
+      {/if}
     </div>
 
     <!-- Metadata footer -->

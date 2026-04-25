@@ -78,25 +78,34 @@ test('creates, compares, and restores snapshots from the renderer surface', asyn
   await createProjectThroughUi(appPage, electronApp, workspaceDir, projectName)
 
   await openSnapshotsPanel(appPage)
+  await expect(appPage.getByTestId('project-mode-badge')).toHaveText('Working copy')
+  await expect(appPage.getByText('Saved snapshots are read-only history points.')).toBeVisible()
   await expect(treeRow(appPage, projectName)).toBeVisible()
 
   await createSnapshot(appPage, 'baseline')
+  await expect(appPage.getByTestId('project-mode-badge')).toHaveText('Working copy - matches baseline')
 
   await appPage.getByRole('button', { name: 'Close snapshots' }).click()
   await expect(appPage.getByTestId('snapshots-panel')).toHaveCount(0)
 
   await addChildNode(appPage, projectName, 'Rack A')
+  await expect(appPage.getByTestId('project-mode-badge')).toHaveText('Working copy - modified since baseline')
 
   await openSnapshotsPanel(appPage)
+  await expect(appPage.getByText('The working copy started from "baseline" and has edits that are not in that snapshot.')).toBeVisible()
   await createSnapshot(appPage, 'with-rack')
+  await expect(appPage.getByTestId('project-mode-badge')).toHaveText('Working copy - matches with-rack')
   await compareSnapshots(appPage, 'baseline', 'with-rack')
 
+  await expect(appPage.getByTestId('project-mode-badge')).toHaveText('Comparing baseline -> with-rack')
+  await expect(appPage.getByTestId('detail-readonly-banner')).toContainText('Snapshots are read-only')
   await expect(appPage.getByTestId('snapshot-diff-row').filter({ hasText: 'Added' })).toBeVisible()
   await expect(appPage.getByTestId('snapshot-diff-row').filter({ hasText: 'Rack A' })).toBeVisible()
   await expect(treeRow(appPage, 'Rack A')).toBeVisible()
 
   await appPage.getByRole('button', { name: 'Exit compare' }).click()
   await expect(appPage.getByTestId('snapshot-diff-list')).toHaveCount(0)
+  await expect(appPage.getByTestId('project-mode-badge')).toHaveText('Working copy - matches with-rack')
 
   appPage.once('dialog', (dialog) => dialog.accept())
   await appPage
@@ -106,6 +115,7 @@ test('creates, compares, and restores snapshots from the renderer surface', asyn
     .click()
 
   await expect(appPage.getByTestId('snapshot-diff-list')).toHaveCount(0)
+  await expect(appPage.getByTestId('project-mode-badge')).toHaveText('Working copy - matches baseline')
   await expect(appPage.getByTestId('snapshots-panel')).toBeVisible()
   await expect(appPage.getByTestId('compare-from-select')).toBeVisible()
   await expect(treeRow(appPage, 'Rack A')).toHaveCount(0)

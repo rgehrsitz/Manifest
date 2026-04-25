@@ -15,6 +15,7 @@ Manifest is a local-first desktop app for managing structured, hierarchical proj
 | Doc | Purpose |
 |-----|---------|
 | [VISION.md](VISION.md) | Product intent, target users, and v1 success criteria |
+| [PRODUCT_USAGE_MODEL.md](PRODUCT_USAGE_MODEL.md) | Product semantics, personas, and current-project/snapshot flows |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Technical shape: stack, IPC contract, data model, storage, diff engine, security |
 | [ROADMAP.md](ROADMAP.md) | Phase-by-phase delivery plan (Phases 1–5) |
 | [UI_PRINCIPLES.md](UI_PRINCIPLES.md) | Visual and interaction principles for the renderer |
