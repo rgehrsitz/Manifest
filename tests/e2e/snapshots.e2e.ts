@@ -79,7 +79,8 @@ test('creates, compares, and reverts snapshots from the renderer surface', async
 
   await openSnapshotsPanel(appPage)
   await expect(appPage.getByTestId('project-mode-badge')).toHaveText('Current Project')
-  await expect(appPage.getByText('Saved snapshots are read-only history points.')).toBeVisible()
+  await expect(appPage.getByText('Timeline, checkpoints, and semantic diffs.')).toBeVisible()
+  await expect(appPage.getByText('Current State', { exact: true })).toHaveCount(0)
   await expect(treeRow(appPage, projectName)).toBeVisible()
 
   await createSnapshot(appPage, 'baseline')
@@ -93,12 +94,14 @@ test('creates, compares, and reverts snapshots from the renderer surface', async
   await expect(appPage.getByTestId('project-mode-badge')).toHaveText('Unsnapshotted changes')
 
   await openSnapshotsPanel(appPage)
-  await expect(appPage.getByText('The current project has changes that are not saved in a snapshot yet.')).toBeVisible()
   await createSnapshot(appPage, 'with-rack')
   await expect(appPage.getByTestId('project-mode-badge')).toHaveText('Current project matches with-rack')
   await compareSnapshots(appPage, 'baseline', 'with-rack')
 
   await expect(appPage.getByTestId('project-mode-badge')).toHaveText('Comparing baseline -> with-rack')
+  await expect(appPage.getByTestId('snapshot-timeline')).toHaveCount(0)
+  await expect(appPage.getByTestId('snapshot-name-input')).toHaveCount(0)
+  await expect(appPage.getByTestId('compare-from-select')).toHaveCount(0)
   await expect(appPage.getByTestId('detail-readonly-banner')).toContainText('Snapshots are read-only')
   await expect(appPage.getByTestId('snapshot-diff-row').filter({ hasText: 'Added' })).toBeVisible()
   await expect(appPage.getByTestId('snapshot-diff-row').filter({ hasText: 'Rack A' })).toBeVisible()
@@ -106,14 +109,14 @@ test('creates, compares, and reverts snapshots from the renderer surface', async
 
   await appPage.getByRole('button', { name: 'Exit compare' }).click()
   await expect(appPage.getByTestId('snapshot-diff-list')).toHaveCount(0)
+  await expect(appPage.getByTestId('snapshot-timeline')).toBeVisible()
+  await expect(appPage.getByTestId('compare-from-select')).toBeVisible()
   await expect(appPage.getByTestId('project-mode-badge')).toHaveText('Current project matches with-rack')
   await addChildNode(appPage, projectName, 'Temporary Probe')
   await expect(appPage.getByTestId('project-mode-badge')).toHaveText('Unsnapshotted changes')
 
   await appPage
-    .getByTestId('snapshot-row')
-    .filter({ hasText: 'baseline' })
-    .getByTestId('restore-snapshot-btn')
+    .getByRole('button', { name: 'Revert Current Project to This Snapshot: baseline' })
     .click()
   await expect(appPage.getByTestId('revert-dialog')).toBeVisible()
   await appPage.getByTestId('revert-confirm-btn').click()

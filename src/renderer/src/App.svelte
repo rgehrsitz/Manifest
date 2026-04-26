@@ -1081,8 +1081,6 @@
             restoringName={snapshotRestoringName}
             recoveringId={recoveryApplyingId}
             error={snapshotError}
-            {workingCopyBaseSnapshot}
-            {workingCopyDirty}
             highlightedNodeId={selectedId}
             onDiffNodeSelect={handleDiffNodeSelect}
             onClose={closeSnapshots}
