@@ -4,6 +4,7 @@
   import { tick } from 'svelte'
   import type { ManifestNode, Project } from '../../../shared/types'
   import { validateNodeName, validatePropertyKey, validatePropertyValue } from '../../../shared/validation'
+  import NodeHistoryView from './NodeHistoryView.svelte'
 
   interface Props {
     node: ManifestNode | null
@@ -28,6 +29,23 @@
     onUpdate,
     onError,
   }: Props = $props()
+
+  // ─── Tab state ─────────────────────────────────────────────────────────────
+  // Properties (default) edits the node. History shows its chronology across
+  // snapshots. History is read-only; safe to view in compare/revert/recover modes.
+  type DetailTab = 'properties' | 'history'
+  let activeTab: DetailTab = $state('properties')
+
+  // When the selected node changes, snap back to Properties so the user
+  // doesn't accidentally see the History tab for a different node.
+  let _prevNodeId: string | null = null
+  $effect(() => {
+    const nodeId = node?.id ?? null
+    if (nodeId !== _prevNodeId) {
+      _prevNodeId = nodeId
+      activeTab = 'properties'
+    }
+  })
 
   // When renameRequestId increments, start editing the name.
   // Skip the initial value (0) so we don't auto-edit on mount.
@@ -247,6 +265,37 @@
       {/if}
     </div>
 
+    <!-- Tab strip -->
+    <div class="flex shrink-0 border-b border-stone-100 px-5">
+      <button
+        type="button"
+        onclick={() => activeTab = 'properties'}
+        class={`px-3 py-2 text-xs font-medium border-b-2 -mb-px cursor-default
+                ${activeTab === 'properties'
+                  ? 'border-stone-700 text-stone-800'
+                  : 'border-transparent text-stone-400 hover:text-stone-600'}`}
+        data-testid="detail-tab-properties"
+      >
+        Properties
+      </button>
+      <button
+        type="button"
+        onclick={() => activeTab = 'history'}
+        class={`px-3 py-2 text-xs font-medium border-b-2 -mb-px cursor-default
+                ${activeTab === 'history'
+                  ? 'border-stone-700 text-stone-800'
+                  : 'border-transparent text-stone-400 hover:text-stone-600'}`}
+        data-testid="detail-tab-history"
+      >
+        History
+      </button>
+    </div>
+
+    {#if activeTab === 'history'}
+      <div class="flex-1 overflow-y-auto px-5 py-4" data-testid="detail-history-pane">
+        <NodeHistoryView nodeId={node.id} nodeName={node.name} />
+      </div>
+    {:else}
     <!-- Properties -->
     <div class="flex-1 overflow-y-auto px-5 py-4">
       <div class="flex items-center justify-between mb-3">
@@ -350,6 +399,7 @@
       </div>
       {/if}
     </div>
+    {/if}
 
     <!-- Metadata footer -->
     <div class="px-5 py-3 border-t border-stone-100 text-xs text-stone-400 space-y-0.5">
