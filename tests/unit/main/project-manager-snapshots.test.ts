@@ -4,6 +4,8 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { ProjectManager } from '../../../src/main/project-manager'
 import { GitService } from '../../../src/main/git-service'
+import { HistoryIndexService } from '../../../src/main/history-index'
+import { SearchIndexService } from '../../../src/main/search-index'
 
 const noopLogger = {
   error: () => {},
@@ -264,3 +266,194 @@ describe('snapshot workflow', () => {
     expect(newer.data.recoveryPoints).toEqual([])
   })
 })
+
+describe('per-node history index integration', () => {
+  // These tests need direct access to the history index, so they use their own
+  // ProjectManager instance instead of the shared `manager` from beforeEach.
+
+  let isolatedTmp: string
+  let isolatedManager: ProjectManager
+  let isolatedHistory: HistoryIndexService
+  let isolatedProjectDir: string
+
+  beforeEach(async () => {
+    isolatedTmp = join(tmpdir(), `manifest-history-int-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    mkdirSync(isolatedTmp, { recursive: true })
+
+    const igit = new GitService(noopLogger as any)
+    isolatedHistory = new HistoryIndexService()
+    isolatedManager = new ProjectManager(igit, noopLogger as any, new SearchIndexService(), isolatedHistory)
+
+    const created = await isolatedManager.createProject('History Project', isolatedTmp)
+    expect(created.ok).toBe(true)
+    if (!created.ok) throw new Error(created.error.message)
+    isolatedProjectDir = created.data.path!
+  })
+
+  afterEach(async () => {
+    isolatedManager.cancelAutosave()
+    await isolatedManager.flushAndClose()
+    rmSync(isolatedTmp, { recursive: true, force: true })
+  })
+
+  it('writes per-node history rows on snapshotCreate', async () => {
+    const rootId = isolatedManager.getCurrent()!.nodes.find((n) => n.parentId === null)!.id
+    isolatedManager.nodeCreate(rootId, 'Rack A')
+    const created = await isolatedManager.snapshotCreate('baseline')
+    expect(created.ok).toBe(true)
+    if (!created.ok) return
+
+    const rack = isolatedManager.getCurrent()!.nodes.find((n) => n.name === 'Rack A')!
+    expect(isolatedHistory.recordedSnapshotIds().has('baseline')).toBe(true)
+
+    const rackHistory = isolatedHistory.nodeHistory(rack.id)
+    expect(rackHistory.length).toBe(1)
+    expect(rackHistory[0].presence).toBe('present')
+    expect(rackHistory[0].nodeName).toBe('Rack A')
+  })
+
+  it('delta-encodes across snapshots — only changed nodes get new rows', async () => {
+    const rootId = isolatedManager.getCurrent()!.nodes.find((n) => n.parentId === null)!.id
+    isolatedManager.nodeCreate(rootId, 'Rack A')
+    isolatedManager.nodeCreate(rootId, 'Rack B')
+    await isolatedManager.snapshotCreate('s1')
+
+    const rackA = isolatedManager.getCurrent()!.nodes.find((n) => n.name === 'Rack A')!
+    isolatedManager.nodeUpdate(rackA.id, { properties: { firmware: '2.0' } })
+    await isolatedManager.snapshotCreate('s2')
+
+    // Rack A changed — two rows. Rack B did not — one row.
+    expect(isolatedHistory.nodeHistory(rackA.id).length).toBe(2)
+    const rackB = isolatedManager.getCurrent()!.nodes.find((n) => n.name === 'Rack B')!
+    expect(isolatedHistory.nodeHistory(rackB.id).length).toBe(1)
+  })
+
+  it('records deletion as presence=absent', async () => {
+    const rootId = isolatedManager.getCurrent()!.nodes.find((n) => n.parentId === null)!.id
+    isolatedManager.nodeCreate(rootId, 'Doomed')
+    await isolatedManager.snapshotCreate('s1')
+
+    const doomed = isolatedManager.getCurrent()!.nodes.find((n) => n.name === 'Doomed')!
+    isolatedManager.nodeDelete(doomed.id)
+    await isolatedManager.snapshotCreate('s2')
+
+    const hist = isolatedHistory.nodeHistory(doomed.id)
+    expect(hist.map((r) => [r.snapshotId, r.presence])).toEqual([
+      ['s1', 'present'],
+      ['s2', 'absent'],
+    ])
+  })
+
+  it('snapshotCreate succeeds even when history.recordSnapshot throws (regression test for D2)', async () => {
+    // Build a faulty history service that throws on record. Every other method
+    // returns benign defaults so project lifecycle continues normally.
+    const faultyHistory = {
+      open: () => {},
+      close: () => {},
+      recordSnapshot: () => { throw new Error('forced history failure') },
+      nodeHistory: () => [],
+      recordedSnapshotIds: () => new Set<string>(),
+      incompleteSnapshotIds: () => [],
+    } as unknown as HistoryIndexService
+
+    const tmp = join(tmpdir(), `manifest-history-faulty-${Date.now()}`)
+    mkdirSync(tmp, { recursive: true })
+    const localGit = new GitService(noopLogger as any)
+    const faultyManager = new ProjectManager(localGit, noopLogger as any, new SearchIndexService(), faultyHistory)
+
+    try {
+      const created = await faultyManager.createProject('Faulty', tmp)
+      expect(created.ok).toBe(true)
+      if (!created.ok) return
+      const projectDir = created.data.path!
+
+      const rootId = faultyManager.getCurrent()!.nodes.find((n) => n.parentId === null)!.id
+      faultyManager.nodeCreate(rootId, 'Will Survive')
+
+      const snap = await faultyManager.snapshotCreate('still-works')
+      expect(snap.ok).toBe(true)
+
+      // The git tag is real — listing returns the snapshot.
+      const listed = await faultyManager.snapshotList()
+      expect(listed.ok).toBe(true)
+      if (!listed.ok) return
+      expect(listed.data.some((s) => s.name === 'still-works')).toBe(true)
+    } finally {
+      await faultyManager.flushAndClose()
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('backfill on project open populates history rows for snapshots predating the index', async () => {
+    // Create some snapshots, then nuke the history.db to simulate a project
+    // that existed before the feature shipped.
+    const rootId = isolatedManager.getCurrent()!.nodes.find((n) => n.parentId === null)!.id
+    isolatedManager.nodeCreate(rootId, 'A')
+    await isolatedManager.snapshotCreate('s1')
+    isolatedManager.nodeCreate(rootId, 'B')
+    await isolatedManager.snapshotCreate('s2')
+
+    const a = isolatedManager.getCurrent()!.nodes.find((n) => n.name === 'A')!
+    expect(isolatedHistory.nodeHistory(a.id).length).toBe(1)
+
+    // Close, wipe history.db, reopen — backfill should run on openProject.
+    await isolatedManager.flushAndClose()
+    rmSync(join(isolatedProjectDir, '.manifest', 'index', 'history.db'), { force: true })
+    rmSync(join(isolatedProjectDir, '.manifest', 'index', 'history.db-shm'), { force: true })
+    rmSync(join(isolatedProjectDir, '.manifest', 'index', 'history.db-wal'), { force: true })
+
+    const igit = new GitService(noopLogger as any)
+    const refreshedHistory = new HistoryIndexService()
+    const refreshedManager = new ProjectManager(igit, noopLogger as any, new SearchIndexService(), refreshedHistory)
+    try {
+      const reopened = await refreshedManager.openProject(isolatedProjectDir)
+      expect(reopened.ok).toBe(true)
+
+      // Backfill is async — wait for it to finish.
+      await refreshedManager.waitForHistoryBackfill()
+
+      expect(refreshedHistory.recordedSnapshotIds()).toEqual(new Set(['s1', 's2']))
+      expect(refreshedHistory.nodeHistory(a.id).length).toBe(1)
+    } finally {
+      await refreshedManager.flushAndClose()
+    }
+  })
+
+  it('backfill resumes from snapshots marked complete=0', async () => {
+    const rootId = isolatedManager.getCurrent()!.nodes.find((n) => n.parentId === null)!.id
+    isolatedManager.nodeCreate(rootId, 'A')
+    await isolatedManager.snapshotCreate('s1')
+
+    // Manually inject a snapshot in `complete=0` state plus a partial row.
+    // Simulates a torn write that's been recovered to git but not the index.
+    isolatedManager.nodeCreate(rootId, 'B')
+    await isolatedManager.snapshotCreate('s2')
+
+    // Now corrupt s2's complete flag.
+    const Database = (await import('better-sqlite3')).default
+    const dbPath = join(isolatedProjectDir, '.manifest', 'index', 'history.db')
+    await isolatedManager.flushAndClose()  // release WAL handle so direct write is safe
+    const db = new Database(dbPath)
+    try {
+      db.prepare(`UPDATE snapshot_index_state SET complete=0 WHERE snapshot_id='s2'`).run()
+    } finally {
+      db.close()
+    }
+
+    const igit = new GitService(noopLogger as any)
+    const refreshedHistory = new HistoryIndexService()
+    const refreshedManager = new ProjectManager(igit, noopLogger as any, new SearchIndexService(), refreshedHistory)
+    try {
+      const reopened = await refreshedManager.openProject(isolatedProjectDir)
+      expect(reopened.ok).toBe(true)
+      await refreshedManager.waitForHistoryBackfill()
+
+      // s2 should now be complete after backfill catches up.
+      expect(refreshedHistory.recordedSnapshotIds().has('s2')).toBe(true)
+      expect(refreshedHistory.incompleteSnapshotIds()).toEqual([])
+    } finally {
+      await refreshedManager.flushAndClose()
+    }
+  })
+})
+

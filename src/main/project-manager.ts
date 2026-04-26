@@ -52,20 +52,33 @@ import type { MergedTree } from '../shared/merged-tree'
 import type { GitService } from './git-service'
 import type { Logger } from './logger'
 import { SearchIndexService } from './search-index'
+import { HistoryIndexService } from './history-index'
 
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024  // 50 MB
 const AUTOSAVE_DEBOUNCE_MS = 2500              // 2.5 seconds
 const MAX_RECOVERY_POINTS = 10                 // cap stored auto-saved recovery points
 
 
+export interface HistoryBackfillStatus {
+  inProgress: boolean
+  completed: number
+  total: number
+}
+
 export class ProjectManager {
   private currentProject: Project | null = null
   private autosaveTimer: ReturnType<typeof setTimeout> | null = null
+  private backfillStatus: HistoryBackfillStatus = {
+    inProgress: false, completed: 0, total: 0,
+  }
+  private backfillToken = 0  // bumped on close so a stale backfill exits early
+  private backfillPromise: Promise<void> | null = null
 
   constructor(
     private readonly git: GitService,
     private readonly logger: Logger,
-    private readonly search = new SearchIndexService()
+    private readonly search = new SearchIndexService(),
+    private readonly history = new HistoryIndexService()
   ) {}
 
   // ─── Lifecycle ──────────────────────────────────────────────────────────────
@@ -108,6 +121,7 @@ export class ProjectManager {
       await this.git.initialCommit(projectPath)
       const searchResult = this.rebuildSearchIndex(project, 'initialize')
       if (!searchResult.ok) return searchResult as Result<Project>
+      this.openHistoryIndex(projectPath)
 
       this.currentProject = project
       this.logger.info('project created', { name, path: projectPath })
@@ -163,9 +177,11 @@ export class ProjectManager {
       if (!searchResult.ok) {
         return searchResult as Result<Project>
       }
+      this.openHistoryIndex(projectPath)
 
       this.currentProject = project
       this.logger.info('project opened', { name: project.name, path: projectPath, nodes: project.nodes.length })
+      this.scheduleHistoryBackfill()
       return ok(project)
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -187,10 +203,24 @@ export class ProjectManager {
   // Call before quit, close, or snapshot.
   async flushAndClose(): Promise<Result<void>> {
     this.cancelAutosave()
+    this.backfillToken++  // signal any in-flight backfill to exit early
     const result = await this.saveProject()
     this.currentProject = null
     this.search.close()
+    this.history.close()
+    this.backfillStatus = { inProgress: false, completed: 0, total: 0 }
     return result
+  }
+
+  getHistoryBackfillStatus(): HistoryBackfillStatus {
+    return { ...this.backfillStatus }
+  }
+
+  // Awaitable handle for the most recently scheduled backfill. Tests use this
+  // to deterministically wait for backfill to finish without polling. UI does
+  // not need this — it polls getHistoryBackfillStatus for the progress display.
+  async waitForHistoryBackfill(): Promise<void> {
+    if (this.backfillPromise) await this.backfillPromise
   }
 
   // ─── Node CRUD ──────────────────────────────────────────────────────────────
@@ -527,6 +557,14 @@ export class ProjectManager {
       history.pendingRevertEventId = null
       this.writeSnapshotHistory(history)
       this.logger.info('snapshot created', { name, path: this.currentProject.path })
+
+      // Per-node history index (best effort — failures recover via backfill).
+      // Pass the just-updated history so we can derive chronological order
+      // from event push order (authoritative, unlike git's second-precision
+      // creatordate sort which is unstable for snapshots created the same
+      // second).
+      await this.recordSnapshotInHistory(snapshot.id, this.currentProject, history)
+
       return ok({
         ...snapshot,
         basedOnSnapshotId: snapshotMeta.basedOnSnapshotId,
@@ -900,6 +938,164 @@ export class ProjectManager {
     if (!rebuilt.ok) {
       this.search.close()
     }
+  }
+
+  // ─── History index ──────────────────────────────────────────────────────────
+
+  private openHistoryIndex(projectPath: string): void {
+    try {
+      this.history.open(projectPath)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      this.logger.warn('history index open failed', { path: projectPath, error: msg })
+    }
+  }
+
+  // Record one snapshot's per-node state in the history index. Best-effort:
+  // if anything fails (git read, parse, DB insert), log and continue. Backfill
+  // on next project open will catch up.
+  private async recordSnapshotInHistory(
+    snapshotId: string,
+    project: Project,
+    history: SnapshotHistoryState,
+  ): Promise<void> {
+    if (!project.path) return
+    try {
+      // Authoritative chronological order comes from history.events push
+      // order, not git tag creatordate (which is second-precision and
+      // unstable for ties).
+      const snapshotIdsInOrder = history.events
+        .filter(e => e.type === 'snapshot' && e.snapshotId)
+        .map(e => e.snapshotId as string)
+      const myIndex = snapshotIdsInOrder.lastIndexOf(snapshotId)
+      const snapshotOrder = myIndex >= 0 ? myIndex : snapshotIdsInOrder.length
+      const previousSnapshotName = myIndex > 0 ? snapshotIdsInOrder[myIndex - 1] : null
+
+      let previousProject: Project | null = null
+      if (previousSnapshotName) {
+        const raw = await this.git.readSnapshotManifest(project.path, previousSnapshotName)
+        const parsed = this.parseManifestJson(raw)
+        if (parsed.ok) previousProject = parsed.data
+      }
+
+      this.history.recordSnapshot({
+        snapshotId, snapshotOrder, project, previousProject,
+      })
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      this.logger.warn('history index record failed; backfill will retry on next open', {
+        snapshotId, error: msg,
+      })
+    }
+  }
+
+  // Background backfill: walk all snapshots in chronological order and
+  // populate history.db for any snapshot that's missing or marked complete=0.
+  // Yields to the event loop between snapshots so IPC stays responsive.
+  private scheduleHistoryBackfill(): void {
+    this.backfillPromise = this.runHistoryBackfill().catch((e: unknown) => {
+      const msg = e instanceof Error ? e.message : String(e)
+      this.logger.error('history backfill crashed', { error: msg })
+    })
+  }
+
+  private async runHistoryBackfill(): Promise<void> {
+    const projectPath = this.currentProject?.path
+    if (!projectPath) return
+
+    const myToken = ++this.backfillToken
+    let allSnapshots
+    try {
+      allSnapshots = await this.git.listSnapshots(projectPath)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      this.logger.warn('history backfill: list snapshots failed', { error: msg })
+      return
+    }
+
+    if (allSnapshots.length === 0) return
+
+    const recorded = this.history.recordedSnapshotIds()
+    const incomplete = new Set(this.history.incompleteSnapshotIds())
+    const needsAny = allSnapshots.some(s => !recorded.has(s.name) || incomplete.has(s.name))
+    if (!needsAny) return
+
+    // Determine chronological order. For snapshots that have history.json
+    // events, use event push order (authoritative). For legacy snapshots
+    // without events, fall back to git's creatordate sort (second-precision,
+    // best-effort). Legacy snapshots are placed before recorded ones since
+    // events were added later in the project's life.
+    const persistedHistory = this.readSnapshotHistory()
+    const recordedIds = persistedHistory.events
+      .filter(e => e.type === 'snapshot' && e.snapshotId)
+      .map(e => e.snapshotId as string)
+    const inRecorded = new Set(recordedIds)
+    const tagsByName = new Map(allSnapshots.map(s => [s.name, s]))
+    const legacyOrdered = allSnapshots
+      .filter(s => !inRecorded.has(s.name))
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+    const recordedOrdered = recordedIds
+      .map(id => tagsByName.get(id))
+      .filter((s): s is typeof allSnapshots[number] => s !== undefined)
+    const chronological = [...legacyOrdered, ...recordedOrdered]
+    this.backfillStatus = { inProgress: true, completed: 0, total: chronological.length }
+    this.logger.info('history backfill started', { total: chronological.length })
+
+    let previousProject: Project | null = null
+    for (let i = 0; i < chronological.length; i++) {
+      // Bail if the project was closed or another backfill superseded us.
+      if (myToken !== this.backfillToken || this.currentProject?.path !== projectPath) {
+        this.logger.info('history backfill cancelled', { completed: i, total: chronological.length })
+        this.backfillStatus = { inProgress: false, completed: i, total: chronological.length }
+        return
+      }
+
+      const snapshot = chronological[i]
+      const snapshotId = snapshot.name
+
+      let raw: string
+      try {
+        raw = await this.git.readSnapshotManifest(projectPath, snapshotId)
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e)
+        this.logger.warn('history backfill: manifest read failed', { snapshotId, error: msg })
+        previousProject = null  // can't trust delta against a snapshot we couldn't read
+        this.backfillStatus.completed = i + 1
+        await new Promise(resolve => setImmediate(resolve))
+        continue
+      }
+
+      const parsed = this.parseManifestJson(raw)
+      if (!parsed.ok) {
+        this.logger.warn('history backfill: manifest parse failed', {
+          snapshotId, error: parsed.error.message,
+        })
+        previousProject = null
+        this.backfillStatus.completed = i + 1
+        await new Promise(resolve => setImmediate(resolve))
+        continue
+      }
+
+      const isFresh = !recorded.has(snapshotId) || incomplete.has(snapshotId)
+      if (isFresh) {
+        try {
+          this.history.recordSnapshot({
+            snapshotId, snapshotOrder: i,
+            project: parsed.data, previousProject,
+          })
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e)
+          this.logger.warn('history backfill: insert failed', { snapshotId, error: msg })
+        }
+      }
+
+      previousProject = parsed.data
+      this.backfillStatus.completed = i + 1
+      await new Promise(resolve => setImmediate(resolve))
+    }
+
+    this.backfillStatus = { inProgress: false, completed: chronological.length, total: chronological.length }
+    this.logger.info('history backfill complete', { total: chronological.length })
   }
 
   private withSnapshotMetadata(snapshots: Snapshot[]): Snapshot[] {
