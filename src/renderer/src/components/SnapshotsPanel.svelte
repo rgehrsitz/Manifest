@@ -180,6 +180,35 @@
     if (!snapshot?.basedOnSnapshotId) return null
     return `Based on ${snapshot.basedOnSnapshotId}`
   }
+
+  // A timeline event can reference up to two recovery points: the safety point
+  // auto-saved before a destructive action (always applyable, lets the user
+  // walk back the action) and, for recover events, the recovery point that was
+  // applied (audit trail; not re-applyable from this row since the user just
+  // applied it).
+  interface RecoveryRow {
+    point: RecoveryPoint
+    label: string
+    applyable: boolean
+  }
+
+  function recoveryRows(event: SnapshotTimelineEvent): RecoveryRow[] {
+    const rows: RecoveryRow[] = []
+    if (event.type === 'recover') {
+      const applied = recoveryPointById(event.recoveryPointId)
+      if (applied) {
+        rows.push({ point: applied, label: 'Applied this recovery point', applyable: false })
+      }
+    }
+    const safety = recoveryPointById(event.safetyRecoveryPointId)
+    if (safety) {
+      const label = event.type === 'recover'
+        ? 'Recovery point saved before recover'
+        : 'Recovery point saved before revert'
+      rows.push({ point: safety, label, applyable: true })
+    }
+    return rows
+  }
 </script>
 
 <!--
@@ -264,7 +293,7 @@
       {:else}
         <div class="space-y-2">
           {#each timelineEvents as event (event.id)}
-            {@const recoveryPoint = recoveryPointById(event.safetyRecoveryPointId)}
+            {@const rows = recoveryRows(event)}
             {@const lineage = lineageText(event)}
             <div
               class="rounded-lg border border-stone-200 bg-white px-3 py-2"
@@ -290,23 +319,28 @@
                   {event.note}
                 </p>
               {/if}
-              {#if recoveryPoint}
+              {#each rows as row (row.point.id)}
                 <div class="mt-2 flex items-start justify-between gap-2">
-                  <p class="min-w-0 text-[10px] text-stone-500">
-                    Recovery point saved before revert
-                  </p>
-                  <button
-                    onclick={() => onApplyRecovery(recoveryPoint.id)}
-                    disabled={recoveringId !== null || restoringName !== null}
-                    class="shrink-0 rounded border border-stone-200 bg-white px-2 py-1 text-[10px]
-                           font-medium text-stone-600 hover:bg-stone-50 disabled:bg-stone-100
-                           disabled:text-stone-400 cursor-default"
-                    data-testid="apply-recovery-btn"
-                  >
-                    {recoveringId === recoveryPoint.id ? '...' : 'Recover'}
-                  </button>
+                  <div class="min-w-0">
+                    <p class="text-[10px] text-stone-500">{row.label}</p>
+                    <p class="text-[10px] text-stone-400">
+                      {new Date(row.point.createdAt).toLocaleString()}
+                    </p>
+                  </div>
+                  {#if row.applyable}
+                    <button
+                      onclick={() => onApplyRecovery(row.point.id)}
+                      disabled={recoveringId !== null || restoringName !== null}
+                      class="shrink-0 rounded border border-stone-200 bg-white px-2 py-1 text-[10px]
+                             font-medium text-stone-600 hover:bg-stone-50 disabled:bg-stone-100
+                             disabled:text-stone-400 cursor-default"
+                      data-testid="apply-recovery-btn"
+                    >
+                      {recoveringId === row.point.id ? '...' : 'Recover'}
+                    </button>
+                  {/if}
                 </div>
-              {/if}
+              {/each}
             </div>
           {/each}
         </div>
