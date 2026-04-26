@@ -661,6 +661,22 @@ export class ProjectManager {
     }
     const projectPath = this.currentProject.path
 
+    // Self-heal: if the index has fewer recorded snapshots than git knows
+    // about, schedule a backfill. This catches the case where the user
+    // upgraded to this feature with a project already open, or where the
+    // history.db was deleted/corrupted. scheduleHistoryBackfill is a no-op
+    // when one is already running.
+    try {
+      const recordedCount = this.history.recordedSnapshotIds().size
+      const allSnapshots = await this.git.listSnapshots(projectPath)
+      if (allSnapshots.length > recordedCount && !this.backfillStatus.inProgress) {
+        this.scheduleHistoryBackfill()
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      this.logger.warn('history backfill probe failed', { error: msg })
+    }
+
     let dbRowsBySnapshot = new Map<string, ReturnType<typeof this.history.nodeHistory>[number]>()
     try {
       const rows = this.history.nodeHistory(nodeId)
@@ -1123,7 +1139,16 @@ export class ProjectManager {
   // Background backfill: walk all snapshots in chronological order and
   // populate history.db for any snapshot that's missing or marked complete=0.
   // Yields to the event loop between snapshots so IPC stays responsive.
+  // Schedule a backfill in the background. Idempotent — calling repeatedly
+  // while one is already running does NOT start a second pass; the existing
+  // promise is returned. This lets nodeHistory and openProject both trigger
+  // safely without coordinating.
   private scheduleHistoryBackfill(): void {
+    if (this.backfillStatus.inProgress) return
+    // Flip the flag synchronously so concurrent status queries don't see
+    // a transient false-idle while runHistoryBackfill is still in its
+    // pre-listSnapshots prelude.
+    this.backfillStatus = { inProgress: true, completed: 0, total: 0 }
     this.backfillPromise = this.runHistoryBackfill().catch((e: unknown) => {
       const msg = e instanceof Error ? e.message : String(e)
       this.logger.error('history backfill crashed', { error: msg })
@@ -1132,7 +1157,10 @@ export class ProjectManager {
 
   private async runHistoryBackfill(): Promise<void> {
     const projectPath = this.currentProject?.path
-    if (!projectPath) return
+    if (!projectPath) {
+      this.backfillStatus = { inProgress: false, completed: 0, total: 0 }
+      return
+    }
 
     const myToken = ++this.backfillToken
     let allSnapshots
@@ -1141,15 +1169,22 @@ export class ProjectManager {
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
       this.logger.warn('history backfill: list snapshots failed', { error: msg })
+      this.backfillStatus = { inProgress: false, completed: 0, total: 0 }
       return
     }
 
-    if (allSnapshots.length === 0) return
+    if (allSnapshots.length === 0) {
+      this.backfillStatus = { inProgress: false, completed: 0, total: 0 }
+      return
+    }
 
     const recorded = this.history.recordedSnapshotIds()
     const incomplete = new Set(this.history.incompleteSnapshotIds())
     const needsAny = allSnapshots.some(s => !recorded.has(s.name) || incomplete.has(s.name))
-    if (!needsAny) return
+    if (!needsAny) {
+      this.backfillStatus = { inProgress: false, completed: allSnapshots.length, total: allSnapshots.length }
+      return
+    }
 
     // Determine chronological order. For snapshots that have history.json
     // events, use event push order (authoritative). For legacy snapshots
@@ -1169,6 +1204,8 @@ export class ProjectManager {
       .map(id => tagsByName.get(id))
       .filter((s): s is typeof allSnapshots[number] => s !== undefined)
     const chronological = [...legacyOrdered, ...recordedOrdered]
+    // inProgress was set to true synchronously by scheduleHistoryBackfill;
+    // here we update total now that we know how many snapshots we'll walk.
     this.backfillStatus = { inProgress: true, completed: 0, total: chronological.length }
     this.logger.info('history backfill started', { total: chronological.length })
 

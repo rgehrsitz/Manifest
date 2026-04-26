@@ -177,6 +177,67 @@ describe('nodeHistory IPC', () => {
     expect(afterRecover.data.entries[0].recoveryPointId).toBe(recoveryPointId)
   })
 
+  it('self-heals: nodeHistory schedules backfill when the index lags behind git', async () => {
+    // Simulate the upgrade scenario: a project that has snapshots in git but
+    // was opened on the old code (no history.db), then we open a fresh
+    // manager whose history index starts empty. nodeHistory should detect
+    // the gap and schedule a backfill, after which entries become available.
+    const rootId = manager.getCurrent()!.nodes.find((n) => n.parentId === null)!.id
+    manager.nodeCreate(rootId, 'Server')
+    const server = manager.getCurrent()!.nodes.find((n) => n.name === 'Server')!
+    await manager.snapshotCreate('first')
+    manager.nodeUpdate(server.id, { properties: { firmware: '1.0' } })
+    await manager.snapshotCreate('second')
+
+    // Wait for the auto-backfill from createProject's openHistoryIndex /
+    // snapshotCreate's recordSnapshot path to settle, then verify baseline.
+    await manager.waitForHistoryBackfill()
+    const baseline = await manager.nodeHistory(server.id)
+    expect(baseline.ok).toBe(true)
+    if (!baseline.ok) return
+    expect(baseline.data.entries.length).toBe(2)
+
+    // Drop the project, wipe history.db, open the project on a NEW manager
+    // and immediately call nodeHistory before any auto-backfill has time
+    // to settle. The self-heal probe should kick off a backfill, the
+    // initial query returns whatever exists at the moment, and a
+    // subsequent query (after waiting) returns the full history.
+    const projectPath = manager.getCurrent()!.path!
+    await manager.flushAndClose()
+
+    const Database = (await import('better-sqlite3')).default
+    const dbPath = join(projectPath, '.manifest', 'index', 'history.db')
+    const db = new Database(dbPath)
+    try {
+      db.exec('DELETE FROM node_history; DELETE FROM snapshot_index_state;')
+    } finally {
+      db.close()
+    }
+
+    const igit = new (await import('../../../src/main/git-service')).GitService(noopLogger as any)
+    const fresh = new (await import('../../../src/main/project-manager')).ProjectManager(igit, noopLogger as any)
+    try {
+      const reopened = await fresh.openProject(projectPath)
+      expect(reopened.ok).toBe(true)
+
+      // Call nodeHistory immediately. Self-heal probe runs inside it.
+      // We don't assert on the IMMEDIATE return value (could be anywhere
+      // from 0 to 2 entries depending on how far backfill has gotten).
+      // What we DO assert: after waiting for backfill, entries appear.
+      const probe = await fresh.nodeHistory(server.id)
+      expect(probe.ok).toBe(true)
+
+      await fresh.waitForHistoryBackfill()
+
+      const afterBackfill = await fresh.nodeHistory(server.id)
+      expect(afterBackfill.ok).toBe(true)
+      if (!afterBackfill.ok) return
+      expect(afterBackfill.data.entries.length).toBe(2)
+    } finally {
+      await fresh.flushAndClose()
+    }
+  })
+
   it('returns chronologically ordered entries via the order field', async () => {
     const rootId = manager.getCurrent()!.nodes.find(n => n.parentId === null)!.id
     manager.nodeCreate(rootId, 'Sequenced')

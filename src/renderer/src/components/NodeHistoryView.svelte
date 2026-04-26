@@ -149,16 +149,22 @@
     {#if backfillStatus?.inProgress}
       <div class="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-600"
            data-testid="node-history-indexing">
-        Indexing snapshots… {backfillStatus.completed} of {backfillStatus.total}
+        {#if backfillStatus.total > 0}
+          Indexing snapshots… {backfillStatus.completed} of {backfillStatus.total}
+        {:else}
+          Indexing snapshots…
+        {/if}
       </div>
     {/if}
 
-    {#if entries.length === 0}
+    {#if entries.length === 0 && !backfillStatus?.inProgress}
       <div class="rounded-lg border border-dashed border-stone-200 bg-stone-50 px-3 py-4
                   text-xs text-stone-400 text-center"
            data-testid="node-history-empty">
         "{nodeName}" has not been snapshotted yet.
       </div>
+    {:else if entries.length === 0}
+      <p class="text-xs text-stone-400" data-testid="node-history-pending">Waiting for the index to populate…</p>
     {:else}
       <ol class="space-y-2">
         {#each entries as entry, idx (entry.entryId + ':' + idx)}
