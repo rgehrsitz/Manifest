@@ -29,6 +29,10 @@ const api: ManifestAPI = {
       ipcRenderer.invoke(IPC.NODE_DELETE, { id }),
     move: (id, newParentId, newOrder) =>
       ipcRenderer.invoke(IPC.NODE_MOVE, { id, newParentId, newOrder }),
+    history: (nodeId) =>
+      ipcRenderer.invoke(IPC.NODE_HISTORY, { nodeId }),
+    historyBackfillStatus: () =>
+      ipcRenderer.invoke(IPC.NODE_HISTORY_BACKFILL_STATUS, {}),
   },
 
   search: {

@@ -103,6 +103,14 @@ function registerIpcHandlers(): void {
     { id, newParentId, newOrder }: { id: string; newParentId: string; newOrder: number }
   ) => projectManager.nodeMove(id, newParentId, newOrder))
 
+  ipcMain.handle(IPC.NODE_HISTORY, (_, { nodeId }: { nodeId: string }) =>
+    projectManager.nodeHistory(nodeId)
+  )
+
+  ipcMain.handle(IPC.NODE_HISTORY_BACKFILL_STATUS, () =>
+    ok(projectManager.getHistoryBackfillStatus())
+  )
+
   // ── Search ───────────────────────────────────────────────────────────────
 
   ipcMain.handle(IPC.SEARCH_QUERY, (_, { query }: { query: string }) =>

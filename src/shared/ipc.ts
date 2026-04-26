@@ -14,6 +14,7 @@ import type {
   SearchResult,
   GitStatus,
   Result,
+  NodeHistory,
   RecoveryPointApplyRequest,
   RecoveryPointApplyResult,
   SnapshotRevertRequest,
@@ -33,6 +34,8 @@ export const IPC = {
   NODE_UPDATE:         'node:update',
   NODE_DELETE:         'node:delete',
   NODE_MOVE:           'node:move',
+  NODE_HISTORY:        'node:history',
+  NODE_HISTORY_BACKFILL_STATUS: 'node:historyBackfillStatus',
   SEARCH_QUERY:        'search:query',
   SNAPSHOT_CREATE:     'snapshot:create',
   SNAPSHOT_LIST:       'snapshot:list',
@@ -72,6 +75,10 @@ export interface ManifestAPI {
     delete(id: string): Promise<Result<Project>>
     /** Move node to newParentId (appended as last child) or reorder within same parent. */
     move(id: string, newParentId: string, newOrder: number): Promise<Result<Project>>
+    /** Chronological history of one node across all snapshots, plus revert/recover events that changed it. */
+    history(nodeId: string): Promise<Result<NodeHistory>>
+    /** Status of the background per-node history backfill (populated on project open). */
+    historyBackfillStatus(): Promise<Result<{ inProgress: boolean; completed: number; total: number }>>
   }
   search: {
     query(query: string): Promise<Result<SearchResult[]>>

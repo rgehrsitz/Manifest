@@ -100,6 +100,39 @@ export interface SnapshotTimeline {
   recoveryPoints: RecoveryPoint[]
 }
 
+// Per-node history entry. One entry per transition (creation, change,
+// deletion, revert that changed this node, recover that changed this node).
+// Snapshots where the node did NOT change emit no entry — delta-encoded.
+export type NodeHistoryEntryType = 'snapshot' | 'revert' | 'recover'
+
+export interface NodeHistoryEntry {
+  type: NodeHistoryEntryType
+  // Stable id for this entry. For snapshots, it's the snapshot name. For
+  // revert/recover, it's the timeline event id.
+  entryId: string
+  createdAt: string  // ISO 8601
+  // For snapshot entries: the snapshot name. Null for revert/recover.
+  snapshotName: string | null
+  // Position in the chronological event order (0-based).
+  order: number
+  // Node state immediately after this entry's event was applied.
+  presence: 'present' | 'absent'
+  nodeName: string | null
+  parentId: string | null
+  nodeOrder: number | null
+  properties: Record<string, string | number | boolean | null> | null
+  // For revert entries: the snapshot the project was reverted to.
+  revertTargetSnapshotId?: string | null
+  // For recover entries: the recovery point that was applied.
+  recoveryPointId?: string | null
+  // For revert entries: the user-supplied reason (when required).
+  note?: string | null
+}
+
+export interface NodeHistory {
+  entries: NodeHistoryEntry[]
+}
+
 export interface SearchResult {
   nodeId: string
   nodeName: string
