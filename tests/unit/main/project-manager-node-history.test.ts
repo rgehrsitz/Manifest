@@ -238,6 +238,53 @@ describe('nodeHistory IPC', () => {
     }
   })
 
+  it('surfaces history for snapshots that were never recorded in history.events (script-generated fixtures)', async () => {
+    // Reproduce the user's scenario: a project whose snapshots were created
+    // via raw `git tag` calls (e.g. scripts/generate-project.mjs), so
+    // history.json doesn't exist and history.events has no entries for them.
+    // Walking history.events alone would yield zero entries even though the
+    // history.db has rows. nodeHistory must synthesize events for those
+    // snapshots the same way snapshotTimeline does.
+    const rootId = manager.getCurrent()!.nodes.find((n) => n.parentId === null)!.id
+    manager.nodeCreate(rootId, 'LegacyNode')
+    const node = manager.getCurrent()!.nodes.find((n) => n.name === 'LegacyNode')!
+    await manager.snapshotCreate('first')
+    manager.nodeUpdate(node.id, { properties: { firmware: 'v1' } })
+    await manager.snapshotCreate('second')
+    await manager.waitForHistoryBackfill()
+
+    // Sanity: history works normally with events present.
+    const baseline = await manager.nodeHistory(node.id)
+    expect(baseline.ok).toBe(true)
+    if (!baseline.ok) return
+    expect(baseline.data.entries.length).toBe(2)
+
+    // Now simulate the "legacy" state: delete history.json so events vanish.
+    // The history.db rows stay. The git tags stay. Only the events go away.
+    const projectPath = manager.getCurrent()!.path!
+    await manager.flushAndClose()
+    rmSync(join(projectPath, '.manifest', 'history.json'), { force: true })
+
+    // Reopen with a fresh manager. nodeHistory must still produce entries
+    // for the now-eventless snapshots.
+    const igit = new (await import('../../../src/main/git-service')).GitService(noopLogger as any)
+    const fresh = new (await import('../../../src/main/project-manager')).ProjectManager(igit, noopLogger as any)
+    try {
+      const reopened = await fresh.openProject(projectPath)
+      expect(reopened.ok).toBe(true)
+      await fresh.waitForHistoryBackfill()
+
+      const result = await fresh.nodeHistory(node.id)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      // Two entries: created at 'first', firmware property added at 'second'.
+      expect(result.data.entries.length).toBe(2)
+      expect(result.data.entries.map(e => e.snapshotName)).toEqual(['first', 'second'])
+    } finally {
+      await fresh.flushAndClose()
+    }
+  })
+
   it('returns chronologically ordered entries via the order field', async () => {
     const rootId = manager.getCurrent()!.nodes.find(n => n.parentId === null)!.id
     manager.nodeCreate(rootId, 'Sequenced')
