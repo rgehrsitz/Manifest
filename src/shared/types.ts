@@ -131,6 +131,11 @@ export interface NodeHistoryEntry {
 
 export interface NodeHistory {
   entries: NodeHistoryEntry[]
+  // Bundled into the same IPC response so the renderer can render the
+  // "Indexing N/M…" banner consistently with the entries it just received.
+  // Without this, a parallel status query could race the entries query and
+  // return stale inProgress=false alongside empty entries.
+  backfillStatus: { inProgress: boolean; completed: number; total: number }
 }
 
 export interface SearchResult {

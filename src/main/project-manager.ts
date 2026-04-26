@@ -661,21 +661,12 @@ export class ProjectManager {
     }
     const projectPath = this.currentProject.path
 
-    // Self-heal: if the index has fewer recorded snapshots than git knows
-    // about, schedule a backfill. This catches the case where the user
-    // upgraded to this feature with a project already open, or where the
-    // history.db was deleted/corrupted. scheduleHistoryBackfill is a no-op
-    // when one is already running.
-    try {
-      const recordedCount = this.history.recordedSnapshotIds().size
-      const allSnapshots = await this.git.listSnapshots(projectPath)
-      if (allSnapshots.length > recordedCount && !this.backfillStatus.inProgress) {
-        this.scheduleHistoryBackfill()
-      }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e)
-      this.logger.warn('history backfill probe failed', { error: msg })
-    }
+    // Synchronously trigger a backfill probe before any await. This is
+    // idempotent — already-running backfills pass through, and an
+    // up-to-date index is detected and exits inside runHistoryBackfill.
+    // The synchronous flip of inProgress=true (when scheduled) prevents
+    // the renderer from seeing stale "not in progress" state.
+    this.scheduleHistoryBackfill()
 
     let dbRowsBySnapshot = new Map<string, ReturnType<typeof this.history.nodeHistory>[number]>()
     try {
@@ -785,7 +776,7 @@ export class ProjectManager {
       }
     }
 
-    return ok({ entries })
+    return ok({ entries, backfillStatus: this.getHistoryBackfillStatus() })
   }
 
   async snapshotCompare(a: string, b: string): Promise<Result<DiffEntry[]>> {

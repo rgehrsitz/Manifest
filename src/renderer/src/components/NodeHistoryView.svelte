@@ -29,22 +29,16 @@
   async function load(id: string): Promise<void> {
     loading = true
     error = null
-    const [historyResult, statusResult] = await Promise.all([
-      window.api.node.history(id),
-      window.api.node.historyBackfillStatus(),
-    ])
+    const result = await window.api.node.history(id)
     loading = false
 
-    if (!historyResult.ok) {
-      error = historyResult.error.message
+    if (!result.ok) {
+      error = result.error.message
       return
     }
-    entries = historyResult.data.entries
-
-    if (statusResult.ok) {
-      backfillStatus = statusResult.data
-      if (statusResult.data.inProgress) schedulePoll(id)
-    }
+    entries = result.data.entries
+    backfillStatus = result.data.backfillStatus
+    if (backfillStatus.inProgress) schedulePoll(id)
   }
 
   function schedulePoll(id: string): void {
