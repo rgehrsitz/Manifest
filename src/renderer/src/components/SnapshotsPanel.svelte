@@ -106,13 +106,27 @@
       .filter(g => g.entries.length > 0)
   )
 
+  // Auto-fill From/To once on first load. After that, leave them alone — if
+  // the user toggled a pill off (third-click clear), don't pre-fill on top of
+  // their choice. Still correct invalid values (e.g. snapshot was deleted).
+  let comparePickerInitialized = $state(false)
+
   $effect(() => {
     const names = snapshots.map(s => s.name)
-    if (snapshots.length === 0) { compareFrom = ''; compareTo = ''; return }
-    if (!compareTo || !names.includes(compareTo)) compareTo = snapshots[0].name
-    if (!compareFrom || !names.includes(compareFrom)) {
-      compareFrom = snapshots[1]?.name ?? snapshots[0].name
+    if (snapshots.length === 0) {
+      compareFrom = ''
+      compareTo = ''
+      comparePickerInitialized = false
+      return
     }
+    if (!comparePickerInitialized) {
+      compareTo = snapshots[0].name
+      compareFrom = snapshots[1]?.name ?? snapshots[0].name
+      comparePickerInitialized = true
+      return
+    }
+    if (compareTo && !names.includes(compareTo)) compareTo = ''
+    if (compareFrom && !names.includes(compareFrom)) compareFrom = ''
   })
 
   async function submitCreate() {
@@ -139,14 +153,34 @@
     return 'border-amber-200 bg-amber-50 text-amber-700'
   }
 
+  // Memoized lookup tables. Without these, each timeline row would do
+  // O(snapshots) + O(recoveryPoints) array scans for every helper call —
+  // O(N·M) total render cost.
+  const snapshotsByKey = $derived.by(() => {
+    const map = new Map<string, Snapshot>()
+    for (const snapshot of snapshots) {
+      map.set(snapshot.id, snapshot)
+      // Snapshot id and name are currently the same string, but keep both
+      // entries in case that ever decouples.
+      map.set(snapshot.name, snapshot)
+    }
+    return map
+  })
+
+  const recoveryPointsById = $derived.by(() => {
+    const map = new Map<string, RecoveryPoint>()
+    for (const point of recoveryPoints) map.set(point.id, point)
+    return map
+  })
+
   function snapshotById(id: string | undefined): Snapshot | null {
     if (!id) return null
-    return snapshots.find(snapshot => snapshot.id === id || snapshot.name === id) ?? null
+    return snapshotsByKey.get(id) ?? null
   }
 
   function recoveryPointById(id: string | null | undefined): RecoveryPoint | null {
     if (!id) return null
-    return recoveryPoints.find(point => point.id === id) ?? null
+    return recoveryPointsById.get(id) ?? null
   }
 
   function timelineTitle(event: SnapshotTimelineEvent): string {
@@ -171,9 +205,13 @@
     return event.snapshotId ?? null
   }
 
+  // Toggle: clicking the active role on the same snapshot clears it.
   function setCompareRole(name: string, role: 'from' | 'to') {
-    if (role === 'from') compareFrom = name
-    else compareTo = name
+    if (role === 'from') {
+      compareFrom = compareFrom === name ? '' : name
+    } else {
+      compareTo = compareTo === name ? '' : name
+    }
   }
 
   // A timeline event can reference up to two recovery points: the safety point
@@ -447,12 +485,12 @@
             {#each timelineEvents as event (event.id)}
               {@const rows = recoveryRows(event)}
               {@const lineage = lineageText(event)}
-              {@const snapshotName = snapshotNameForEvent(event)}
+              {@const eventSnapshotName = snapshotNameForEvent(event)}
               <div
                 class="rounded-lg border border-stone-200 bg-white px-3 py-2"
                 data-testid="snapshot-timeline-event"
               >
-                <div data-testid={snapshotName ? 'snapshot-row' : undefined}>
+                <div data-testid={eventSnapshotName ? 'snapshot-row' : undefined}>
                   <div class="flex items-start justify-between gap-2">
                     <div class="min-w-0">
                       <p class="text-xs font-medium text-stone-800">{timelineTitle(event)}</p>
@@ -473,36 +511,34 @@
                       {event.note}
                     </p>
                   {/if}
-                  {#if snapshotName}
-                    <div class="mt-2 flex items-center justify-between gap-2">
+                  {#if eventSnapshotName}
+                    <div class="mt-2 flex items-center justify-end gap-2">
                       {#if snapshots.length >= 2}
-                        <div class="flex gap-1">
+                        <div class="mr-auto flex gap-1">
                           <button
-                            onclick={() => setCompareRole(snapshotName, 'from')}
+                            onclick={() => setCompareRole(eventSnapshotName, 'from')}
                             class={`rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide
-                                    ${snapshotName === compareFrom ? 'bg-stone-800 text-white' : 'bg-stone-100 text-stone-500 hover:bg-stone-200'}`}
+                                    ${eventSnapshotName === compareFrom ? 'bg-stone-800 text-white' : 'bg-stone-100 text-stone-500 hover:bg-stone-200'}`}
                             data-testid="set-compare-from-btn"
                           >From</button>
                           <button
-                            onclick={() => setCompareRole(snapshotName, 'to')}
+                            onclick={() => setCompareRole(eventSnapshotName, 'to')}
                             class={`rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide
-                                    ${snapshotName === compareTo ? 'bg-sky-100 text-sky-700' : 'bg-stone-100 text-stone-500 hover:bg-stone-200'}`}
+                                    ${eventSnapshotName === compareTo ? 'bg-sky-100 text-sky-700' : 'bg-stone-100 text-stone-500 hover:bg-stone-200'}`}
                             data-testid="set-compare-to-btn"
                           >To</button>
                         </div>
-                      {:else}
-                        <span></span>
                       {/if}
                       <button
-                        onclick={() => onRestore(snapshotName)}
+                        onclick={() => onRestore(eventSnapshotName)}
                         disabled={restoringName !== null}
-                        aria-label={`Revert Current Project to This Snapshot: ${snapshotName}`}
+                        aria-label={`Revert Current Project to This Snapshot: ${eventSnapshotName}`}
                         class="shrink-0 rounded border border-stone-200 bg-white px-2 py-1 text-[10px]
                                font-medium text-stone-600 hover:bg-stone-50 disabled:text-stone-400
                                disabled:bg-stone-100 cursor-default"
                         data-testid="restore-snapshot-btn"
                       >
-                        {restoringName === snapshotName ? '…' : 'Revert'}
+                        {restoringName === eventSnapshotName ? '…' : 'Revert'}
                       </button>
                     </div>
                   {/if}
@@ -539,44 +575,46 @@
     {#if snapshots.length >= 2}
       <section class="shrink-0 border-t border-stone-200 bg-white px-4 py-3 space-y-2">
         <h3 class="text-[10px] font-semibold uppercase tracking-wide text-stone-500">Compare</h3>
-      <div class="flex gap-2">
-        <label class="flex-1 flex flex-col gap-0.5 text-[10px] text-stone-500">
-          From
-          <select
-            bind:value={compareFrom}
-            class="rounded border border-stone-200 bg-stone-50 px-2 py-1.5 text-xs
-                   text-stone-700 focus:outline-none focus:ring-1 focus:ring-stone-400"
-            data-testid="compare-from-select"
-          >
-            {#each snapshots as snapshot (snapshot.name)}
-              <option value={snapshot.name}>{snapshot.name}</option>
-            {/each}
-          </select>
-        </label>
-        <label class="flex-1 flex flex-col gap-0.5 text-[10px] text-stone-500">
-          To
-          <select
-            bind:value={compareTo}
-            class="rounded border border-stone-200 bg-stone-50 px-2 py-1.5 text-xs
-                   text-stone-700 focus:outline-none focus:ring-1 focus:ring-stone-400"
-            data-testid="compare-to-select"
-          >
-            {#each snapshots as snapshot (snapshot.name)}
-              <option value={snapshot.name}>{snapshot.name}</option>
-            {/each}
-          </select>
-        </label>
-      </div>
-      <button
-        onclick={submitCompare}
-        disabled={snapshots.length < 2 || !compareFrom || !compareTo || compareFrom === compareTo || comparing}
-        class="w-full rounded-lg bg-stone-800 px-3 py-1.5 text-xs font-medium text-white
-               transition-colors hover:bg-stone-700 disabled:bg-stone-300 cursor-default
-               disabled:cursor-not-allowed"
-        data-testid="compare-snapshots-btn"
-      >
-        {comparing ? 'Comparing…' : 'Compare'}
-      </button>
+        <div class="flex gap-2">
+          <label class="flex-1 flex flex-col gap-0.5 text-[10px] text-stone-500">
+            From
+            <select
+              bind:value={compareFrom}
+              class="rounded border border-stone-200 bg-stone-50 px-2 py-1.5 text-xs
+                     text-stone-700 focus:outline-none focus:ring-1 focus:ring-stone-400"
+              data-testid="compare-from-select"
+            >
+              <option value="">— pick a From —</option>
+              {#each snapshots as snapshot (snapshot.name)}
+                <option value={snapshot.name}>{snapshot.name}</option>
+              {/each}
+            </select>
+          </label>
+          <label class="flex-1 flex flex-col gap-0.5 text-[10px] text-stone-500">
+            To
+            <select
+              bind:value={compareTo}
+              class="rounded border border-stone-200 bg-stone-50 px-2 py-1.5 text-xs
+                     text-stone-700 focus:outline-none focus:ring-1 focus:ring-stone-400"
+              data-testid="compare-to-select"
+            >
+              <option value="">— pick a To —</option>
+              {#each snapshots as snapshot (snapshot.name)}
+                <option value={snapshot.name}>{snapshot.name}</option>
+              {/each}
+            </select>
+          </label>
+        </div>
+        <button
+          onclick={submitCompare}
+          disabled={snapshots.length < 2 || !compareFrom || !compareTo || compareFrom === compareTo || comparing}
+          class="w-full rounded-lg bg-stone-800 px-3 py-1.5 text-xs font-medium text-white
+                 transition-colors hover:bg-stone-700 disabled:bg-stone-300 cursor-default
+                 disabled:cursor-not-allowed"
+          data-testid="compare-snapshots-btn"
+        >
+          {comparing ? 'Comparing…' : 'Compare'}
+        </button>
       </section>
     {/if}
   {/if}
