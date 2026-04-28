@@ -112,8 +112,8 @@ test('F2 triggers rename in DetailPane', async ({ appPage, electronApp, workspac
 
   // Click the root node to select it, then press F2.
   await appPage.locator('[data-testid="tree-node"]').first().click()
-  await appPage.getByTestId('tree-viewport').focus()
-  await appPage.getByTestId('tree-viewport').press('F2')
+  await appPage.getByTestId('manifest-view').focus()
+  await appPage.getByTestId('manifest-view').press('F2')
 
   // DetailPane should enter name-editing mode: the name input becomes visible.
   await expect(appPage.getByTestId('name-input')).toBeVisible()
@@ -149,12 +149,12 @@ test('arrow key navigation moves through visible nodes', async ({
   }
 
   // Focus the tree viewport, press ArrowDown twice to move from root → Alpha → Beta.
-  await appPage.getByTestId('tree-viewport').focus()
-  await appPage.getByTestId('tree-viewport').press('ArrowDown')
-  await appPage.getByTestId('tree-viewport').press('ArrowDown')
+  await appPage.getByTestId('manifest-view').focus()
+  await appPage.getByTestId('manifest-view').press('ArrowDown')
+  await appPage.getByTestId('manifest-view').press('ArrowDown')
 
   // The detail pane should show "Beta" after two ArrowDown presses select it.
   // (Selection is updated by Enter/Space, not just navigation, so we press Enter.)
-  await appPage.getByTestId('tree-viewport').press('Enter')
+  await appPage.getByTestId('manifest-view').press('Enter')
   await expect(appPage.getByTestId('detail-pane')).toContainText('Beta')
 })
