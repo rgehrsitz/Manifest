@@ -210,3 +210,89 @@ function resolveGhostParent(
   // Parent was also removed → point to its ghost.
   return `ghost:${originalParentId}`
 }
+
+// ─── Subtree summaries ────────────────────────────────────────────────────────
+
+/**
+ * Per-node breakdown of change counts in a subtree (the node itself plus
+ * all descendants), grouped by change type.
+ *
+ * Used by the lens to surface "this collapsed subtree contains 3 added,
+ * 2 moved" rollups in fold markers, so users see *what kind of stuff*
+ * is hidden, not just "stuff is hidden."
+ */
+export interface SubtreeSummary {
+  added: number
+  removed: number
+  renamed: number
+  moved: number
+  propertyChanged: number
+  orderChanged: number
+}
+
+const ZERO_SUBTREE_SUMMARY: SubtreeSummary = {
+  added: 0,
+  removed: 0,
+  renamed: 0,
+  moved: 0,
+  propertyChanged: 0,
+  orderChanged: 0,
+}
+
+/**
+ * For each node in the merged tree, compute the count of changes in its
+ * subtree (self + all descendants), grouped by change type. Result is keyed
+ * by the merged-tree node id (live nodes keep their original id; ghosts use
+ * `ghost:${originalId}`).
+ *
+ * Pure function: same merged tree → same map. Deterministic, no I/O.
+ *
+ * Performance: O(n) over `merged.nodes` — one DFS visit per node.
+ */
+export function computeSubtreeSummaries(
+  merged: MergedTree
+): Map<string, SubtreeSummary> {
+  // Build parent-id → children map using merged-tree ids (so ghosts pointing
+  // to ghost:parentId nest correctly).
+  const childrenByParent = new Map<string | null, MergedTreeNode[]>()
+  for (const node of merged.nodes) {
+    const list = childrenByParent.get(node.parentId) ?? []
+    list.push(node)
+    childrenByParent.set(node.parentId, list)
+  }
+
+  const result = new Map<string, SubtreeSummary>()
+
+  function visit(node: MergedTreeNode): SubtreeSummary {
+    const summary: SubtreeSummary = { ...ZERO_SUBTREE_SUMMARY }
+
+    for (const d of node.diffs) {
+      switch (d.changeType) {
+        case 'added':            summary.added++;            break
+        case 'removed':          summary.removed++;          break
+        case 'moved':            summary.moved++;            break
+        case 'renamed':          summary.renamed++;          break
+        case 'property-changed': summary.propertyChanged++;  break
+        case 'order-changed':    summary.orderChanged++;     break
+      }
+    }
+
+    const children = childrenByParent.get(node.id) ?? []
+    for (const child of children) {
+      const childSummary = visit(child)
+      summary.added            += childSummary.added
+      summary.removed          += childSummary.removed
+      summary.moved            += childSummary.moved
+      summary.renamed          += childSummary.renamed
+      summary.propertyChanged  += childSummary.propertyChanged
+      summary.orderChanged     += childSummary.orderChanged
+    }
+
+    result.set(node.id, summary)
+    return summary
+  }
+
+  for (const root of childrenByParent.get(null) ?? []) visit(root)
+
+  return result
+}

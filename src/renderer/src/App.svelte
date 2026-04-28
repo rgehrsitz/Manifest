@@ -4,9 +4,10 @@
   import { onMount, onDestroy, tick } from 'svelte'
   import type { Project, ManifestNode, RecoveryPoint, Snapshot, SnapshotTimelineEvent } from '../../shared/types'
   import type { MergedTree } from '../../shared/merged-tree'
+  import { computeSubtreeSummaries } from '../../shared/merged-tree'
   import { buildTree, getSiblingIndex, getAncestorIds } from './lib/tree'
   import { flattenTree } from './lib/tree-rows'
-  import Tree from './components/Tree.svelte'
+  import ManifestView from './components/ManifestView.svelte'
   import DetailPane from './components/DetailPane.svelte'
   import MoveToDialog from './components/MoveToDialog.svelte'
   import RecoveryDialog from './components/RecoveryDialog.svelte'
@@ -72,6 +73,10 @@
   let treeWidth:  number = $state(288)  // 18rem default
   let panelWidth: number = $state(320)  // 20rem default
 
+  // foldIds the user has manually expanded inside the Space-Folding Lens.
+  // Resets on project close / mode flip — handled in those flows below.
+  let lensExpandedFolds: Set<string> = $state(new Set())
+
   // Drag-to-resize state.
   let draggingHandle: 'tree' | 'panel' | null = $state(null)
   let dragStartX = 0
@@ -110,6 +115,13 @@
     if (!project) return null
     return buildTree(project.nodes)
   })
+
+  // Subtree change summaries for the lens — populated only in compare mode,
+  // so the FoldMarker can show "47 unchanged · 3 added, 2 moved" rollups
+  // for collapsed subtrees inside a fold. Pure derivation from mergedTree.
+  const compareSubtreeSummaries = $derived.by(() =>
+    mergedTree ? computeSubtreeSummaries(mergedTree) : null
+  )
 
   const flatRows = $derived.by(() => {
     if (compareMode && mergedTree) {
@@ -292,6 +304,7 @@
     compareMode = false
     mergedTree = null
     compareExpanded = new Set()
+    lensExpandedFolds = new Set()
   }
 
   // ─── Tree actions ─────────────────────────────────────────────────────────
@@ -970,10 +983,24 @@
         <!-- Tree -->
         {:else}
           <div class="flex-1 flex flex-col overflow-hidden" data-testid="tree">
-            <!-- Virtualised tree — takes all available space -->
             <div class="flex-1 overflow-hidden">
-              <Tree
+              <ManifestView
                 rows={flatRows}
+                mode={compareMode ? 'compare' : 'browse'}
+                compareContext={compareMode && mergedTree
+                  ? {
+                      snapshotFrom: mergedTree.fromSnapshot,
+                      snapshotTo: mergedTree.toSnapshot,
+                      subtreeSummaries: compareSubtreeSummaries ?? undefined,
+                    }
+                  : undefined}
+                expandedFolds={lensExpandedFolds}
+                onFoldExpand={(foldId) => {
+                  const next = new Set(lensExpandedFolds)
+                  if (next.has(foldId)) next.delete(foldId)
+                  else next.add(foldId)
+                  lensExpandedFolds = next
+                }}
                 {selectedId}
                 onSelect={handleSelect}
                 onToggle={handleToggle}

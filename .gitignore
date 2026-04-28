@@ -13,3 +13,4 @@ tmp/
 
 # SQLite search index (auto-created per project, not source-controlled)
 **/.manifest/
+.gstack/

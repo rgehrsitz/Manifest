@@ -11,8 +11,9 @@
     onToggle: (id: string) => void
     /**
      * Called when the user right-clicks this row.
-     * The context menu is rendered by Tree.svelte (outside the virtualizer transform)
-     * so it doesn't get clipped by the CSS transform containing block.
+     * The context menu is rendered by ManifestView (outside the virtualizer
+     * transform) so it doesn't get clipped by the CSS transform containing
+     * block.
      */
     onContextMenu: (row: VisibleRow, x: number, y: number) => void
   }
@@ -41,7 +42,13 @@
     if (row.hasChildren) onToggle(nodeId)
   }
 
-  const paddingLeft = $derived(`${row.depth * 16 + 8}px`)
+  // Cap visual indent at depth 12 so very deep hierarchies (Region → Room →
+  // Rack → Shelf → Device → Module → Sub-module → ...) don't push the node
+  // name off the edge of a 288px tree column. Beyond depth 12 the indent
+  // stays put; the tree is still navigable but the deeper structure is
+  // implied by status badges and the user's path through it, not pixels.
+  const MAX_INDENT_DEPTH = 12
+  const paddingLeft = $derived(`${Math.min(row.depth, MAX_INDENT_DEPTH) * 16 + 8}px`)
 
   function getDecorationClass(): string {
     if (row.kind === 'decorated') {
@@ -60,7 +67,7 @@
   }
 </script>
 
-{#if isGhost}
+{#if row.kind === 'ghost'}
   <!-- Ghost: read-only, not keyboard-navigable, role="presentation" -->
   <div
     role="presentation"

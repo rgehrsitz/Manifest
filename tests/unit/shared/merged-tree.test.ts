@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildMergedTree } from '../../../src/shared/merged-tree'
+import { buildMergedTree, computeSubtreeSummaries } from '../../../src/shared/merged-tree'
 import { diffProjects } from '../../../src/shared/diff-engine'
 import type { Project, ManifestNode } from '../../../src/shared/types'
 
@@ -440,5 +440,100 @@ describe('buildMergedTree', () => {
     const result = merge(fromNodes, toNodes)
     // B has 3 nodes (root, a, c); 1 ghost for b → total 4
     expect(result.nodes).toHaveLength(4)
+  })
+})
+
+// ─── computeSubtreeSummaries ─────────────────────────────────────────────────
+
+describe('computeSubtreeSummaries', () => {
+  it('all-zeros for an unchanged tree', () => {
+    const nodes = [n('root', null, 0), n('child', 'root', 0)]
+    const summaries = computeSubtreeSummaries(merge(nodes, nodes))
+
+    expect(summaries.get('root')).toEqual({
+      added: 0, removed: 0, renamed: 0, moved: 0, propertyChanged: 0, orderChanged: 0,
+    })
+    expect(summaries.get('child')).toEqual({
+      added: 0, removed: 0, renamed: 0, moved: 0, propertyChanged: 0, orderChanged: 0,
+    })
+  })
+
+  it("descendant counts roll up into ancestor's subtree summary", () => {
+    const fromNodes = [
+      n('root', null, 0),
+      n('a', 'root', 0),
+      n('b', 'root', 1),
+      n('a-child', 'a', 0, 'a-child', { color: 'red' }),
+    ]
+    const toNodes = [
+      n('root', null, 0),
+      n('a', 'root', 0),
+      n('b', 'root', 1, 'b-renamed'),                              // renamed
+      n('a-child', 'a', 0, 'a-child', { color: 'blue' }),          // property-changed
+    ]
+    const summaries = computeSubtreeSummaries(merge(fromNodes, toNodes))
+
+    // root's subtree summary contains all changes anywhere below it.
+    expect(summaries.get('root')).toMatchObject({
+      renamed: 1,
+      propertyChanged: 1,
+    })
+    // 'a' contains only the property change on its child.
+    expect(summaries.get('a')).toMatchObject({
+      renamed: 0,
+      propertyChanged: 1,
+    })
+    // 'b' was renamed; itself contributes 1, no descendants.
+    expect(summaries.get('b')).toMatchObject({
+      renamed: 1,
+      propertyChanged: 0,
+    })
+    // Leaf with the change carries it.
+    expect(summaries.get('a-child')).toMatchObject({
+      propertyChanged: 1,
+    })
+  })
+
+  it('counts a removed node via its ghost', () => {
+    const fromNodes = [n('root', null, 0), n('gone', 'root', 0)]
+    const toNodes   = [n('root', null, 0)]
+    const summaries = computeSubtreeSummaries(merge(fromNodes, toNodes))
+
+    // The ghost gets keyed by `ghost:gone` and carries the removal.
+    expect(summaries.get('ghost:gone')).toMatchObject({ removed: 1 })
+    // Root's subtree includes the removed ghost.
+    expect(summaries.get('root')).toMatchObject({ removed: 1 })
+  })
+
+  it('summary for an isolated leaf with no diffs is all zeros, present in the map', () => {
+    const nodes = [n('root', null, 0), n('leaf', 'root', 0)]
+    const summaries = computeSubtreeSummaries(merge(nodes, nodes))
+
+    expect(summaries.has('leaf')).toBe(true)
+    expect(summaries.get('leaf')).toEqual({
+      added: 0, removed: 0, renamed: 0, moved: 0, propertyChanged: 0, orderChanged: 0,
+    })
+  })
+
+  it('different change types accumulate independently', () => {
+    const fromNodes = [
+      n('root', null, 0),
+      n('a', 'root', 0, 'a', { color: 'red' }),
+      n('b', 'root', 1),
+      n('c', 'root', 2),  // will be removed
+    ]
+    const toNodes = [
+      n('root', null, 0),
+      n('a', 'root', 0, 'a', { color: 'blue' }),    // property-changed
+      n('b', 'root', 1, 'b-new'),                    // renamed
+      n('d', 'root', 2),                              // newly added
+    ]
+    const summaries = computeSubtreeSummaries(merge(fromNodes, toNodes))
+
+    const rootSummary = summaries.get('root')!
+    expect(rootSummary.propertyChanged).toBe(1)
+    expect(rootSummary.renamed).toBe(1)
+    expect(rootSummary.added).toBe(1)
+    expect(rootSummary.removed).toBe(1)
   })
 })
