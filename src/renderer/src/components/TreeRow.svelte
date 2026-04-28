@@ -86,7 +86,7 @@
     tabindex="-1"
     class="flex items-center gap-1 h-8 rounded cursor-default text-sm select-none
            hover:bg-stone-100 focus:outline-none focus:ring-1 focus:ring-stone-400
-           {selected ? 'bg-stone-200 text-stone-900' : 'text-stone-700'}
+           {selected ? '!bg-stone-200 !text-stone-900' : 'text-stone-700'}
            {focused && !selected ? 'ring-1 ring-stone-300' : ''}
            {getDecorationClass()}"
     style:padding-left={paddingLeft}
