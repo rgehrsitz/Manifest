@@ -14,3 +14,9 @@ tmp/
 # SQLite search index (auto-created per project, not source-controlled)
 **/.manifest/
 .gstack/
+
+# Ignore everything inside .claude/ EXCEPT the project-scoped memory dir,
+# which IS source-controlled — it's the cross-machine canonical state for
+# in-flight features and project conventions.
+.claude/*
+!.claude/memory/
