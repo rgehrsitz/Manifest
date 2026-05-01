@@ -8,6 +8,14 @@ Electron + TypeScript + Svelte 5 + Tailwind + electron-vite.
 See `docs/ARCHITECTURE.md` for the full technical spec.
 See `docs/ROADMAP.md` for the phase plan.
 
+> **Project memory:** At session bootstrap — *before* processing the first user
+> prompt — read every file under `.claude/memory/`. This is a one-time setup
+> read, not a per-request action; the "Skill routing" rule below still governs
+> the first action taken in response to any individual request. Memory files
+> capture the current state of in-flight features, design decisions, and
+> project conventions, and are committed to the repo so they are identical on
+> every machine.
+
 ## Commands
 
 <!-- Fill in once Phase 1 scaffold is wired up -->
