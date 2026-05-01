@@ -8,6 +8,11 @@ Electron + TypeScript + Svelte 5 + Tailwind + electron-vite.
 See `docs/ARCHITECTURE.md` for the full technical spec.
 See `docs/ROADMAP.md` for the phase plan.
 
+> **Project memory:** Read every file under `.claude/memory/` at the start of a
+> session before responding. These files capture the current state of in-flight
+> features, design decisions, and project conventions. They are committed to the
+> repo so they are identical on every machine.
+
 ## Commands
 
 <!-- Fill in once Phase 1 scaffold is wired up -->
