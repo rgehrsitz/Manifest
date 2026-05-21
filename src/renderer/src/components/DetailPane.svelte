@@ -3,11 +3,15 @@
 <script lang="ts">
   import { tick } from 'svelte'
   import type { ManifestNode, Project } from '../../../shared/types'
+  import type { MergedTreeNode } from '../../../shared/merged-tree'
   import { validateNodeName, validatePropertyKey, validatePropertyValue } from '../../../shared/validation'
   import NodeHistoryView from './NodeHistoryView.svelte'
 
   interface Props {
-    node: ManifestNode | null
+    // Accepts a plain ManifestNode (browse mode) or a MergedTreeNode (compare
+    // mode, which carries an extra `status` field on ghosts). The union makes
+    // the runtime check `'status' in node` narrow cleanly without unknown casts.
+    node: ManifestNode | MergedTreeNode | null
     project: Project
     /** Bumped by App.svelte when the user presses F2 or "Rename" in the tree context menu. */
     renameRequestId?: number
@@ -199,19 +203,28 @@
   )
   const ghostStatus = $derived.by<'removed' | 'moved-from' | null>(() => {
     if (!isGhost || !node) return null
-    // MergedTreeNode carries `status` but we typed `node` as ManifestNode.
-    // Safe access via a guarded cast.
-    const s = (node as unknown as { status?: string }).status
-    return s === 'moved-from' ? 'moved-from' : 'removed'
+    // Narrow via the discriminating `status` field. Ghost nodes are always
+    // MergedTreeNodes in practice (issue #3), so `'status' in node` is true.
+    // Default to 'removed' if status is missing — defensive but unreachable.
+    if ('status' in node) {
+      return node.status === 'moved-from' ? 'moved-from' : 'removed'
+    }
+    return 'removed'
   })
   // Whether ANY edit-affecting code path should treat the node as read-only.
   // Composed of: explicit readOnly prop OR ghost selection.
   const effectiveReadOnly = $derived(readOnly || isGhost)
-  const effectiveReadOnlyReason = $derived(
-    isGhost
-      ? 'This node was removed in the newer snapshot. You are viewing a read-only tombstone.'
-      : readOnlyReason
-  )
+  // The reason text follows ghostStatus so a moved-from tombstone doesn't
+  // claim the node was "removed" — same fix the banner uses.
+  const effectiveReadOnlyReason = $derived.by(() => {
+    if (ghostStatus === 'moved-from') {
+      return 'This node was moved to a different parent in the newer snapshot. You are viewing the origin position, read-only.'
+    }
+    if (isGhost) {
+      return 'This node was removed in the newer snapshot. You are viewing a read-only tombstone.'
+    }
+    return readOnlyReason
+  })
 
   async function focusInput(el: HTMLInputElement | null) {
     await tick()

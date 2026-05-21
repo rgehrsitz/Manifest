@@ -205,7 +205,7 @@
   function selectRoot(p: Project) {
     const root = p.nodes.find(n => n.parentId === null)
     if (root) {
-      selectedId = root.id
+      setSelection(root.id)
       expandedIds = new Set([root.id])
     }
   }
@@ -236,7 +236,7 @@
     const isGhostSelection = selectedId?.startsWith('ghost:') ?? false
     if (selectedId && !isGhostSelection && !p.nodes.find(n => n.id === selectedId)) {
       const root = p.nodes.find(n => n.parentId === null)
-      selectedId = root?.id ?? null
+      setSelection(root?.id ?? null)
     }
   }
 
@@ -297,7 +297,7 @@
   async function closeProject() {
     await window.api.project.close()
     project = null
-    selectedId = null
+    setSelection(null)
     expandedIds = new Set()
     searchQuery = ''
     searchResults = []
@@ -314,18 +314,29 @@
     mergedTree = null
     compareExpanded = new Set()
     lensExpandedFolds = new Set()
-    stashedGhostSelection = null
+    // stashedGhostSelection already cleared by setSelection(null) above.
   }
 
   // ─── Tree actions ─────────────────────────────────────────────────────────
 
-  function handleSelect(id: string) {
+  /**
+   * Single entry point for changing `selectedId`. Always invalidates any
+   * stashed ghost selection (issue #3): an explicit selection — whether
+   * triggered by tree click, search, add-child, or diff-row navigation —
+   * means the user has moved on, so don't surprise them by restoring a
+   * stale ghost the next time compare mode is re-entered.
+   *
+   * Inside compare mode the stash is already null (handleSnapshotCompare
+   * consumes it on entry), so the clear is a no-op there.
+   */
+  function setSelection(id: string | null): void {
     selectedId = id
-    addingChildTo = null
-    // An explicit selection invalidates any stashed ghost selection (issue #3).
-    // The user has chosen a different node; don't surprise them by restoring
-    // an old ghost the next time compare mode is re-entered.
     stashedGhostSelection = null
+  }
+
+  function handleSelect(id: string) {
+    setSelection(id)
+    addingChildTo = null
   }
 
   function handleToggle(id: string) {
@@ -368,7 +379,7 @@
       const newNode = result.data.nodes
         .filter(n => n.parentId === addingChildTo)
         .sort((a, b) => b.order - a.order)[0]
-      if (newNode) selectedId = newNode.id
+      if (newNode) setSelection(newNode.id)
       addingChildTo = null
       addingChildName = ''
     } else {
@@ -497,7 +508,7 @@
   }
 
   function handleSearchSelect(nodeId: string) {
-    selectedId = nodeId
+    setSelection(nodeId)
     searchQuery = ''
     searchResults = []
     // Expand ancestors so the node is visible.
@@ -554,6 +565,10 @@
     compareExpanded = new Set()
     // If a ghost is selected, stash it so we can restore on re-entering
     // compare mode (issue #3). Then fall back to a live selection.
+    //
+    // NB: the assignments below intentionally bypass setSelection() — that
+    // helper clears stashedGhostSelection, which would defeat the stash we
+    // just set. The stash is consumed by handleSnapshotCompare on re-entry.
     if (selectedId?.startsWith('ghost:')) {
       stashedGhostSelection = selectedId
       const root = project?.nodes.find(node => node.parentId === null)
@@ -613,6 +628,10 @@
       // Restore a stashed ghost selection if this snapshot pair still
       // contains the same ghost id (issue #3). Otherwise drop the stash —
       // a different comparison shouldn't carry a stale ghost selection.
+      //
+      // NB: assigns selectedId directly (not via setSelection) because the
+      // stash is explicitly cleared two lines below; routing through the
+      // helper would clear it before the side effects below could run.
       if (stashedGhostSelection) {
         if (result.data.nodes.some(n => n.id === stashedGhostSelection)) {
           selectedId = stashedGhostSelection
@@ -631,11 +650,13 @@
   function handleDiffNodeSelect(nodeId: string) {
     if (compareMode && mergedTree) {
       const compareSelectionId = resolveCompareSelectionId(nodeId)
-      selectedId = compareSelectionId
+      // Inside compare mode, the stash is already null (handleSnapshotCompare
+      // consumed it on entry), so setSelection's clear is a defensive no-op.
+      setSelection(compareSelectionId)
       const ancestors = getAncestorIds(compareSelectionId, mergedTree.nodes)
       compareExpanded = new Set([...compareExpanded, ...ancestors, compareSelectionId])
     } else if (project) {
-      selectedId = nodeId
+      setSelection(nodeId)
       const ancestors = getAncestorIds(nodeId, project.nodes)
       expandedIds = new Set([...expandedIds, ...ancestors, nodeId])
     }
