@@ -343,6 +343,25 @@
     get(virtualizerStore).scrollToIndex(idx, { align: 'auto' })
   })
 
+  // Per-render lookup: for each fold's foldId, does it contain the
+  // currently-selected node? Used to paint a "your selection is in here"
+  // highlight on the marker. O(total fold-content rows) per render but
+  // sections is small and rows[].node.id is a fast comparison.
+  const selectionFoldIds = $derived.by((): Set<string> => {
+    const found = new Set<string>()
+    if (!selectedId) return found
+    for (const s of sections) {
+      if (s.density !== 'summarized' || !s.foldId) continue
+      for (let i = s.startIndex; i <= s.endIndex; i++) {
+        if (rows[i]?.node.id === selectedId) {
+          found.add(s.foldId)
+          break
+        }
+      }
+    }
+    return found
+  })
+
   function findDisplayedIndexForNode(nodeId: string): number {
     for (let i = 0; i < displayedItems.length; i++) {
       const item = displayedItems[i]
@@ -466,6 +485,16 @@
             const parentIdx = findParentDisplayedIndex(idx, item.row.depth)
             if (parentIdx >= 0) void navigateTo(parentIdx)
           }
+        } else if (item?.kind === 'fold') {
+          // ArrowLeft on a FoldMarker escapes the fold context — moves to
+          // the parent of the fold's first row. Symmetric with row behavior
+          // (which moves to the parent when there's nothing to collapse).
+          // The fold itself is already collapsed; no "collapse fold" action.
+          const firstRow = rows[item.section.startIndex]
+          if (firstRow && firstRow.depth > 0) {
+            const parentIdx = findParentDisplayedIndex(idx, firstRow.depth)
+            if (parentIdx >= 0) void navigateTo(parentIdx)
+          }
         }
         break
       }
@@ -554,6 +583,7 @@
                 nodeNames={rows
                   .slice(item.section.startIndex, item.section.endIndex + 1)
                   .map(r => r.node.name)}
+                containsSelection={!!item.section.foldId && selectionFoldIds.has(item.section.foldId)}
                 onExpand={() => onFoldExpand?.(item.section.foldId ?? '')}
               />
             {:else}
