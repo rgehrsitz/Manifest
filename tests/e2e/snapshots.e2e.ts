@@ -148,6 +148,24 @@ test('creates, compares, and reverts snapshots from the renderer surface', async
   await expect(appPage.getByTestId('snapshot-timeline-event').filter({ hasText: 'Recovered current project from a recovery point' })).toBeVisible()
 })
 
+test('top-bar snapshots button toggles panel open and closed', async ({ appPage, electronApp, workspaceDir }) => {
+  const projectName = 'Snapshots Toggle Lab'
+
+  await createProjectThroughUi(appPage, electronApp, workspaceDir, projectName)
+
+  const toggle = appPage.getByTestId('open-snapshots-btn')
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  await expect(appPage.getByTestId('snapshots-panel')).toHaveCount(0)
+
+  await toggle.click()
+  await expect(appPage.getByTestId('snapshots-panel')).toBeVisible()
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+
+  await toggle.click()
+  await expect(appPage.getByTestId('snapshots-panel')).toHaveCount(0)
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+})
+
 test('surfaces removed nodes in snapshot compare mode', async ({ appPage, electronApp, workspaceDir }) => {
   const projectName = 'Removal Compare Lab'
 
