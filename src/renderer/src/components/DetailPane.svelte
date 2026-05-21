@@ -3,11 +3,15 @@
 <script lang="ts">
   import { tick } from 'svelte'
   import type { ManifestNode, Project } from '../../../shared/types'
+  import type { MergedTreeNode } from '../../../shared/merged-tree'
   import { validateNodeName, validatePropertyKey, validatePropertyValue } from '../../../shared/validation'
   import NodeHistoryView from './NodeHistoryView.svelte'
 
   interface Props {
-    node: ManifestNode | null
+    // Accepts a plain ManifestNode (browse mode) or a MergedTreeNode (compare
+    // mode, which carries an extra `status` field on ghosts). The union makes
+    // the runtime check `'status' in node` narrow cleanly without unknown casts.
+    node: ManifestNode | MergedTreeNode | null
     project: Project
     /** Bumped by App.svelte when the user presses F2 or "Rename" in the tree context menu. */
     renameRequestId?: number
@@ -65,7 +69,7 @@
   let nameInputEl = $state<HTMLInputElement | null>(null)
 
   function startEditName() {
-    if (!node || readOnly) return
+    if (!node || effectiveReadOnly) return
     nameInput = node.name
     nameError = null
     editingName = true
@@ -77,7 +81,7 @@
   }
 
   async function commitName() {
-    if (!node || readOnly) return
+    if (!node || effectiveReadOnly) return
     const trimmed = nameInput.trim()
     if (trimmed === node.name) { editingName = false; return }
 
@@ -114,8 +118,8 @@
   let newValueError = $state<string | null>(null)
 
   async function addProperty() {
-    if (!node || readOnly) {
-      onError(readOnlyReason)
+    if (!node || effectiveReadOnly) {
+      onError(effectiveReadOnlyReason)
       return
     }
     const k = newKey.trim()
@@ -140,7 +144,7 @@
   }
 
   async function deleteProperty(key: string) {
-    if (!node || readOnly) return
+    if (!node || effectiveReadOnly) return
     const props = { ...(node.properties ?? {}) }
     delete props[key]
     await onUpdate(node.id, { properties: props })
@@ -152,14 +156,14 @@
   let propValueInputEl = $state<HTMLInputElement | null>(null)
 
   function startEditProp(key: string) {
-    if (readOnly) return
+    if (effectiveReadOnly) return
     editingPropKey = key
     editingPropValue = String(node?.properties?.[key] ?? '')
     editingPropError = null
   }
 
   async function commitProp(key: string) {
-    if (!node || readOnly) return
+    if (!node || effectiveReadOnly) return
     const v = editingPropValue.trim()
     const valVal = validatePropertyValue(v)
     if (!valVal.valid) { editingPropError = valVal.message ?? 'Invalid value'; return }
@@ -183,6 +187,44 @@
     node?.parentId ? project.nodes.find(n => n.id === node!.parentId) : null
   )
   const propEntries = $derived(Object.entries(node?.properties ?? {}))
+
+  // ─── Ghost (tombstone) mode (issue #3) ────────────────────────────────────
+  // A ghost selection is a row in compare mode whose underlying node was
+  // removed (or is the moved-from origin) in the destination snapshot. The
+  // DetailPane renders it read-only with a distinctive banner so the user
+  // can inspect what was there without being able to edit it.
+  //
+  // Ghost id format: `ghost:${originalNodeId}` (see merged-tree.ts). The
+  // original id is what NodeHistoryView needs to find the live history,
+  // and what the user expects to see in the footer.
+  const isGhost = $derived(node?.id?.startsWith('ghost:') ?? false)
+  const originalNodeId = $derived(
+    isGhost && node ? node.id.slice('ghost:'.length) : node?.id ?? ''
+  )
+  const ghostStatus = $derived.by<'removed' | 'moved-from' | null>(() => {
+    if (!isGhost || !node) return null
+    // Narrow via the discriminating `status` field. Ghost nodes are always
+    // MergedTreeNodes in practice (issue #3), so `'status' in node` is true.
+    // Default to 'removed' if status is missing — defensive but unreachable.
+    if ('status' in node) {
+      return node.status === 'moved-from' ? 'moved-from' : 'removed'
+    }
+    return 'removed'
+  })
+  // Whether ANY edit-affecting code path should treat the node as read-only.
+  // Composed of: explicit readOnly prop OR ghost selection.
+  const effectiveReadOnly = $derived(readOnly || isGhost)
+  // The reason text follows ghostStatus so a moved-from tombstone doesn't
+  // claim the node was "removed" — same fix the banner uses.
+  const effectiveReadOnlyReason = $derived.by(() => {
+    if (ghostStatus === 'moved-from') {
+      return 'This node was moved to a different parent in the newer snapshot. You are viewing the origin position, read-only.'
+    }
+    if (isGhost) {
+      return 'This node was removed in the newer snapshot. You are viewing a read-only tombstone.'
+    }
+    return readOnlyReason
+  })
 
   async function focusInput(el: HTMLInputElement | null) {
     await tick()
@@ -212,7 +254,31 @@
 
     <!-- Header / name -->
     <div class="px-5 py-4 border-b border-stone-100">
-      {#if readOnly}
+      {#if isGhost}
+        <!--
+          Tombstone banner: this node was removed (or is the moved-from origin
+          of a moved node) in the destination snapshot. Distinct red tone
+          separates it from the generic "you're in read-only mode" banner so
+          the user immediately understands this is historical content.
+        -->
+        <div
+          class="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800
+                 flex items-start gap-2"
+          data-testid="detail-tombstone-banner"
+          data-ghost-status={ghostStatus}
+        >
+          <span aria-hidden="true" class="mt-px">⌫</span>
+          <span>
+            {#if ghostStatus === 'moved-from'}
+              <strong class="font-semibold">Moved away.</strong>
+              This is the origin position of a node that was relocated. Read-only.
+            {:else}
+              <strong class="font-semibold">Removed.</strong>
+              This node was deleted in the newer snapshot. Read-only.
+            {/if}
+          </span>
+        </div>
+      {:else if readOnly}
         <div
           class="mb-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800"
           data-testid="detail-readonly-banner"
@@ -243,12 +309,15 @@
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
-          class="group flex items-center gap-2 {readOnly ? '' : 'cursor-text'}"
+          class="group flex items-center gap-2 {effectiveReadOnly ? '' : 'cursor-text'}"
           onclick={startEditName}
           data-testid="node-name"
         >
-          <h2 class="text-lg font-semibold text-stone-900 truncate">{node.name}</h2>
-          {#if !readOnly}
+          <h2 class="text-lg font-semibold text-stone-900 truncate
+                     {isGhost ? 'line-through decoration-stone-400 text-stone-500' : ''}">
+            {node.name}
+          </h2>
+          {#if !effectiveReadOnly}
             <span class="text-xs text-stone-300 group-hover:text-stone-400 shrink-0">Edit</span>
           {/if}
         </div>
@@ -260,6 +329,12 @@
           under {parentNode.name}
           {#if isRoot}<span class="ml-1 text-stone-300">(root)</span>{/if}
         </p>
+      {:else if isGhost && node.parentId}
+        <!--
+          Parent was also removed (parentId points to ghost:... so it's not
+          in project.nodes). Avoid showing "Root node" — that would be wrong.
+        -->
+        <p class="text-xs text-stone-400 mt-0.5 italic">under a removed parent</p>
       {:else}
         <p class="text-xs text-stone-400 mt-0.5">Root node</p>
       {/if}
@@ -293,7 +368,12 @@
 
     {#if activeTab === 'history'}
       <div class="flex-1 overflow-y-auto px-5 py-4" data-testid="detail-history-pane">
-        <NodeHistoryView nodeId={node.id} nodeName={node.name} />
+        <!--
+          For ghosts, strip the `ghost:` prefix so the history lookup finds
+          the live (pre-removal) history of the original node. The history
+          itself is read-only by design, so no extra gating is needed here.
+        -->
+        <NodeHistoryView nodeId={originalNodeId} nodeName={node.name} />
       </div>
     {:else}
     <!-- Properties -->
@@ -338,7 +418,7 @@
                 class="text-stone-300 hover:text-red-400 opacity-0 group-hover:opacity-100
                        transition-opacity text-xs shrink-0 disabled:opacity-0"
                 onclick={() => deleteProperty(key)}
-                disabled={readOnly}
+                disabled={effectiveReadOnly}
                 aria-label="Delete property {key}"
                 data-testid="delete-prop"
               >✕</button>
@@ -353,7 +433,7 @@
       {/if}
 
       <!-- Add property form -->
-      {#if !readOnly}
+      {#if !effectiveReadOnly}
       <div class="border-t border-stone-100 pt-3">
         <p class="text-xs font-semibold text-stone-400 uppercase tracking-wide mb-2">
           Add Property
@@ -405,7 +485,7 @@
     <div class="px-5 py-3 border-t border-stone-100 text-xs text-stone-400 space-y-0.5">
       <p>Created {new Date(node.created).toLocaleString()}</p>
       <p>Modified {new Date(node.modified).toLocaleString()}</p>
-      <p class="font-mono text-stone-300">{node.id}</p>
+      <p class="font-mono text-stone-300">{originalNodeId}</p>
     </div>
 
   </div>

@@ -46,9 +46,16 @@ export interface DecoratedRow {
 
 /**
  * A ghost placeholder in compare mode representing a removed node or the origin
- * position of a moved node. Ghosts are not selectable and not keyboard-navigable.
+ * position of a moved node.
  *
- * ID is always `ghost:${originalId}` to keep Svelte keyed {#each} sane.
+ * Ghosts ARE selectable and keyboard-navigable (issue #3): clicking or arrowing
+ * onto a ghost loads it into the DetailPane in read-only "tombstone" mode so
+ * the user can inspect what the removed/moved node contained. Ghosts are NOT
+ * editable — DetailPane forces readOnly and the context menu refuses to open
+ * on ghost rows (TreeRow guards this).
+ *
+ * ID is always `ghost:${originalId}` to keep Svelte keyed {#each} sane and to
+ * distinguish a ghost selection from a live-node selection in selectedId.
  */
 export interface GhostRow {
   kind: 'ghost'

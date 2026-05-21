@@ -367,12 +367,14 @@
   // Keyboard nav iterates `displayedItems`. Exiting items are skipped — they
   // are visually present mid-transition but conceptually leaving; navigating
   // into one would be confusing.
+  //
+  // Ghosts ARE navigable (issue #3): users can arrow into a removed/moved-from
+  // row to inspect it in the DetailPane (read-only tombstone view).
   function isNavigable(index: number): boolean {
     const item = displayedItems[index]
     if (!item) return false
     if (item.phase === 'exiting') return false
-    if (item.payload.kind === 'fold') return true
-    return item.payload.row.kind !== 'ghost'
+    return true
   }
 
   function currentFocusIndex(): number {
@@ -404,12 +406,14 @@
   }
 
   function findParentDisplayedIndex(idx: number, depth: number): number {
+    // Ghost ancestors are valid landing spots (issue #3) — a removed subtree
+    // nests its ghosts under ghost:parentId, so a nested ghost's parent is
+    // itself a ghost that the user can inspect.
     for (let i = idx - 1; i >= 0; i--) {
       const item = displayedItems[i]
       if (
         item.phase !== 'exiting' &&
         item.payload.kind === 'row' &&
-        item.payload.row.kind !== 'ghost' &&
         item.payload.row.depth === depth - 1
       ) {
         return i
@@ -459,8 +463,9 @@
       case 'ArrowLeft': {
         e.preventDefault()
         const item = displayedItems[idx]?.payload
-        if (item?.kind === 'row' && item.row.kind !== 'ghost') {
-          if (item.row.expanded && item.row.hasChildren) {
+        if (item?.kind === 'row') {
+          // Ghosts are always leaves — collapse is a no-op; just walk to parent.
+          if (item.row.kind !== 'ghost' && item.row.expanded && item.row.hasChildren) {
             onToggle?.(item.row.node.id)
           } else if (item.row.depth > 0) {
             const parentIdx = findParentDisplayedIndex(idx, item.row.depth)
@@ -473,8 +478,9 @@
       case ' ': {
         e.preventDefault()
         const item = displayedItems[idx]?.payload
-        if (item?.kind === 'row' && item.row.kind !== 'ghost') {
-          onSelect?.(item.row.node.id)
+        if (item?.kind === 'row') {
+          // Ghosts are selectable (issue #3) — DetailPane shows read-only view.
+          onSelect?.(item.row.id)
           focusedIndex = idx
         } else if (item?.kind === 'fold' && item.section.foldId) {
           onFoldExpand?.(item.section.foldId)
