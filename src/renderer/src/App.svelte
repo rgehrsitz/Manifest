@@ -27,6 +27,12 @@
 
   // Tree UI state
   let selectedId:  string | null = $state(null)
+  // When the user has a ghost selected in compare mode and leaves compare mode
+  // (closing the snapshot pair), the ghost id can't survive in `selectedId`
+  // because nothing in the live project resolves it. We stash it here so the
+  // next time the same snapshot pair is compared, the selection is restored.
+  // Cleared whenever the user makes a fresh live selection (issue #3).
+  let stashedGhostSelection: string | null = $state(null)
   let expandedIds: Set<string>   = $state(new Set())
   let searchQuery: string        = $state('')
   let searchResults              = $state<{ nodeId: string; nodeName: string }[]>([])
@@ -225,7 +231,10 @@
   function applyProject(p: Project) {
     project = p
     // If selected node was deleted, fall back to root.
-    if (selectedId && !p.nodes.find(n => n.id === selectedId)) {
+    // Ghost selections (issue #3) live in mergedTree.nodes, not project.nodes,
+    // so don't clobber them just because the live project mutated.
+    const isGhostSelection = selectedId?.startsWith('ghost:') ?? false
+    if (selectedId && !isGhostSelection && !p.nodes.find(n => n.id === selectedId)) {
       const root = p.nodes.find(n => n.parentId === null)
       selectedId = root?.id ?? null
     }
@@ -305,6 +314,7 @@
     mergedTree = null
     compareExpanded = new Set()
     lensExpandedFolds = new Set()
+    stashedGhostSelection = null
   }
 
   // ─── Tree actions ─────────────────────────────────────────────────────────
@@ -312,6 +322,10 @@
   function handleSelect(id: string) {
     selectedId = id
     addingChildTo = null
+    // An explicit selection invalidates any stashed ghost selection (issue #3).
+    // The user has chosen a different node; don't surprise them by restoring
+    // an old ghost the next time compare mode is re-entered.
+    stashedGhostSelection = null
   }
 
   function handleToggle(id: string) {
@@ -538,7 +552,13 @@
     compareMode = false
     mergedTree = null
     compareExpanded = new Set()
-    if (project && selectedId && !project.nodes.find(node => node.id === selectedId)) {
+    // If a ghost is selected, stash it so we can restore on re-entering
+    // compare mode (issue #3). Then fall back to a live selection.
+    if (selectedId?.startsWith('ghost:')) {
+      stashedGhostSelection = selectedId
+      const root = project?.nodes.find(node => node.parentId === null)
+      selectedId = root?.id ?? null
+    } else if (project && selectedId && !project.nodes.find(node => node.id === selectedId)) {
       const root = project.nodes.find(node => node.parentId === null)
       selectedId = root?.id ?? null
     }
@@ -589,6 +609,19 @@
       }
       compareExpanded = new Set([...expandedIds, ...ancestors])
       compareMode = true
+
+      // Restore a stashed ghost selection if this snapshot pair still
+      // contains the same ghost id (issue #3). Otherwise drop the stash —
+      // a different comparison shouldn't carry a stale ghost selection.
+      if (stashedGhostSelection) {
+        if (result.data.nodes.some(n => n.id === stashedGhostSelection)) {
+          selectedId = stashedGhostSelection
+          // Expand ancestors so the restored ghost is visible.
+          const ghostAncestors = getAncestorIds(stashedGhostSelection, result.data.nodes)
+          compareExpanded = new Set([...compareExpanded, ...ghostAncestors, stashedGhostSelection])
+        }
+        stashedGhostSelection = null
+      }
     } else {
       snapshotError = result.error.message
     }

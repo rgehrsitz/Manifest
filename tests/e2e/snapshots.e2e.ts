@@ -291,3 +291,65 @@ test('compares generated snapshot fixtures without dropping the diff list', asyn
   await expect.poll(async () => appPage.getByTestId('snapshot-diff-row').count()).toBeGreaterThan(0)
   await expect(treeRow(appPage, 'Generated Compare Lab')).toBeVisible()
 })
+
+// Issue #3: Ghost rows (removed nodes in compare mode) are selectable and load
+// into the DetailPane in read-only "tombstone" mode so the user can inspect
+// what the removed node contained.
+test('selecting a ghost row shows the tombstone DetailPane (read-only)', async ({
+  appPage,
+  electronApp,
+  workspaceDir,
+}) => {
+  const projectName = 'Tombstone Lab'
+
+  await createProjectThroughUi(appPage, electronApp, workspaceDir, projectName)
+  await addChildNode(appPage, projectName, 'Doomed Rack')
+
+  // Give it a property so we can verify the tombstone view shows it read-only.
+  await treeRow(appPage, 'Doomed Rack').click()
+  await appPage.getByTestId('new-prop-key').fill('serial')
+  await appPage.getByTestId('new-prop-value').fill('SN-99')
+  await appPage.getByTestId('add-prop-btn').click()
+  await expect(appPage.getByTestId('prop-value').filter({ hasText: 'SN-99' })).toBeVisible()
+
+  await openSnapshotsPanel(appPage)
+  await createSnapshot(appPage, 'with-doomed')
+
+  // Delete the node, then create a second snapshot.
+  await appPage.getByRole('button', { name: 'Close snapshots' }).click()
+  appPage.once('dialog', (dialog) => dialog.accept())
+  await openContextMenuAction(appPage, 'Doomed Rack', 'Delete…')
+  await expect(treeRow(appPage, 'Doomed Rack')).toHaveCount(0)
+
+  await openSnapshotsPanel(appPage)
+  await createSnapshot(appPage, 'without-doomed')
+  await compareSnapshots(appPage, 'with-doomed', 'without-doomed')
+
+  // Click the diff row to surface and select the ghost.
+  const removedRow = appPage.getByTestId('snapshot-diff-row').filter({ hasText: 'Removed' })
+  await expect(removedRow).toBeVisible()
+  await removedRow.click()
+
+  // The ghost row is now visible in the tree and is the selected DetailPane target.
+  const ghostRow = appPage.locator(
+    '[data-testid="tree-node"][data-row-status="removed"][data-row-ghost="true"]',
+    { hasText: 'Doomed Rack' },
+  )
+  await expect(ghostRow).toBeVisible()
+  await ghostRow.click()
+
+  // Tombstone banner is shown; the generic read-only banner is NOT.
+  await expect(appPage.getByTestId('detail-tombstone-banner')).toBeVisible()
+  await expect(appPage.getByTestId('detail-tombstone-banner')).toHaveAttribute(
+    'data-ghost-status',
+    'removed',
+  )
+  await expect(appPage.getByTestId('detail-readonly-banner')).toHaveCount(0)
+
+  // The historical property value is rendered so the user can read it.
+  await expect(appPage.getByTestId('prop-value').filter({ hasText: 'SN-99' })).toBeVisible()
+
+  // No edit controls: Add Property form is suppressed.
+  await expect(appPage.getByTestId('add-prop-btn')).toHaveCount(0)
+  await expect(appPage.getByTestId('new-prop-key')).toHaveCount(0)
+})
