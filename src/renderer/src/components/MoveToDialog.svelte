@@ -16,6 +16,26 @@
 
   const node = $derived(nodes.find(n => n.id === nodeId))
   const nodeMap = $derived(new Map(nodes.map(n => [n.id, n])))
+  const pathMap = $derived.by(() => {
+    const paths = new Map<string, string>()
+    for (const candidate of nodes) {
+      resolvePath(candidate, paths, new Set())
+    }
+    return paths
+  })
+  const searchableTextMap = $derived.by(() => {
+    const searchable = new Map<string, string>()
+    for (const candidate of nodes) {
+      searchable.set(candidate.id, [
+        candidate.name,
+        pathMap.get(candidate.id) ?? candidate.name,
+        Object.entries(candidate.properties)
+          .map(([key, value]) => `${key} ${value === null ? 'null' : String(value)}`)
+          .join(' '),
+      ].join(' ').toLowerCase())
+    }
+    return searchable
+  })
 
   // Exclude the node itself and its descendants.
   const excludedIds = $derived(new Set([
@@ -38,14 +58,7 @@
     if (tokens.length === 0) return eligible
 
     return eligible.filter((candidate) => {
-      const haystack = [
-        candidate.name,
-        pathFor(candidate),
-        Object.entries(candidate.properties)
-          .map(([key, value]) => `${key} ${value === null ? 'null' : String(value)}`)
-          .join(' '),
-      ].join(' ').toLowerCase()
-
+      const haystack = searchableTextMap.get(candidate.id) ?? candidate.name.toLowerCase()
       return tokens.every(token => haystack.includes(token))
     })
   })
@@ -74,18 +87,25 @@
     return value.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []
   }
 
-  function pathFor(candidate: ManifestNode): string {
-    const parts = [candidate.name]
-    let current = candidate
-    const seen = new Set([candidate.id])
-    while (current.parentId) {
-      const parent = nodeMap.get(current.parentId)
-      if (!parent || seen.has(parent.id)) break
-      parts.unshift(parent.name)
-      seen.add(parent.id)
-      current = parent
+  function resolvePath(candidate: ManifestNode, cache: Map<string, string>, visiting: Set<string>): string {
+    const cached = cache.get(candidate.id)
+    if (cached) return cached
+    if (!candidate.parentId || visiting.has(candidate.id)) {
+      cache.set(candidate.id, candidate.name)
+      return candidate.name
     }
-    return parts.join(' / ')
+
+    const parent = nodeMap.get(candidate.parentId)
+    if (!parent) {
+      cache.set(candidate.id, candidate.name)
+      return candidate.name
+    }
+
+    visiting.add(candidate.id)
+    const path = `${resolvePath(parent, cache, visiting)} / ${candidate.name}`
+    visiting.delete(candidate.id)
+    cache.set(candidate.id, path)
+    return path
   }
 </script>
 
@@ -139,7 +159,7 @@
               {/if}
             </span>
             {#if n.parentId !== null}
-              <span class="block truncate text-xs font-normal text-stone-400">{pathFor(n)}</span>
+              <span class="block truncate text-xs font-normal text-stone-400">{pathMap.get(n.id) ?? n.name}</span>
             {/if}
           </button>
         {/each}

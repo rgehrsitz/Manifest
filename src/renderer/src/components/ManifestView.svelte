@@ -306,27 +306,42 @@
     row: VisibleRow
     x: number
     y: number
+    measured: boolean
   }
 
   let contextMenu = $state<ContextMenuState | null>(null)
+  let contextMenuEl = $state<HTMLDivElement | null>(null)
 
   function handleRowContextMenu(row: VisibleRow, x: number, y: number) {
     if (editingDisabled) return
     if (row.kind === 'ghost') return
     onSelect?.(row.node.id)
-    const menuWidth = 176
-    const menuHeight = row.depth === 0 ? 96 : 260
-    const margin = 8
-    const maxX = Math.max(margin, window.innerWidth - menuWidth - margin)
-    const maxY = Math.max(margin, window.innerHeight - menuHeight - margin)
-    const clampedX = Math.min(Math.max(margin, x), maxX)
-    const clampedY = Math.min(Math.max(margin, y), maxY)
-    contextMenu = { row, x: clampedX, y: clampedY }
+    contextMenu = { row, x, y, measured: false }
   }
 
   function closeContextMenu() {
     contextMenu = null
   }
+
+  async function measureAndClampContextMenu() {
+    if (!contextMenu || contextMenu.measured) return
+    await tick()
+    if (!contextMenu || !contextMenuEl) return
+
+    const rect = contextMenuEl.getBoundingClientRect()
+    const margin = 8
+    const maxX = Math.max(margin, window.innerWidth - rect.width - margin)
+    const maxY = Math.max(margin, window.innerHeight - rect.height - margin)
+    const clampedX = Math.min(Math.max(margin, contextMenu.x), maxX)
+    const clampedY = Math.min(Math.max(margin, contextMenu.y), maxY)
+    contextMenu = { ...contextMenu, x: clampedX, y: clampedY, measured: true }
+  }
+
+  $effect(() => {
+    if (contextMenu && !contextMenu.measured) {
+      void measureAndClampContextMenu()
+    }
+  })
 
   const menuRow = $derived(contextMenu?.row)
   const menuIsRoot = $derived(menuRow ? menuRow.depth === 0 : false)
@@ -597,10 +612,13 @@
   <div class="fixed inset-0 z-40" onclick={closeContextMenu}></div>
 
   <div
-    class="fixed z-50 bg-white border border-stone-200 rounded-lg shadow-lg py-1 min-w-[176px]
-           text-sm text-stone-700"
+    bind:this={contextMenuEl}
+    class="fixed z-50 max-h-[calc(100vh-16px)] min-w-[176px] overflow-y-auto
+           rounded-lg border border-stone-200 bg-white py-1 text-sm text-stone-700
+           shadow-lg"
     style:left="{contextMenu.x}px"
     style:top="{contextMenu.y}px"
+    style:visibility={contextMenu.measured ? 'visible' : 'hidden'}
     role="menu"
   >
     <button
