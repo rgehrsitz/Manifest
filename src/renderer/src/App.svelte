@@ -2,7 +2,7 @@
 
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte'
-  import type { Project, ManifestNode, RecoveryPoint, Snapshot, SnapshotTimelineEvent } from '../../shared/types'
+  import type { Project, ManifestNode, RecoveryPoint, SearchResult, Snapshot, SnapshotTimelineEvent } from '../../shared/types'
   import type { MergedTree } from '../../shared/merged-tree'
   import { computeSubtreeSummaries } from '../../shared/merged-tree'
   import { buildTree, getSiblingIndex, getAncestorIds } from './lib/tree'
@@ -35,8 +35,10 @@
   let stashedGhostSelection: string | null = $state(null)
   let expandedIds: Set<string>   = $state(new Set())
   let searchQuery: string        = $state('')
-  let searchResults              = $state<{ nodeId: string; nodeName: string }[]>([])
+  let searchResults: SearchResult[] = $state([])
+  let searchResultsOpen: boolean = $state(false)
   let searching:   boolean       = $state(false)
+  let selectedScrollAlign: 'auto' | 'center' = $state('auto')
 
   // Inline add-child state
   let addingChildTo: string | null = $state(null)
@@ -299,8 +301,7 @@
     project = null
     setSelection(null)
     expandedIds = new Set()
-    searchQuery = ''
-    searchResults = []
+    clearSearch()
     appState = 'welcome'
     newName = ''
     newPath = ''
@@ -335,6 +336,7 @@
   }
 
   function handleSelect(id: string) {
+    selectedScrollAlign = 'auto'
     setSelection(id)
     addingChildTo = null
   }
@@ -493,29 +495,41 @@
 
   function handleSearchInput(e: Event) {
     searchQuery = (e.target as HTMLInputElement).value
+    searchResultsOpen = true
     if (searchTimer) clearTimeout(searchTimer)
     if (!searchQuery.trim()) {
       searchResults = []
+      searchResultsOpen = false
       searching = false
       return
     }
     searching = true
+    const query = searchQuery
     searchTimer = setTimeout(async () => {
-      const result = await window.api.search.query(searchQuery)
+      const result = await window.api.search.query(query)
+      if (query !== searchQuery) return
       searching = false
       if (result.ok) searchResults = result.data
     }, 200)
   }
 
   function handleSearchSelect(nodeId: string) {
-    setSelection(nodeId)
-    searchQuery = ''
-    searchResults = []
     // Expand ancestors so the node is visible.
     if (project) {
       const ancestors = getAncestorIds(nodeId, project.nodes)
       expandedIds = new Set([...expandedIds, ...ancestors, nodeId])
     }
+    selectedScrollAlign = 'center'
+    setSelection(nodeId)
+    searchResultsOpen = false
+  }
+
+  function clearSearch() {
+    if (searchTimer) clearTimeout(searchTimer)
+    searchQuery = ''
+    searchResults = []
+    searchResultsOpen = false
+    searching = false
   }
 
   // ─── Snapshots / history ────────────────────────────────────────────────
@@ -1002,7 +1016,7 @@
               value={searchQuery}
               oninput={handleSearchInput}
               placeholder="Search nodes…"
-              class="w-full bg-white border border-stone-200 rounded-lg pl-8 pr-3 py-1.5
+              class="w-full bg-white border border-stone-200 rounded-lg pl-8 pr-8 py-1.5
                      text-sm text-stone-700 placeholder-stone-300 focus:outline-none
                      focus:ring-1 focus:ring-stone-400 selectable"
               data-testid="search-input"
@@ -1014,15 +1028,30 @@
             {#if searchQuery}
               <button
                 class="absolute right-2.5 top-1.5 text-stone-400 hover:text-stone-600 text-xs"
-                onclick={() => { searchQuery = ''; searchResults = [] }}
+                onclick={clearSearch}
                 aria-label="Clear search"
               >✕</button>
             {/if}
           </div>
+          {#if searchQuery.trim() && !searchResultsOpen}
+            <div class="mt-2 flex items-center justify-between gap-2">
+              <p class="truncate text-xs text-stone-500">
+                {searchResults.length} result{searchResults.length === 1 ? '' : 's'} for "{searchQuery}"
+              </p>
+              <button
+                class="shrink-0 rounded-md border border-stone-200 bg-white px-2 py-1 text-xs
+                       font-medium text-stone-600 hover:bg-stone-100 cursor-default"
+                onclick={() => { searchResultsOpen = true }}
+                data-testid="show-search-results"
+              >
+                Results
+              </button>
+            </div>
+          {/if}
         </div>
 
         <!-- Search results overlay -->
-        {#if searchQuery.trim()}
+        {#if searchQuery.trim() && searchResultsOpen}
           <div class="flex-1 overflow-y-auto p-2" data-testid="search-results">
             {#if searching}
               <p class="text-xs text-stone-400 px-2 py-1">Searching…</p>
@@ -1030,11 +1059,16 @@
               {#each searchResults as r (r.nodeId)}
                 <button
                   class="w-full text-left px-2 py-1.5 rounded text-sm text-stone-700
-                         hover:bg-stone-100 truncate"
+                         hover:bg-stone-100"
                   onclick={() => handleSearchSelect(r.nodeId)}
                   data-testid="search-result"
                 >
-                  {r.nodeName}
+                  <span class="block truncate">{r.nodeName}</span>
+                  {#if r.parentName || r.matchField === 'property'}
+                    <span class="block truncate text-xs text-stone-400">
+                      {r.parentName ?? 'Root'}{r.matchField === 'property' ? ` · ${r.snippet}` : ''}
+                    </span>
+                  {/if}
                 </button>
               {/each}
               {#if searchResults.length === 0}
@@ -1065,6 +1099,7 @@
                   lensExpandedFolds = next
                 }}
                 {selectedId}
+                selectedScrollAlign={selectedScrollAlign}
                 onSelect={handleSelect}
                 onToggle={handleToggle}
                 onAddChild={handleAddChild}

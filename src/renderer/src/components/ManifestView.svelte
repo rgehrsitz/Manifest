@@ -41,6 +41,7 @@
     onDelete?: (id: string) => void
     onMoveTo?: (id: string) => void
     editingDisabled?: boolean
+    selectedScrollAlign?: 'auto' | 'center'
   }
 
   let {
@@ -59,6 +60,7 @@
     onDelete,
     onMoveTo,
     editingDisabled = false,
+    selectedScrollAlign = 'auto',
   }: Props = $props()
 
   const ROW_HEIGHT = 32
@@ -312,7 +314,14 @@
     if (editingDisabled) return
     if (row.kind === 'ghost') return
     onSelect?.(row.node.id)
-    contextMenu = { row, x, y }
+    const menuWidth = 176
+    const menuHeight = row.depth === 0 ? 96 : 260
+    const margin = 8
+    const maxX = Math.max(margin, window.innerWidth - menuWidth - margin)
+    const maxY = Math.max(margin, window.innerHeight - menuHeight - margin)
+    const clampedX = Math.min(Math.max(margin, x), maxX)
+    const clampedY = Math.min(Math.max(margin, y), maxY)
+    contextMenu = { row, x: clampedX, y: clampedY }
   }
 
   function closeContextMenu() {
@@ -340,7 +349,7 @@
     if (!id || !virtualizerStore) return
     const idx = findDisplayedIndexForNode(id)
     if (idx < 0) return
-    get(virtualizerStore).scrollToIndex(idx, { align: 'auto' })
+    get(virtualizerStore).scrollToIndex(idx, { align: selectedScrollAlign })
   })
 
   function findDisplayedIndexForNode(nodeId: string): number {
@@ -588,7 +597,7 @@
   <div class="fixed inset-0 z-40" onclick={closeContextMenu}></div>
 
   <div
-    class="fixed z-50 bg-white border border-stone-200 rounded-lg shadow-lg py-1 min-w-[160px]
+    class="fixed z-50 bg-white border border-stone-200 rounded-lg shadow-lg py-1 min-w-[176px]
            text-sm text-stone-700"
     style:left="{contextMenu.x}px"
     style:top="{contextMenu.y}px"
