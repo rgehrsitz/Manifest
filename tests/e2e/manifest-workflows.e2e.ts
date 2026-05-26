@@ -189,6 +189,7 @@ test('reorders siblings and reparents nodes', async ({ appPage, electronApp, wor
   expect(rootChildren).toEqual(['Alpha', 'Gamma', 'Beta'])
 
   await openContextMenuAction(appPage, 'Alpha', 'Move To…')
+  await appPage.getByTestId('move-search-input').fill('Beta')
   await appPage.getByTestId('move-target').filter({ hasText: 'Beta' }).click()
   await appPage.getByTestId('move-confirm').click()
 
@@ -212,7 +213,11 @@ test('searches by property value and focuses the selected node', async ({ appPag
   await appPage.getByTestId('search-result').filter({ hasText: 'Server 2' }).click()
 
   await expect(appPage.getByTestId('node-name')).toContainText('Server 2')
-  await expect(appPage.getByTestId('search-input')).toHaveValue('')
+  await expect(appPage.getByTestId('search-input')).toHaveValue('SN-0002')
+  await expect(appPage.getByTestId('tree')).toBeVisible()
+  await appPage.getByTestId('show-search-results').click()
+  await expect(appPage.getByTestId('search-results')).toBeVisible()
+  await expect(appPage.getByTestId('search-result').filter({ hasText: 'Server 2' })).toBeVisible()
 })
 
 test('shows an empty state when search finds no matches', async ({ appPage, electronApp, workspaceDir }) => {
