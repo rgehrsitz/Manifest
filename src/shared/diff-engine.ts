@@ -1,4 +1,11 @@
-import type { DiffEntry, ManifestNode, Project } from './types'
+import type {
+  DiffEntry,
+  ManifestNode,
+  Project,
+  NodeTemplate,
+  TemplateField,
+  TemplateDiffEntry,
+} from './types'
 
 const SEVERITY_WEIGHT = {
   High: 0,
@@ -11,8 +18,9 @@ const CHANGE_WEIGHT = {
   removed: 1,
   moved: 2,
   renamed: 3,
-  'property-changed': 4,
-  'order-changed': 5,
+  'template-changed': 4,
+  'property-changed': 5,
+  'order-changed': 6,
 } as const
 
 type NodeMap = Map<string, ManifestNode>
@@ -127,6 +135,17 @@ export function diffProjects(projectA: Project, projectB: Project): DiffEntry[] 
       })
     }
 
+    if ((nodeA.templateId ?? null) !== (nodeB.templateId ?? null)) {
+      diffs.push({
+        nodeId: id,
+        changeType: 'template-changed',
+        severity: 'Medium',
+        oldValue: nodeA.templateId ?? null,
+        newValue: nodeB.templateId ?? null,
+        context: makeContext(nodeB, nodesB),
+      })
+    }
+
     if (!propertiesEqual(nodeA.properties, nodeB.properties)) {
       diffs.push({
         nodeId: id,
@@ -151,4 +170,89 @@ export function diffProjects(projectA: Project, projectB: Project): DiffEntry[] 
   }
 
   return diffs.sort(compareEntries)
+}
+
+// ─── Template / schema diffs ────────────────────────────────────────────────────
+//
+// Project-level changes to the templates map between two snapshots. These are
+// not tied to any single node, so they are returned separately from the node
+// DiffEntry[] (surfaced through MergedTree.templateChanges). Without this, a
+// snapshot whose only change is a template/schema edit would compare as
+// "no changes" — Manifest must never silently hide a real change.
+
+function fieldsEqual(a: TemplateField, b: TemplateField): boolean {
+  if (a.type !== b.type) return false
+  if ((a.label ?? '') !== (b.label ?? '')) return false
+  if ((a.required ?? false) !== (b.required ?? false)) return false
+  if ((a.default ?? null) !== (b.default ?? null)) return false
+  const aOpts = a.options ?? []
+  const bOpts = b.options ?? []
+  if (aOpts.length !== bOpts.length) return false
+  for (let i = 0; i < aOpts.length; i++) {
+    if (aOpts[i] !== bOpts[i]) return false
+  }
+  return true
+}
+
+function diffTemplateFields(
+  templateId: string,
+  templateLabel: string,
+  a: NodeTemplate,
+  b: NodeTemplate,
+  out: TemplateDiffEntry[]
+): void {
+  const keys = new Set([...Object.keys(a.fields), ...Object.keys(b.fields)])
+  for (const key of [...keys].sort()) {
+    const fieldA = a.fields[key]
+    const fieldB = b.fields[key]
+    if (!fieldA && fieldB) {
+      out.push({ templateId, templateLabel, changeType: 'field-added', fieldKey: key, newValue: fieldB })
+    } else if (fieldA && !fieldB) {
+      out.push({ templateId, templateLabel, changeType: 'field-removed', fieldKey: key, oldValue: fieldA })
+    } else if (fieldA && fieldB && !fieldsEqual(fieldA, fieldB)) {
+      out.push({
+        templateId,
+        templateLabel,
+        changeType: 'field-changed',
+        fieldKey: key,
+        oldValue: fieldA,
+        newValue: fieldB,
+      })
+    }
+  }
+}
+
+export function diffTemplates(projectA: Project, projectB: Project): TemplateDiffEntry[] {
+  const templatesA = projectA.templates ?? {}
+  const templatesB = projectB.templates ?? {}
+  const ids = new Set([...Object.keys(templatesA), ...Object.keys(templatesB)])
+  const out: TemplateDiffEntry[] = []
+
+  for (const id of [...ids].sort()) {
+    const tplA = templatesA[id]
+    const tplB = templatesB[id]
+
+    if (!tplA && tplB) {
+      out.push({ templateId: id, templateLabel: tplB.label, changeType: 'template-added', newValue: tplB })
+      continue
+    }
+    if (tplA && !tplB) {
+      out.push({ templateId: id, templateLabel: tplA.label, changeType: 'template-removed', oldValue: tplA })
+      continue
+    }
+    if (!tplA || !tplB) continue
+
+    if (tplA.label !== tplB.label) {
+      out.push({
+        templateId: id,
+        templateLabel: tplB.label,
+        changeType: 'template-relabeled',
+        oldValue: tplA.label,
+        newValue: tplB.label,
+      })
+    }
+    diffTemplateFields(id, tplB.label, tplA, tplB, out)
+  }
+
+  return out
 }

@@ -6,6 +6,7 @@ import { ProjectManager } from './project-manager'
 import { GitService } from './git-service'
 import { IPC } from '../shared/ipc'
 import { ok, err, ErrorCode } from '../shared/errors'
+import type { NodeTemplate } from '../shared/types'
 
 // ─── Logging ────────────────────────────────────────────────────────────────
 
@@ -82,15 +83,20 @@ function registerIpcHandlers(): void {
 
   // ── Node CRUD ────────────────────────────────────────────────────────────
 
-  ipcMain.handle(IPC.NODE_CREATE, (_, { parentId, name }: { parentId: string; name: string }) =>
-    projectManager.nodeCreate(parentId, name)
-  )
+  ipcMain.handle(IPC.NODE_CREATE, (
+    _,
+    { parentId, name, templateId }: { parentId: string; name: string; templateId?: string | null }
+  ) => projectManager.nodeCreate(parentId, name, templateId))
 
   ipcMain.handle(IPC.NODE_UPDATE, (
     _,
     { id, changes }: {
       id: string
-      changes: { name?: string; properties?: Record<string, string | number | boolean | null> }
+      changes: {
+        name?: string
+        properties?: Record<string, string | number | boolean | null>
+        templateId?: string | null
+      }
     }
   ) => projectManager.nodeUpdate(id, changes))
 
@@ -109,6 +115,22 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC.NODE_HISTORY_BACKFILL_STATUS, () =>
     ok(projectManager.getHistoryBackfillStatus())
+  )
+
+  // ── Templates ──────────────────────────────────────────────────────────────
+
+  ipcMain.handle(IPC.TEMPLATE_CREATE, (
+    _,
+    { id, template }: { id: string; template: NodeTemplate }
+  ) => projectManager.templateCreate(id, template))
+
+  ipcMain.handle(IPC.TEMPLATE_UPDATE, (
+    _,
+    { id, changes }: { id: string; changes: Partial<NodeTemplate> }
+  ) => projectManager.templateUpdate(id, changes))
+
+  ipcMain.handle(IPC.TEMPLATE_DELETE, (_, { id }: { id: string }) =>
+    projectManager.templateDelete(id)
   )
 
   // ── Search ───────────────────────────────────────────────────────────────

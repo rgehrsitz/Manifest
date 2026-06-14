@@ -1,0 +1,114 @@
+import { describe, it, expect } from 'vitest'
+import { diffProjects, diffTemplates } from '../../../src/shared/diff-engine'
+import type { Project, ManifestNode, NodeTemplate } from '../../../src/shared/types'
+
+function node(id: string, overrides: Partial<ManifestNode> = {}): ManifestNode {
+  return {
+    id,
+    parentId: id === 'root' ? null : 'root',
+    name: id,
+    order: 0,
+    properties: {},
+    created: '2026-01-01T00:00:00.000Z',
+    modified: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  }
+}
+
+function project(nodes: ManifestNode[], templates?: Record<string, NodeTemplate>): Project {
+  return {
+    version: 3,
+    id: 'p',
+    name: 'P',
+    created: '2026-01-01T00:00:00.000Z',
+    modified: '2026-01-01T00:00:00.000Z',
+    nodes,
+    ...(templates ? { templates } : {}),
+  }
+}
+
+describe('diffProjects — template-changed', () => {
+  it('emits template-changed when a node gains a template', () => {
+    const a = project([node('root'), node('a')])
+    const b = project([node('root'), node('a', { templateId: 'rack' })])
+    const diffs = diffProjects(a, b)
+    const tc = diffs.find(d => d.changeType === 'template-changed')
+    expect(tc).toBeDefined()
+    expect(tc!.oldValue).toBeNull()
+    expect(tc!.newValue).toBe('rack')
+  })
+
+  it('does not emit template-changed when templateId is unchanged', () => {
+    const a = project([node('root'), node('a', { templateId: 'rack' })])
+    const b = project([node('root'), node('a', { templateId: 'rack' })])
+    expect(diffProjects(a, b).some(d => d.changeType === 'template-changed')).toBe(false)
+  })
+
+  it('treats absent and null templateId as equal (no false change)', () => {
+    const a = project([node('root'), node('a')])
+    const b = project([node('root'), node('a', { templateId: null })])
+    expect(diffProjects(a, b).some(d => d.changeType === 'template-changed')).toBe(false)
+  })
+})
+
+describe('diffTemplates', () => {
+  const rackV1: NodeTemplate = { label: 'Rack', fields: { location: { type: 'string' } } }
+
+  it('detects an added template', () => {
+    const a = project([node('root')])
+    const b = project([node('root')], { rack: rackV1 })
+    const out = diffTemplates(a, b)
+    expect(out).toHaveLength(1)
+    expect(out[0]).toMatchObject({ templateId: 'rack', changeType: 'template-added' })
+  })
+
+  it('detects a removed template', () => {
+    const a = project([node('root')], { rack: rackV1 })
+    const b = project([node('root')])
+    const out = diffTemplates(a, b)
+    expect(out[0]).toMatchObject({ templateId: 'rack', changeType: 'template-removed' })
+  })
+
+  it('detects relabel, field add/remove, and field change', () => {
+    const a = project([node('root')], {
+      rack: { label: 'Rack', fields: { location: { type: 'string' }, capacity: { type: 'number' } } },
+    })
+    const b = project([node('root')], {
+      rack: {
+        label: 'Equipment Rack',                                   // relabel
+        fields: {
+          location: { type: 'version' },                          // field-changed (type)
+          firmware: { type: 'version' },                          // field-added
+        },                                                        // capacity removed
+      },
+    })
+    const out = diffTemplates(a, b)
+    const types = out.map(e => e.changeType)
+    expect(types).toContain('template-relabeled')
+    expect(types).toContain('field-added')
+    expect(types).toContain('field-removed')
+    expect(types).toContain('field-changed')
+    const relabel = out.find(e => e.changeType === 'template-relabeled')!
+    expect(relabel.oldValue).toBe('Rack')
+    expect(relabel.newValue).toBe('Equipment Rack')
+  })
+
+  it('returns nothing for identical template maps', () => {
+    const a = project([node('root')], { rack: rackV1 })
+    const b = project([node('root')], { rack: { label: 'Rack', fields: { location: { type: 'string' } } } })
+    expect(diffTemplates(a, b)).toEqual([])
+  })
+
+  it('a schema-only change is never silently hidden', () => {
+    // Same nodes; only the template's enum options changed. Node diffs are
+    // empty, but diffTemplates must surface the schema change.
+    const a = project([node('root')], {
+      st: { label: 'S', fields: { status: { type: 'enum', options: ['a'] } } },
+    })
+    const b = project([node('root')], {
+      st: { label: 'S', fields: { status: { type: 'enum', options: ['a', 'b'] } } },
+    })
+    expect(diffProjects(a, b)).toEqual([])
+    expect(diffTemplates(a, b)).toHaveLength(1)
+  })
+})

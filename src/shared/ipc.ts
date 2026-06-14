@@ -9,6 +9,7 @@
 import type {
   Project,
   ManifestNode,
+  NodeTemplate,
   Snapshot,
   DiffEntry,
   SearchResult,
@@ -36,6 +37,9 @@ export const IPC = {
   NODE_MOVE:           'node:move',
   NODE_HISTORY:        'node:history',
   NODE_HISTORY_BACKFILL_STATUS: 'node:historyBackfillStatus',
+  TEMPLATE_CREATE:     'template:create',
+  TEMPLATE_UPDATE:     'template:update',
+  TEMPLATE_DELETE:     'template:delete',
   SEARCH_QUERY:        'search:query',
   SNAPSHOT_CREATE:     'snapshot:create',
   SNAPSHOT_LIST:       'snapshot:list',
@@ -64,12 +68,16 @@ export interface ManifestAPI {
     close(): Promise<Result<void>>
   }
   node: {
-    /** Create a child node under parentId. Returns full updated Project. */
-    create(parentId: string, name: string): Promise<Result<Project>>
-    /** Update node name and/or properties. Returns full updated Project. */
+    /** Create a child node under parentId, optionally bound to a template. Returns full updated Project. */
+    create(parentId: string, name: string, templateId?: string | null): Promise<Result<Project>>
+    /** Update node name, properties, and/or template binding. Returns full updated Project. */
     update(
       id: string,
-      changes: { name?: string; properties?: Record<string, string | number | boolean | null> }
+      changes: {
+        name?: string
+        properties?: Record<string, string | number | boolean | null>
+        templateId?: string | null
+      }
     ): Promise<Result<Project>>
     /** Delete node and all its descendants. Returns full updated Project. */
     delete(id: string): Promise<Result<Project>>
@@ -79,6 +87,14 @@ export interface ManifestAPI {
     history(nodeId: string): Promise<Result<NodeHistory>>
     /** Status of the background per-node history backfill (populated on project open). */
     historyBackfillStatus(): Promise<Result<{ inProgress: boolean; completed: number; total: number }>>
+  }
+  template: {
+    /** Create a new node template (id must be a unique slug). Returns full updated Project. */
+    create(id: string, template: NodeTemplate): Promise<Result<Project>>
+    /** Update a template; rejected if it would invalidate a bound node's value. Returns full updated Project. */
+    update(id: string, changes: Partial<NodeTemplate>): Promise<Result<Project>>
+    /** Delete a template; bound nodes are unbound but keep their values. Returns full updated Project. */
+    delete(id: string): Promise<Result<Project>>
   }
   search: {
     query(query: string): Promise<Result<SearchResult[]>>

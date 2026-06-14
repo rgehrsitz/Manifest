@@ -21,8 +21,8 @@ const api: ManifestAPI = {
   },
 
   node: {
-    create: (parentId, name) =>
-      ipcRenderer.invoke(IPC.NODE_CREATE, { parentId, name }),
+    create: (parentId, name, templateId) =>
+      ipcRenderer.invoke(IPC.NODE_CREATE, { parentId, name, templateId }),
     update: (id, changes) =>
       ipcRenderer.invoke(IPC.NODE_UPDATE, { id, changes }),
     delete: (id) =>
@@ -33,6 +33,15 @@ const api: ManifestAPI = {
       ipcRenderer.invoke(IPC.NODE_HISTORY, { nodeId }),
     historyBackfillStatus: () =>
       ipcRenderer.invoke(IPC.NODE_HISTORY_BACKFILL_STATUS, {}),
+  },
+
+  template: {
+    create: (id, template) =>
+      ipcRenderer.invoke(IPC.TEMPLATE_CREATE, { id, template }),
+    update: (id, changes) =>
+      ipcRenderer.invoke(IPC.TEMPLATE_UPDATE, { id, changes }),
+    delete: (id) =>
+      ipcRenderer.invoke(IPC.TEMPLATE_DELETE, { id }),
   },
 
   search: {
