@@ -37,9 +37,23 @@ would invalidate a currently-bound node value; `templateDelete` unbinds nodes
 
 Manifest schema: `CURRENT_VERSION` bumped 2→3 (additive: ensures `templates: {}`).
 
-**Status:** Phase 1 (schema/core/change-visibility, no UI) DONE on branch
-`feat/typed-properties-templates` — 311 unit tests green, typecheck + build
-clean. Phase 2 = editing UI (componentized: `TemplateFieldControl.svelte`,
-`PropertyEditor.svelte`, `TemplateManager.svelte`, load-warnings banner).
-Phase 3 = diff/tree rendering polish. Full plan:
-`~/.claude/plans/fluffy-swimming-wozniak.md`.
+**Status:** Phase 1 (schema/core/change-visibility) committed (9bf269e) and
+Phase 2 (editing UI) DONE on branch `feat/typed-properties-templates`.
+Phase 2 added: `TemplateFieldControl.svelte` (typed inputs; keyed per
+node+field, seeds draft once — `svelte-ignore state_referenced_locally`),
+`PropertyEditor.svelte` (template selector + typed fields + ad-hoc rows +
+promote-to-typed; reuses `prop-value`/`new-prop-*`/`delete-prop` testids for
+back-compat), `TemplateManager.svelte` (CRUD modal, Templates titlebar
+button), node-create template picker, load-warnings banner. 311 unit + 23
+E2E green; typecheck + svelte-check clean.
+
+**Svelte 5 IPC gotcha (found + fixed in Phase 2):** sending `$state`-proxied
+NESTED objects over `ipcRenderer.invoke` throws "An object could not be
+cloned" (structured clone can't serialize Svelte proxies). Node/property
+updates are safe because property VALUES are primitives, but template field
+maps are nested — `handlePromoteField` must `$state.snapshot(template.fields)`
+before sending. Rule: snapshot any proxied non-primitive before IPC.
+
+Phase 3 = diff/tree rendering polish (render `MergedTree.templateChanges` as a
+"Schema changes" section, type-aware value formatting, optional tree badge).
+Full plan: `~/.claude/plans/fluffy-swimming-wozniak.md`.

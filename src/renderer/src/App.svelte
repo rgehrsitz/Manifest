@@ -2,7 +2,7 @@
 
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte'
-  import type { Project, ManifestNode, RecoveryPoint, SearchResult, Snapshot, SnapshotTimelineEvent } from '../../shared/types'
+  import type { Project, ManifestNode, ManifestWarning, NodeTemplate, PropertyType, RecoveryPoint, SearchResult, Snapshot, SnapshotTimelineEvent } from '../../shared/types'
   import type { MergedTree } from '../../shared/merged-tree'
   import { computeSubtreeSummaries } from '../../shared/merged-tree'
   import { buildTree, getSiblingIndex, getAncestorIds } from './lib/tree'
@@ -10,6 +10,7 @@
   import ManifestView from './components/ManifestView.svelte'
   import DetailPane from './components/DetailPane.svelte'
   import MoveToDialog from './components/MoveToDialog.svelte'
+  import TemplateManager from './components/TemplateManager.svelte'
   import RecoveryDialog from './components/RecoveryDialog.svelte'
   import RevertDialog from './components/RevertDialog.svelte'
   import SnapshotsPanel from './components/SnapshotsPanel.svelte'
@@ -44,6 +45,7 @@
   let addingChildTo: string | null = $state(null)
   let addingChildName: string      = $state('')
   let addingChildError: string | null = $state(null)
+  let addingChildTemplateId: string | null = $state(null)
   let addChildInput: HTMLInputElement | null = $state(null)
 
   // Rename request signal — bumping this counter triggers DetailPane.startEditName().
@@ -267,6 +269,7 @@
       selectRoot(result.data)
       workingCopyBaseSnapshot = null
       workingCopyDirty = false
+      loadWarningsDismissed = false
       appState = 'open'
     } else {
       error = result.error.message
@@ -361,6 +364,7 @@
     addingChildTo = parentId
     addingChildName = ''
     addingChildError = null
+    addingChildTemplateId = null
     expandedIds = new Set([...expandedIds, parentId])
   }
 
@@ -373,7 +377,11 @@
       addingChildError = 'Name is required'
       return
     }
-    const result = await window.api.node.create(addingChildTo, addingChildName.trim())
+    const result = await window.api.node.create(
+      addingChildTo,
+      addingChildName.trim(),
+      addingChildTemplateId,
+    )
     if (result.ok) {
       applyProject(result.data)
       markWorkingCopyChanged()
@@ -384,6 +392,7 @@
       if (newNode) setSelection(newNode.id)
       addingChildTo = null
       addingChildName = ''
+      addingChildTemplateId = null
     } else {
       addingChildError = result.error.message
     }
@@ -393,6 +402,7 @@
     addingChildTo = null
     addingChildName = ''
     addingChildError = null
+    addingChildTemplateId = null
   }
 
   async function handleMoveUp(id: string) {
@@ -475,7 +485,11 @@
 
   async function handleNodeUpdate(
     id: string,
-    changes: { name?: string; properties?: Record<string, string | number | boolean | null> }
+    changes: {
+      name?: string
+      properties?: Record<string, string | number | boolean | null>
+      templateId?: string | null
+    }
   ) {
     if (editingLocked) {
       showToast(lockReason())
@@ -487,6 +501,64 @@
       markWorkingCopyChanged()
     }
     else showToast(result.error.message)
+  }
+
+  // Promote an ad-hoc property to a typed field on the node's template.
+  async function handlePromoteField(nodeId: string, key: string, type: PropertyType) {
+    if (!project || editingLocked) { showToast(lockReason()); return }
+    const node = project.nodes.find(n => n.id === nodeId)
+    const templateId = node?.templateId ?? null
+    if (!templateId) { showToast('Assign a template before promoting a property.'); return }
+    const template = project.templates?.[templateId]
+    if (!template) { showToast('Template not found.'); return }
+
+    // $state.snapshot: template.fields is a deep Svelte proxy; nested field
+    // objects must be plain to survive structured-clone across the IPC boundary.
+    const existingFields = $state.snapshot(template.fields) as Record<string, NodeTemplate['fields'][string]>
+    const nextFields = { ...existingFields, [key]: { type } }
+    const result = await window.api.template.update(templateId, { fields: nextFields })
+    if (result.ok) {
+      applyProject(result.data)
+      markWorkingCopyChanged()
+    } else {
+      showToast(result.error.message)
+    }
+  }
+
+  // ─── Templates ──────────────────────────────────────────────────────────────
+
+  let templateManagerOpen = $state(false)
+
+  // Load-time warnings (typed-value/integrity issues found when opening a
+  // hand-edited manifest). Delivered once on open; cleared by any mutation.
+  let loadWarningsDismissed = $state(false)
+  const loadWarnings = $derived.by<ManifestWarning[]>(() => {
+    const p: Project | null = project
+    return p?.loadWarnings ?? []
+  })
+  const showLoadWarnings = $derived(loadWarnings.length > 0 && !loadWarningsDismissed)
+
+  function openTemplateManager() {
+    if (editingLocked) { showToast(lockReason()); return }
+    templateManagerOpen = true
+  }
+
+  async function handleTemplateCreate(id: string, template: NodeTemplate): Promise<string | null> {
+    const result = await window.api.template.create(id, template)
+    if (result.ok) { applyProject(result.data); markWorkingCopyChanged(); return null }
+    return result.error.message
+  }
+
+  async function handleTemplateUpdate(id: string, template: NodeTemplate): Promise<string | null> {
+    const result = await window.api.template.update(id, template)
+    if (result.ok) { applyProject(result.data); markWorkingCopyChanged(); return null }
+    return result.error.message
+  }
+
+  async function handleTemplateDelete(id: string): Promise<string | null> {
+    const result = await window.api.template.delete(id)
+    if (result.ok) { applyProject(result.data); markWorkingCopyChanged(); return null }
+    return result.error.message
   }
 
   // ─── Search ───────────────────────────────────────────────────────────────
@@ -822,6 +894,17 @@
   />
 {/if}
 
+<!-- ─── Template manager ──────────────────────────────────────────────────── -->
+{#if templateManagerOpen && project}
+  <TemplateManager
+    templates={project.templates ?? {}}
+    onCreate={handleTemplateCreate}
+    onUpdate={handleTemplateUpdate}
+    onDelete={handleTemplateDelete}
+    onClose={() => { templateManagerOpen = false }}
+  />
+{/if}
+
 <!-- ─── Welcome ────────────────────────────────────────────────────────────── -->
 {#if appState === 'welcome'}
   <div class="flex flex-col h-full items-center justify-center bg-stone-50">
@@ -976,6 +1059,14 @@
       </div>
       <div class="flex items-center gap-2 [-webkit-app-region:no-drag]">
         <button
+          onclick={openTemplateManager}
+          class="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-600
+                 transition-colors hover:bg-stone-50 cursor-default"
+          data-testid="open-templates-btn"
+        >
+          Templates
+        </button>
+        <button
           onclick={toggleSnapshots}
           aria-pressed={snapshotPanelOpen ? 'true' : 'false'}
           class="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-600
@@ -994,6 +1085,40 @@
         </button>
       </div>
     </div>
+
+    <!-- Load-time warnings banner (non-blocking; values left as-on-disk) -->
+    {#if showLoadWarnings}
+      <div
+        class="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900"
+        data-testid="load-warnings-banner"
+      >
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <p class="font-semibold">
+              {loadWarnings.length} data issue{loadWarnings.length === 1 ? '' : 's'} found on open
+              <span class="font-normal text-amber-700">— values were left exactly as written on disk.</span>
+            </p>
+            <ul class="mt-1 space-y-0.5">
+              {#each loadWarnings.slice(0, 5) as w (w.path)}
+                <li class="truncate">
+                  <span class="font-mono text-amber-700">{w.path}</span>
+                  <span class="text-amber-800"> — {w.message}</span>
+                </li>
+              {/each}
+              {#if loadWarnings.length > 5}
+                <li class="text-amber-700">…and {loadWarnings.length - 5} more</li>
+              {/if}
+            </ul>
+          </div>
+          <button
+            onclick={() => { loadWarningsDismissed = true }}
+            class="shrink-0 text-amber-700 hover:text-amber-900 cursor-default"
+            aria-label="Dismiss warnings"
+            data-testid="dismiss-load-warnings"
+          >✕</button>
+        </div>
+      </div>
+    {/if}
 
     <!-- Three-pane body — tree | drag | detail | drag | snapshots -->
     <div
@@ -1131,6 +1256,19 @@
                 {#if addingChildError}
                   <p class="text-xs text-red-600">{addingChildError}</p>
                 {/if}
+                {#if project && Object.keys(project.templates ?? {}).length > 0}
+                  <select
+                    bind:value={addingChildTemplateId}
+                    class="w-full text-sm border border-stone-300 rounded px-2 py-1 bg-white
+                           focus:outline-none focus:ring-1 focus:ring-stone-400"
+                    data-testid="add-child-template"
+                  >
+                    <option value={null}>Freeform (no template)</option>
+                    {#each Object.keys(project.templates ?? {}).sort() as id (id)}
+                      <option value={id}>{project.templates![id].label}</option>
+                    {/each}
+                  </select>
+                {/if}
                 <div class="flex gap-1">
                   <button
                     onclick={commitAddChild}
@@ -1175,6 +1313,7 @@
                 ? 'Applying recovery point — editing will resume when recovery finishes.'
                 : undefined}
           onUpdate={handleNodeUpdate}
+          onPromoteField={handlePromoteField}
           onError={showToast}
         />
         {/if}

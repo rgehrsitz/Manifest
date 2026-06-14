@@ -181,12 +181,11 @@ export class ProjectManager {
 
       // Non-fatal, path-qualified integrity/type warnings. We never silently
       // coerce or downgrade hand-edited values on load — we surface them.
+      // Warnings are a one-time, load-event payload: they ride the open
+      // response but are NOT stored on currentProject, so they don't propagate
+      // through subsequent mutation results.
       const warnings = this.collectLoadWarnings(data)
-      const project: Project = {
-        ...data,
-        path: projectPath,
-        ...(warnings.length > 0 ? { loadWarnings: warnings } : {}),
-      }
+      const project: Project = { ...data, path: projectPath }
       if (warnings.length > 0) {
         this.logger.warn('project loaded with warnings', { path: projectPath, count: warnings.length })
       }
@@ -206,7 +205,7 @@ export class ProjectManager {
       this.currentProject = project
       this.logger.info('project opened', { name: project.name, path: projectPath, nodes: project.nodes.length })
       this.scheduleHistoryBackfill()
-      return ok(project)
+      return ok(warnings.length > 0 ? { ...project, loadWarnings: warnings } : project)
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
       this.logger.error('project open failed', { path: projectPath, error: msg })
