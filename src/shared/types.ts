@@ -97,6 +97,7 @@ export type TemplateChangeType =
   | 'template-added'
   | 'template-removed'
   | 'template-relabeled'
+  | 'template-redescribed'
   | 'field-added'
   | 'field-removed'
   | 'field-changed'

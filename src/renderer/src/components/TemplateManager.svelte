@@ -8,7 +8,12 @@
   // successful op via App.applyProject.
   import { onMount, tick } from 'svelte'
   import type { NodeTemplate, TemplateField, PropertyType } from '../../../shared/types'
-  import { validateTemplateId, validatePropertyKey } from '../../../shared/validation'
+  import {
+    validateTemplateId,
+    validatePropertyKey,
+    validateTypedPropertyValue,
+    templateFields,
+  } from '../../../shared/validation'
 
   interface Props {
     templates: Record<string, NodeTemplate>
@@ -27,6 +32,10 @@
     type: PropertyType
     optionsText: string
     required: boolean
+    // Preserved across edits even though the form doesn't expose them, so
+    // saving an existing template never drops field metadata it already had.
+    label?: string
+    default?: string | number | boolean | null
   }
 
   // editingId === null → creating a new template.
@@ -97,6 +106,8 @@
       type: f.type,
       optionsText: (f.options ?? []).join(', '),
       required: f.required ?? false,
+      label: f.label,
+      default: f.default,
     }
   }
 
@@ -108,7 +119,9 @@
     idEdited = true
     draftLabel = tpl.label
     draftDescription = tpl.description ?? ''
-    draftFields = Object.entries(tpl.fields).map(([k, f]) => fieldToDraft(k, f))
+    // templateFields() is null-safe — a structurally-invalid template (loaded
+    // non-fatally with a warning) yields {} rather than throwing here.
+    draftFields = Object.entries(templateFields(tpl)).map(([k, f]) => fieldToDraft(k, f))
     formError = null
   }
 
@@ -139,6 +152,13 @@
       if (f.required) field.required = true
       if (f.type === 'enum') {
         field.options = f.optionsText.split(',').map(s => s.trim()).filter(Boolean)
+      }
+      // Preserve metadata the form doesn't edit (label is type-agnostic; a
+      // default is carried over only while it remains valid for the field type,
+      // so changing a field's type doesn't persist a now-invalid default).
+      if (f.label !== undefined) field.label = f.label
+      if (f.default !== undefined && f.default !== null && validateTypedPropertyValue(f.default, field).valid) {
+        field.default = f.default
       }
       fields[key] = field
     }

@@ -251,6 +251,15 @@ export function diffTemplates(projectA: Project, projectB: Project): TemplateDif
         newValue: tplB.label,
       })
     }
+    if ((tplA.description ?? '') !== (tplB.description ?? '')) {
+      out.push({
+        templateId: id,
+        templateLabel: tplB.label,
+        changeType: 'template-redescribed',
+        oldValue: tplA.description ?? null,
+        newValue: tplB.description ?? null,
+      })
+    }
     diffTemplateFields(id, tplB.label, tplA, tplB, out)
   }
 

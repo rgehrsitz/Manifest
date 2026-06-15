@@ -93,6 +93,19 @@ describe('diffTemplates', () => {
     expect(relabel.newValue).toBe('Equipment Rack')
   })
 
+  it('detects a description-only change (not just label/fields)', () => {
+    const a = project([node('root')], { rack: { label: 'Rack', description: 'old', fields: {} } })
+    const b = project([node('root')], { rack: { label: 'Rack', description: 'new', fields: {} } })
+    const out = diffTemplates(a, b)
+    expect(out).toHaveLength(1)
+    expect(out[0]).toMatchObject({
+      templateId: 'rack',
+      changeType: 'template-redescribed',
+      oldValue: 'old',
+      newValue: 'new',
+    })
+  })
+
   it('returns nothing for identical template maps', () => {
     const a = project([node('root')], { rack: rackV1 })
     const b = project([node('root')], { rack: { label: 'Rack', fields: { location: { type: 'string' } } } })

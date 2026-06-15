@@ -15,6 +15,7 @@
     validatePropertyKey,
     validatePropertyValue,
     coercePropertyValue,
+    templateFields,
   } from '../../../shared/validation'
   import TemplateFieldControl from './TemplateFieldControl.svelte'
 
@@ -40,7 +41,7 @@
   const templateId = $derived(node.templateId ?? null)
   const template = $derived(templateId ? templates[templateId] ?? null : null)
   const templateIds = $derived(Object.keys(templates).sort())
-  const templateFieldEntries = $derived(template ? Object.entries(template.fields) : [])
+  const templateFieldEntries = $derived(Object.entries(templateFields(template)))
   const templateFieldKeys = $derived(new Set(templateFieldEntries.map(([k]) => k)))
   const adHocEntries = $derived(
     Object.entries(node.properties ?? {}).filter(([k]) => !templateFieldKeys.has(k))
@@ -74,7 +75,7 @@
 
   function commitField(key: string, raw: string | number | boolean) {
     if (readOnly) return
-    const field = template?.fields[key]
+    const field = templateFields(template)[key]
     if (!field) return
 
     // Empty text/select clears the field (unset) rather than failing validation.

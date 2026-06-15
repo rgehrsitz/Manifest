@@ -5,6 +5,7 @@ import {
   validateTemplateField,
   validateTypedPropertyValue,
   coercePropertyValue,
+  templateFields,
 } from '../../../src/shared/validation'
 import type { NodeTemplate, TemplateField } from '../../../src/shared/types'
 
@@ -106,6 +107,19 @@ describe('validateTypedPropertyValue — other types', () => {
     const e: TemplateField = { type: 'enum', options: ['approved', 'testing'] }
     expect(validateTypedPropertyValue('approved', e).valid).toBe(true)
     expect(validateTypedPropertyValue('nope', e).valid).toBe(false)
+  })
+})
+
+describe('templateFields (null-safe accessor)', () => {
+  it('returns the fields map for a valid template', () => {
+    const t: NodeTemplate = { label: 'X', fields: { a: { type: 'string' } } }
+    expect(templateFields(t)).toEqual({ a: { type: 'string' } })
+  })
+  it('returns {} for null/undefined or structurally-invalid templates', () => {
+    expect(templateFields(null)).toEqual({})
+    expect(templateFields(undefined)).toEqual({})
+    expect(templateFields({ label: 'Bad' } as any)).toEqual({})       // missing fields
+    expect(templateFields({ label: 'Bad', fields: [] } as any)).toEqual({})  // array fields
   })
 })
 

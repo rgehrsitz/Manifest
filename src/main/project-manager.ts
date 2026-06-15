@@ -59,6 +59,7 @@ import {
   validateTemplateId,
   validateTypedPropertyValue,
   coercePropertyValue,
+  templateFields,
 } from '../shared/validation'
 import { diffProjects } from '../shared/diff-engine'
 import { buildMergedTree } from '../shared/merged-tree'
@@ -363,7 +364,7 @@ export class ProjectManager {
         if (!keyValidation.valid) {
           return err(ErrorCode.VALIDATION_FAILED, keyValidation.message ?? 'Invalid property key')
         }
-        const field = template?.fields[key]
+        const field = templateFields(template)[key]
         if (field && value !== null) {
           const result = coercePropertyValue(value, field)
           if (!result.valid) {
@@ -1766,16 +1767,24 @@ export class ProjectManager {
       }
 
       // The referenced template may itself be structurally invalid (already
-      // warned above). Skip per-field validation rather than throwing on a
-      // missing/non-iterable `fields` — load must stay non-fatal.
-      if (!template.fields || typeof template.fields !== 'object' || Array.isArray(template.fields)) {
-        continue
-      }
-
+      // warned above). templateFields() is null-safe, so we never throw on a
+      // missing/non-iterable `fields` — load stays non-fatal.
       const props = node.properties ?? {}
-      for (const [key, field] of Object.entries(template.fields)) {
+      for (const [key, field] of Object.entries(templateFields(template))) {
         const value = props[key]
-        if (value === undefined || value === null) continue
+        if (value === undefined || value === null || value === '') {
+          // A required field that has no value is a (non-fatal) integrity
+          // warning — this gives the `required` flag a real, surfaced meaning
+          // without hard-blocking edits.
+          if (field.required) {
+            warnings.push({
+              path: `nodes[${i}].properties.${key}`,
+              code: 'MISSING_REQUIRED',
+              message: `Required field "${key}" is not set`,
+            })
+          }
+          continue
+        }
         const check = validateTypedPropertyValue(value, field)
         if (!check.valid) {
           warnings.push({
@@ -1855,7 +1864,8 @@ function statesEqual(a: NodeStateProjection, b: NodeStateProjection): boolean {
 // Build a node's initial property map from its template field defaults.
 function seedDefaults(template: NodeTemplate): Record<string, string | number | boolean | null> {
   const props: Record<string, string | number | boolean | null> = {}
-  for (const [key, field] of Object.entries(template.fields)) {
+  // templateFields() is null-safe against malformed templates.
+  for (const [key, field] of Object.entries(templateFields(template))) {
     if (field.default !== undefined && field.default !== null) {
       props[key] = field.default
     }

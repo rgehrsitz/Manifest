@@ -12,6 +12,7 @@
   // committed value changes (e.g. after the backend normalizes "05" → 5).
   // This avoids $effect-based prop→draft syncing and stale-draft pitfalls.
   import type { TemplateField } from '../../../shared/types'
+  import { coercePropertyValue } from '../../../shared/validation'
 
   interface Props {
     fieldKey: string
@@ -36,6 +37,16 @@
   let draft = $state(asString(value))
 
   function commitText() {
+    // Reflect the canonical stored form immediately. The parent re-coerces
+    // authoritatively, but doing it here too means a no-op normalization (e.g.
+    // typing "05" when the field already holds 5) still updates the visible
+    // draft — the value-in-key alone can't catch that because the stored
+    // primitive never changes. Empty/invalid drafts are left as typed so the
+    // parent can clear the field or surface an error.
+    const result = coercePropertyValue(draft, field)
+    if (result.valid && result.value !== null && result.value !== undefined) {
+      draft = String(result.value)
+    }
     onCommit(draft)
   }
 
@@ -115,5 +126,7 @@
 
   {#if error}
     <p class="text-xs text-red-600 ml-[8.5rem]" data-testid={`tpl-error-${fieldKey}`}>{error}</p>
+  {:else if field.required && !isSet}
+    <p class="text-[10px] text-amber-600 ml-[8.5rem]" data-testid={`tpl-required-${fieldKey}`}>Required — not set</p>
   {/if}
 </div>

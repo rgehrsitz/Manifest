@@ -99,6 +99,25 @@ export function validatePropertyValue(value: unknown): ValidationResult {
 
 // ─── Templates & typed property values ─────────────────────────────────────────
 
+// Null-safe accessor for a template's `fields` map. Returns {} when the
+// template or its fields are structurally invalid. Use this in every post-load
+// consumer (renderer + main) so a hand-edited manifest with a malformed
+// template — which loads non-fatally with a warning — can never throw
+// `Object.entries(undefined)` downstream.
+export function templateFields(
+  template: NodeTemplate | null | undefined,
+): Record<string, TemplateField> {
+  if (
+    !template ||
+    typeof template.fields !== 'object' ||
+    template.fields === null ||
+    Array.isArray(template.fields)
+  ) {
+    return {}
+  }
+  return template.fields
+}
+
 export function validateTemplateId(id: string): ValidationResult {
   if (!id || id.trim().length === 0) {
     return { valid: false, message: 'Template id cannot be empty' }

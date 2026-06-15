@@ -267,3 +267,119 @@ test('surfaces load-time warnings for a hand-edited invalid value', async ({
   await appPage.getByTestId('dismiss-load-warnings').click()
   await expect(banner).toHaveCount(0)
 })
+
+test('preserves a field default through a template-manager save (no data loss)', async ({
+  appPage,
+  electronApp,
+  workspaceDir,
+}) => {
+  const projectDir = join(workspaceDir, 'defaults')
+  mkdirSync(projectDir, { recursive: true })
+  const manifest = {
+    version: 3,
+    id: 'def-id',
+    name: 'Defaults Lab',
+    created: '2026-01-01T00:00:00.000Z',
+    modified: '2026-01-01T00:00:00.000Z',
+    templates: {
+      asset: { label: 'Asset', fields: { serial: { type: 'string', default: 'SN-DEFAULT' } } },
+    },
+    nodes: [
+      {
+        id: 'root', parentId: null, name: 'Defaults Lab', order: 0, properties: {},
+        created: '2026-01-01T00:00:00.000Z', modified: '2026-01-01T00:00:00.000Z',
+      },
+    ],
+  }
+  writeFileSync(join(projectDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf8')
+
+  await setDialogPath(electronApp, projectDir)
+  await appPage.getByTestId('open-project-btn').click()
+  await expect(appPage.getByTestId('project-view')).toBeVisible()
+
+  // Save the template through the manager (round-trips through buildTemplate).
+  await appPage.getByTestId('open-templates-btn').click()
+  await appPage.getByTestId('template-list-item').filter({ hasText: 'Asset' }).click()
+  await appPage.getByTestId('template-save').click()
+  await expect(appPage.getByTestId('template-form-error')).toHaveCount(0)
+  await appPage.getByTestId('template-manager-close').click()
+
+  // A new node bound to the template must still be seeded with the default —
+  // proving the save did not drop the field's `default`.
+  await openContextMenuAction(appPage, 'Defaults Lab', 'Add Child')
+  await appPage.getByTestId('add-child-template').selectOption('asset')
+  await appPage.getByTestId('add-child-input').fill('Pump')
+  await appPage.getByTestId('add-child-commit').click()
+  await treeRow(appPage, 'Pump').click()
+  await expect(appPage.getByTestId('tpl-input-serial')).toHaveValue('SN-DEFAULT')
+})
+
+test('selecting a node bound to a structurally-invalid template does not crash the renderer', async ({
+  appPage,
+  electronApp,
+  workspaceDir,
+}) => {
+  const projectDir = join(workspaceDir, 'invalid-tpl')
+  mkdirSync(projectDir, { recursive: true })
+  const manifest = {
+    version: 3,
+    id: 'inv-id',
+    name: 'Invalid Tpl Lab',
+    created: '2026-01-01T00:00:00.000Z',
+    modified: '2026-01-01T00:00:00.000Z',
+    templates: { bad: { label: 'Bad' } },   // no `fields` — structurally invalid
+    nodes: [
+      {
+        id: 'root', parentId: null, name: 'Invalid Tpl Lab', order: 0, properties: {},
+        created: '2026-01-01T00:00:00.000Z', modified: '2026-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'n1', parentId: 'root', name: 'Widget', order: 0,
+        templateId: 'bad', properties: { note: 'hi' },
+        created: '2026-01-01T00:00:00.000Z', modified: '2026-01-01T00:00:00.000Z',
+      },
+    ],
+  }
+  writeFileSync(join(projectDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf8')
+
+  await setDialogPath(electronApp, projectDir)
+  await appPage.getByTestId('open-project-btn').click()
+  await expect(appPage.getByTestId('project-view')).toBeVisible()
+  await expect(appPage.getByTestId('load-warnings-banner')).toBeVisible()
+
+  // Selecting the bound node must render the detail pane (previously this threw
+  // Object.entries(undefined) on the invalid template's fields).
+  await treeRow(appPage, 'Widget').click()
+  await expect(appPage.getByTestId('node-name')).toContainText('Widget')
+  await expect(appPage.getByTestId('template-selector')).toBeVisible()
+  await expect(appPage.getByTestId('prop-value').filter({ hasText: 'hi' })).toBeVisible()
+})
+
+test('a typed number field normalizes its visible draft after a no-op commit', async ({
+  appPage,
+  electronApp,
+  workspaceDir,
+}) => {
+  await createProjectThroughUi(appPage, electronApp, workspaceDir, 'Normalize Lab')
+
+  await appPage.getByTestId('open-templates-btn').click()
+  await appPage.getByTestId('template-label').fill('Counter')
+  await appPage.getByTestId('template-add-field').click()
+  await appPage.getByTestId('field-key').nth(0).fill('units')
+  await appPage.getByTestId('field-type').nth(0).selectOption('number')
+  await appPage.getByTestId('template-save').click()
+  await appPage.getByTestId('template-manager-close').click()
+
+  await openContextMenuAction(appPage, 'Normalize Lab', 'Add Child')
+  await appPage.getByTestId('add-child-template').selectOption('counter')
+  await appPage.getByTestId('add-child-input').fill('Item')
+  await appPage.getByTestId('add-child-commit').click()
+  await treeRow(appPage, 'Item').click()
+
+  const units = appPage.getByTestId('tpl-input-units')
+  await units.fill('5')
+  await units.press('Enter')           // stored as 5
+  await units.fill('05')
+  await units.press('Enter')           // normalizes back to 5 (stored value unchanged)
+  await expect(units).toHaveValue('5') // draft must reflect the canonical form
+})

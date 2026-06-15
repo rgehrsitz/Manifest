@@ -87,6 +87,7 @@ export function describeTemplateChange(e: TemplateDiffEntry): string {
     case 'template-added':     return `Added template "${label}"`
     case 'template-removed':   return `Removed template "${label}"`
     case 'template-relabeled': return `Renamed template ${e.templateId}: "${String(e.oldValue)}" → "${String(e.newValue)}"`
+    case 'template-redescribed': return `${label}: description changed`
     case 'field-added':        return `${label}: added field "${e.fieldKey}" (${fieldType(e.newValue)})`
     case 'field-removed':      return `${label}: removed field "${e.fieldKey}"`
     case 'field-changed':      return `${label}: field "${e.fieldKey}" changed (${describeFieldChange(e.oldValue, e.newValue)})`

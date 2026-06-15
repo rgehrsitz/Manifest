@@ -262,6 +262,32 @@ describe('load warnings — no silent coercion or downgrade', () => {
     expect(project.loadWarnings).toBeUndefined()
   })
 
+  it('warns when a bound node is missing a required field', async () => {
+    const requiredTpl: NodeTemplate = {
+      label: 'Asset',
+      fields: { serial: { type: 'string', required: true } },
+    }
+    const manifest = makeManifest({
+      version: 3,
+      templates: { asset: requiredTpl },
+      nodes: [
+        {
+          id: 'root-id', parentId: null, name: 'Test Project', order: 0, properties: {},
+          created: '2026-01-01T00:00:00.000Z', modified: '2026-01-01T00:00:00.000Z',
+        },
+        {
+          id: 'n1', parentId: 'root-id', name: 'Pump', order: 0,
+          templateId: 'asset', properties: {},   // missing required 'serial'
+          created: '2026-01-01T00:00:00.000Z', modified: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    })
+    const project = await openWith(manifest)
+    const w = project.loadWarnings?.find(x => x.path === 'nodes[1].properties.serial')
+    expect(w).toBeDefined()
+    expect(w!.code).toBe('MISSING_REQUIRED')
+  })
+
   it('opens (non-fatally, with a warning) when a node references a structurally-invalid template', async () => {
     const manifest = makeManifest({
       version: 3,
