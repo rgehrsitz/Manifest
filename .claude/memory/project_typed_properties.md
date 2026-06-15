@@ -54,6 +54,18 @@ updates are safe because property VALUES are primitives, but template field
 maps are nested — `handlePromoteField` must `$state.snapshot(template.fields)`
 before sending. Rule: snapshot any proxied non-primitive before IPC.
 
-Phase 3 = diff/tree rendering polish (render `MergedTree.templateChanges` as a
-"Schema changes" section, type-aware value formatting, optional tree badge).
+Phase 3 (diff/tree rendering polish) DONE: SnapshotsPanel renders
+`MergedTree.templateChanges` as a "Schema changes" section and `template-changed`
+node diffs (Before/After with null→"(none)"); empty-state now keys off
+`allDiffs + templateChanges` so a schema-only change is never reported as
+"No changes". Helpers `describeTemplateChange` / `formatTemplateRef` /
+`formatChangeType('template-changed')` in lib/diff-format.ts (unit-tested).
+E2E proves a schema-only snapshot delta is surfaced. 316 unit + 25 E2E green.
+Deferred (optional): per-row template badge in TreeRow (needs template labels
+threaded through the virtualized tree — node only carries templateId) and
+type-aware value formatting (date humanized / boolean Yes-No) — values are
+already readable, low payoff vs. threading template types into the flat diff.
+
+Typed-properties feature (Phases 1–3) complete. Next per roadmap: `reference`
+property type → CSV import → diff report export → Tauri.
 Full plan: `~/.claude/plans/fluffy-swimming-wozniak.md`.

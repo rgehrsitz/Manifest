@@ -33,6 +33,24 @@ async function openContextMenuAction(page: Page, nodeName: string, actionLabel: 
   await page.getByRole('menuitem', { name: actionLabel }).click()
 }
 
+async function openSnapshotsPanel(page: Page): Promise<void> {
+  await page.getByTestId('open-snapshots-btn').click()
+  await expect(page.getByTestId('snapshots-panel')).toBeVisible()
+}
+
+async function createSnapshot(page: Page, name: string): Promise<void> {
+  await page.getByTestId('snapshot-name-input').fill(name)
+  await page.getByTestId('create-snapshot-btn').click()
+  await expect(page.getByTestId('snapshot-row').filter({ hasText: name })).toBeVisible()
+}
+
+async function compareSnapshots(page: Page, from: string, to: string): Promise<void> {
+  await page.getByTestId('compare-from-select').selectOption(from)
+  await page.getByTestId('compare-to-select').selectOption(to)
+  await page.getByTestId('compare-snapshots-btn').click()
+  await expect(page.getByTestId('snapshot-diff-list')).toBeVisible()
+}
+
 test('create template, type a node, promote, reject invalidating edit, delete unbinds', async ({
   appPage,
   electronApp,
@@ -156,6 +174,52 @@ test('auto-derives the template id from the label and validates field keys inlin
 
   await appPage.getByTestId('template-save').click()
   await expect(appPage.getByTestId('template-list-item').filter({ hasText: 'Test Label' })).toBeVisible()
+})
+
+test('a schema-only change between snapshots is surfaced, not hidden as "No changes"', async ({
+  appPage,
+  electronApp,
+  workspaceDir,
+}) => {
+  await createProjectThroughUi(appPage, electronApp, workspaceDir, 'Schema Diff Lab')
+
+  // Template with one field, and a node bound to it.
+  await appPage.getByTestId('open-templates-btn').click()
+  await appPage.getByTestId('template-label').fill('Software Item')
+  await appPage.getByTestId('template-add-field').click()
+  await appPage.getByTestId('field-key').nth(0).fill('version')
+  await appPage.getByTestId('field-type').nth(0).selectOption('version')
+  await appPage.getByTestId('template-save').click()
+  await expect(appPage.getByTestId('template-list-item').filter({ hasText: 'Software Item' })).toBeVisible()
+  await appPage.getByTestId('template-manager-close').click()
+
+  await openContextMenuAction(appPage, 'Schema Diff Lab', 'Add Child')
+  await appPage.getByTestId('add-child-template').selectOption('software-item')
+  await appPage.getByTestId('add-child-input').fill('App')
+  await appPage.getByTestId('add-child-commit').click()
+  await expect(treeRow(appPage, 'App')).toBeVisible()
+
+  // Snapshot, then make a SCHEMA-ONLY change (add a field to the template).
+  await openSnapshotsPanel(appPage)
+  await createSnapshot(appPage, 'before')
+
+  await appPage.getByTestId('open-templates-btn').click()
+  await appPage.getByTestId('template-list-item').filter({ hasText: 'Software Item' }).click()
+  await appPage.getByTestId('template-add-field').click()
+  // The new (empty) field row is appended last.
+  const keyInputs = appPage.getByTestId('field-key')
+  await keyInputs.nth((await keyInputs.count()) - 1).fill('vendor')
+  await appPage.getByTestId('template-save').click()
+  await expect(appPage.getByTestId('template-form-error')).toHaveCount(0)
+  await appPage.getByTestId('template-manager-close').click()
+
+  await createSnapshot(appPage, 'after')
+  await compareSnapshots(appPage, 'before', 'after')
+
+  // The schema change must be visible — and the panel must NOT claim "No changes".
+  await expect(appPage.getByTestId('schema-changes')).toBeVisible()
+  await expect(appPage.getByTestId('schema-change-row').filter({ hasText: 'vendor' })).toBeVisible()
+  await expect(appPage.getByTestId('snapshot-diff-list')).not.toContainText('No changes')
 })
 
 test('surfaces load-time warnings for a hand-edited invalid value', async ({
