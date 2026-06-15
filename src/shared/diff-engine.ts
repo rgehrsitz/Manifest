@@ -6,6 +6,7 @@ import type {
   TemplateField,
   TemplateDiffEntry,
 } from './types'
+import { templateFields, templateLabel } from './validation'
 
 const SEVERITY_WEIGHT = {
   High: 0,
@@ -196,23 +197,28 @@ function fieldsEqual(a: TemplateField, b: TemplateField): boolean {
 
 function diffTemplateFields(
   templateId: string,
-  templateLabel: string,
+  label: string,
   a: NodeTemplate,
   b: NodeTemplate,
   out: TemplateDiffEntry[]
 ): void {
-  const keys = new Set([...Object.keys(a.fields), ...Object.keys(b.fields)])
+  // templateFields() is null-safe — snapshot manifests are parsed without
+  // rejecting malformed templates, so a side with no/invalid `fields` (e.g.
+  // a hand-edited `{ label: 'Bad' }`) must not throw here.
+  const fieldsA = templateFields(a)
+  const fieldsB = templateFields(b)
+  const keys = new Set([...Object.keys(fieldsA), ...Object.keys(fieldsB)])
   for (const key of [...keys].sort()) {
-    const fieldA = a.fields[key]
-    const fieldB = b.fields[key]
+    const fieldA = fieldsA[key]
+    const fieldB = fieldsB[key]
     if (!fieldA && fieldB) {
-      out.push({ templateId, templateLabel, changeType: 'field-added', fieldKey: key, newValue: fieldB })
+      out.push({ templateId, templateLabel: label, changeType: 'field-added', fieldKey: key, newValue: fieldB })
     } else if (fieldA && !fieldB) {
-      out.push({ templateId, templateLabel, changeType: 'field-removed', fieldKey: key, oldValue: fieldA })
+      out.push({ templateId, templateLabel: label, changeType: 'field-removed', fieldKey: key, oldValue: fieldA })
     } else if (fieldA && fieldB && !fieldsEqual(fieldA, fieldB)) {
       out.push({
         templateId,
-        templateLabel,
+        templateLabel: label,
         changeType: 'field-changed',
         fieldKey: key,
         oldValue: fieldA,
@@ -233,34 +239,38 @@ export function diffTemplates(projectA: Project, projectB: Project): TemplateDif
     const tplB = templatesB[id]
 
     if (!tplA && tplB) {
-      out.push({ templateId: id, templateLabel: tplB.label, changeType: 'template-added', newValue: tplB })
+      out.push({ templateId: id, templateLabel: templateLabel(tplB, id), changeType: 'template-added', newValue: tplB })
       continue
     }
     if (tplA && !tplB) {
-      out.push({ templateId: id, templateLabel: tplA.label, changeType: 'template-removed', oldValue: tplA })
+      out.push({ templateId: id, templateLabel: templateLabel(tplA, id), changeType: 'template-removed', oldValue: tplA })
       continue
     }
     if (!tplA || !tplB) continue
 
-    if (tplA.label !== tplB.label) {
+    // Compare on safe label strings — a hand-edited non-string label must not
+    // leak into the entry or crash a downstream `.trim()`.
+    const labelA = templateLabel(tplA, id)
+    const labelB = templateLabel(tplB, id)
+    if (labelA !== labelB) {
       out.push({
         templateId: id,
-        templateLabel: tplB.label,
+        templateLabel: labelB,
         changeType: 'template-relabeled',
-        oldValue: tplA.label,
-        newValue: tplB.label,
+        oldValue: labelA,
+        newValue: labelB,
       })
     }
     if ((tplA.description ?? '') !== (tplB.description ?? '')) {
       out.push({
         templateId: id,
-        templateLabel: tplB.label,
+        templateLabel: labelB,
         changeType: 'template-redescribed',
         oldValue: tplA.description ?? null,
         newValue: tplB.description ?? null,
       })
     }
-    diffTemplateFields(id, tplB.label, tplA, tplB, out)
+    diffTemplateFields(id, labelB, tplA, tplB, out)
   }
 
   return out

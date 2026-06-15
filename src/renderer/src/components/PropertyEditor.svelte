@@ -16,6 +16,8 @@
     validatePropertyValue,
     coercePropertyValue,
     templateFields,
+    isUsableTemplate,
+    templateLabel,
   } from '../../../shared/validation'
   import TemplateFieldControl from './TemplateFieldControl.svelte'
 
@@ -40,7 +42,11 @@
 
   const templateId = $derived(node.templateId ?? null)
   const template = $derived(templateId ? templates[templateId] ?? null : null)
-  const templateIds = $derived(Object.keys(templates).sort())
+  // Only offer structurally-usable templates for binding; malformed (warned)
+  // templates are filtered out so the picker never dereferences a bad `.label`.
+  const templateIds = $derived(
+    Object.keys(templates).filter(id => isUsableTemplate(templates[id])).sort()
+  )
   const templateFieldEntries = $derived(Object.entries(templateFields(template)))
   const templateFieldKeys = $derived(new Set(templateFieldEntries.map(([k]) => k)))
   const adHocEntries = $derived(
@@ -194,7 +200,7 @@
   >
     <option value="">Freeform (no template)</option>
     {#each templateIds as id (id)}
-      <option value={id}>{templates[id].label}</option>
+      <option value={id}>{templateLabel(templates[id], id)}</option>
     {/each}
   </select>
 </div>

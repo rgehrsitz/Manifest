@@ -112,6 +112,22 @@ describe('diffTemplates', () => {
     expect(diffTemplates(a, b)).toEqual([])
   })
 
+  it('does not throw when a side has a structurally-invalid template (snapshots are not quarantined)', () => {
+    // tplA is missing `fields` (hand-edited); tplB is valid. Must not throw at
+    // Object.keys(a.fields) and should report B's fields as added.
+    const a = project([node('root')], { rack: { label: 'Bad' } as any })
+    const b = project([node('root')], { rack: rackV1 })
+    expect(() => diffTemplates(a, b)).not.toThrow()
+    const out = diffTemplates(a, b)
+    expect(out.some(e => e.changeType === 'field-added' && e.fieldKey === 'location')).toBe(true)
+  })
+
+  it('does not throw when a template entry is null', () => {
+    const a = project([node('root')], { rack: null } as any)
+    const b = project([node('root')], { rack: rackV1 })
+    expect(() => diffTemplates(a, b)).not.toThrow()
+  })
+
   it('a schema-only change is never silently hidden', () => {
     // Same nodes; only the template's enum options changed. Node diffs are
     // empty, but diffTemplates must surface the schema change.

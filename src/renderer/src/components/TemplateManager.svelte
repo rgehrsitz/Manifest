@@ -13,6 +13,7 @@
     validatePropertyKey,
     validateTypedPropertyValue,
     templateFields,
+    templateLabel,
   } from '../../../shared/validation'
 
   interface Props {
@@ -117,8 +118,10 @@
     editingId = id
     draftId = id
     idEdited = true
-    draftLabel = tpl.label
-    draftDescription = tpl.description ?? ''
+    // Coerce to strings — a hand-edited template may have a non-string label or
+    // description, which would otherwise break the form (e.g. later .trim()).
+    draftLabel = typeof tpl.label === 'string' ? tpl.label : ''
+    draftDescription = typeof tpl.description === 'string' ? tpl.description : ''
     // templateFields() is null-safe — a structurally-invalid template (loaded
     // non-fatally with a warning) yields {} rather than throwing here.
     draftFields = Object.entries(templateFields(tpl)).map(([k, f]) => fieldToDraft(k, f))
@@ -256,7 +259,7 @@
               onclick={() => loadTemplate(id)}
               data-testid="template-list-item"
             >
-              <span class="block truncate">{templates[id].label}</span>
+              <span class="block truncate">{templateLabel(templates[id], id)}</span>
               <span class="block truncate text-xs font-mono text-stone-400">{id}</span>
             </button>
           {/each}

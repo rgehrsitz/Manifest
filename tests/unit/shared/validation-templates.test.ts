@@ -6,6 +6,8 @@ import {
   validateTypedPropertyValue,
   coercePropertyValue,
   templateFields,
+  isUsableTemplate,
+  templateLabel,
 } from '../../../src/shared/validation'
 import type { NodeTemplate, TemplateField } from '../../../src/shared/types'
 
@@ -120,6 +122,21 @@ describe('templateFields (null-safe accessor)', () => {
     expect(templateFields(undefined)).toEqual({})
     expect(templateFields({ label: 'Bad' } as any)).toEqual({})       // missing fields
     expect(templateFields({ label: 'Bad', fields: [] } as any)).toEqual({})  // array fields
+  })
+})
+
+describe('isUsableTemplate / templateLabel (safe renderer accessors)', () => {
+  it('isUsableTemplate accepts valid and rejects malformed templates', () => {
+    expect(isUsableTemplate({ label: 'Rack', fields: { a: { type: 'string' } } })).toBe(true)
+    expect(isUsableTemplate(null)).toBe(false)
+    expect(isUsableTemplate({ label: 'Bad' } as any)).toBe(false)         // no fields
+    expect(isUsableTemplate({ label: 123, fields: {} } as any)).toBe(false) // non-string label
+  })
+  it('templateLabel returns the label or falls back to the id', () => {
+    expect(templateLabel({ label: 'Rack', fields: {} }, 'rack')).toBe('Rack')
+    expect(templateLabel(null, 'rack')).toBe('rack')
+    expect(templateLabel({ label: 123 } as any, 'rack')).toBe('rack')
+    expect(templateLabel({ label: '   ' } as any, 'rack')).toBe('rack')
   })
 })
 

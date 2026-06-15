@@ -3,6 +3,7 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte'
   import type { Project, ManifestNode, ManifestWarning, NodeTemplate, PropertyType, RecoveryPoint, SearchResult, Snapshot, SnapshotTimelineEvent } from '../../shared/types'
+  import { isUsableTemplate, templateLabel } from '../../shared/validation'
   import type { MergedTree } from '../../shared/merged-tree'
   import { computeSubtreeSummaries } from '../../shared/merged-tree'
   import { buildTree, getSiblingIndex, getAncestorIds } from './lib/tree'
@@ -47,6 +48,12 @@
   let addingChildError: string | null = $state(null)
   let addingChildTemplateId: string | null = $state(null)
   let addChildInput: HTMLInputElement | null = $state(null)
+  // Only structurally-usable templates are offered in the node-create picker.
+  const addChildTemplateIds = $derived.by<string[]>(() => {
+    const p: Project | null = project
+    const map = p?.templates ?? {}
+    return Object.keys(map).filter(id => isUsableTemplate(map[id])).sort()
+  })
 
   // Rename request signal — bumping this counter triggers DetailPane.startEditName().
   // Tree raises onRenameRequest → App increments → DetailPane $effect picks it up.
@@ -1256,7 +1263,7 @@
                 {#if addingChildError}
                   <p class="text-xs text-red-600">{addingChildError}</p>
                 {/if}
-                {#if project && Object.keys(project.templates ?? {}).length > 0}
+                {#if addChildTemplateIds.length > 0}
                   <select
                     bind:value={addingChildTemplateId}
                     class="w-full text-sm border border-stone-300 rounded px-2 py-1 bg-white
@@ -1264,8 +1271,8 @@
                     data-testid="add-child-template"
                   >
                     <option value={null}>Freeform (no template)</option>
-                    {#each Object.keys(project.templates ?? {}).sort() as id (id)}
-                      <option value={id}>{project.templates![id].label}</option>
+                    {#each addChildTemplateIds as id (id)}
+                      <option value={id}>{templateLabel(project?.templates?.[id], id)}</option>
                     {/each}
                   </select>
                 {/if}

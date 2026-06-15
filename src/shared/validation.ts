@@ -118,6 +118,25 @@ export function templateFields(
   return template.fields
 }
 
+// Structurally usable for binding/listing in pickers (valid label + fields +
+// field defs). Built on validateTemplate so the definition of "usable" stays
+// in one place. null/undefined → false.
+export function isUsableTemplate(template: NodeTemplate | null | undefined): boolean {
+  return validateTemplate(template as NodeTemplate).valid
+}
+
+// Safe display label for a (possibly malformed, hand-edited) template. Falls
+// back to the id when the label is missing or not a non-empty string, so
+// renderer code never dereferences `.label` on a null/garbage template.
+export function templateLabel(
+  template: NodeTemplate | null | undefined,
+  fallbackId: string,
+): string {
+  return template && typeof template.label === 'string' && template.label.trim().length > 0
+    ? template.label
+    : fallbackId
+}
+
 export function validateTemplateId(id: string): ValidationResult {
   if (!id || id.trim().length === 0) {
     return { valid: false, message: 'Template id cannot be empty' }
