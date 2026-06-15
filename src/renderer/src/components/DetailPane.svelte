@@ -2,10 +2,11 @@
 
 <script lang="ts">
   import { tick } from 'svelte'
-  import type { ManifestNode, Project } from '../../../shared/types'
+  import type { ManifestNode, Project, PropertyType } from '../../../shared/types'
   import type { MergedTreeNode } from '../../../shared/merged-tree'
-  import { validateNodeName, validatePropertyKey, validatePropertyValue } from '../../../shared/validation'
+  import { validateNodeName } from '../../../shared/validation'
   import NodeHistoryView from './NodeHistoryView.svelte'
+  import PropertyEditor from './PropertyEditor.svelte'
 
   interface Props {
     // Accepts a plain ManifestNode (browse mode) or a MergedTreeNode (compare
@@ -20,7 +21,10 @@
     onUpdate: (id: string, changes: {
       name?: string
       properties?: Record<string, string | number | boolean | null>
+      templateId?: string | null
     }) => Promise<void>
+    /** Promote an ad-hoc property to a typed field on the node's template. */
+    onPromoteField: (nodeId: string, key: string, type: PropertyType) => Promise<void>
     onError: (msg: string) => void
   }
 
@@ -31,6 +35,7 @@
     readOnly = false,
     readOnlyReason = 'Exit read-only mode to edit the current project.',
     onUpdate,
+    onPromoteField,
     onError,
   }: Props = $props()
 
@@ -110,83 +115,13 @@
     if (e.key === 'Escape') cancelEditName()
   }
 
-  // ─── Properties ───────────────────────────────────────────────────────────
-
-  let newKey = $state('')
-  let newValue = $state('')
-  let newKeyError = $state<string | null>(null)
-  let newValueError = $state<string | null>(null)
-
-  async function addProperty() {
-    if (!node || effectiveReadOnly) {
-      onError(effectiveReadOnlyReason)
-      return
-    }
-    const k = newKey.trim()
-    const v = newValue.trim()
-    if (!k) { newKeyError = 'Key is required'; return }
-
-    const keyVal = validatePropertyKey(k)
-    if (!keyVal.valid) { newKeyError = keyVal.message ?? 'Invalid key'; return }
-
-    if (k in (node.properties ?? {})) { newKeyError = 'Key already exists'; return }
-
-    const valVal = validatePropertyValue(v)
-    if (!valVal.valid) { newValueError = valVal.message ?? 'Invalid value'; return }
-
-    newKeyError = null
-    newValueError = null
-    newKey = ''
-    newValue = ''
-    await onUpdate(node.id, {
-      properties: { ...(node.properties ?? {}), [k]: v },
-    })
-  }
-
-  async function deleteProperty(key: string) {
-    if (!node || effectiveReadOnly) return
-    const props = { ...(node.properties ?? {}) }
-    delete props[key]
-    await onUpdate(node.id, { properties: props })
-  }
-
-  let editingPropKey = $state<string | null>(null)
-  let editingPropValue = $state('')
-  let editingPropError = $state<string | null>(null)
-  let propValueInputEl = $state<HTMLInputElement | null>(null)
-
-  function startEditProp(key: string) {
-    if (effectiveReadOnly) return
-    editingPropKey = key
-    editingPropValue = String(node?.properties?.[key] ?? '')
-    editingPropError = null
-  }
-
-  async function commitProp(key: string) {
-    if (!node || effectiveReadOnly) return
-    const v = editingPropValue.trim()
-    const valVal = validatePropertyValue(v)
-    if (!valVal.valid) { editingPropError = valVal.message ?? 'Invalid value'; return }
-
-    editingPropKey = null
-    editingPropError = null
-    await onUpdate(node.id, {
-      properties: { ...(node.properties ?? {}), [key]: v },
-    })
-  }
-
-  function handlePropKeyDown(e: KeyboardEvent, key: string) {
-    if (e.key === 'Enter') commitProp(key)
-    if (e.key === 'Escape') { editingPropKey = null; editingPropError = null }
-  }
-
   // ─── Derived ──────────────────────────────────────────────────────────────
 
   const isRoot = $derived(node?.parentId === null)
   const parentNode = $derived(
     node?.parentId ? project.nodes.find(n => n.id === node!.parentId) : null
   )
-  const propEntries = $derived(Object.entries(node?.properties ?? {}))
+  const projectTemplates = $derived(project.templates ?? {})
 
   // ─── Ghost (tombstone) mode (issue #3) ────────────────────────────────────
   // A ghost selection is a row in compare mode whose underlying node was
@@ -235,12 +170,6 @@
   $effect(() => {
     if (editingName) {
       void focusInput(nameInputEl)
-    }
-  })
-
-  $effect(() => {
-    if (editingPropKey !== null) {
-      void focusInput(propValueInputEl)
     }
   })
 </script>
@@ -382,102 +311,14 @@
         <h3 class="text-xs font-semibold text-stone-500 uppercase tracking-wide">Properties</h3>
       </div>
 
-      <!-- Existing properties -->
-      {#if propEntries.length > 0}
-        <div class="space-y-1 mb-4">
-          {#each propEntries as [key, value] (key)}
-            <div class="flex items-center gap-2 group">
-              <span class="text-xs font-mono text-stone-500 w-32 shrink-0 truncate">{key}</span>
-
-              {#if editingPropKey === key}
-                <input
-                  type="text"
-                  bind:this={propValueInputEl}
-                  bind:value={editingPropValue}
-                  onkeydown={(e) => handlePropKeyDown(e, key)}
-                  onblur={() => commitProp(key)}
-                  class="flex-1 text-sm text-stone-700 border border-stone-300 rounded
-                         px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-stone-400
-                         selectable"
-                  data-testid="prop-value-input"
-                />
-              {:else}
-                <!-- svelte-ignore a11y_click_events_have_key_events -->
-                <!-- svelte-ignore a11y_no_static_element_interactions -->
-                <span
-                  class="flex-1 text-sm text-stone-700 truncate cursor-text
-                         hover:text-stone-900"
-                  onclick={() => startEditProp(key)}
-                  data-testid="prop-value"
-                >
-                  {String(value)}
-                </span>
-              {/if}
-
-              <button
-                class="text-stone-300 hover:text-red-400 opacity-0 group-hover:opacity-100
-                       transition-opacity text-xs shrink-0 disabled:opacity-0"
-                onclick={() => deleteProperty(key)}
-                disabled={effectiveReadOnly}
-                aria-label="Delete property {key}"
-                data-testid="delete-prop"
-              >✕</button>
-            </div>
-            {#if editingPropKey === key && editingPropError}
-              <p class="text-xs text-red-600 ml-34">{editingPropError}</p>
-            {/if}
-          {/each}
-        </div>
-      {:else}
-        <p class="text-xs text-stone-400 mb-4">No properties yet</p>
-      {/if}
-
-      <!-- Add property form -->
-      {#if !effectiveReadOnly}
-      <div class="border-t border-stone-100 pt-3">
-        <p class="text-xs font-semibold text-stone-400 uppercase tracking-wide mb-2">
-          Add Property
-        </p>
-        <div class="flex gap-2">
-          <div class="flex flex-col gap-1 flex-1">
-            <input
-              type="text"
-              bind:value={newKey}
-              placeholder="key"
-              class="text-sm border border-stone-200 rounded px-2 py-1.5 focus:outline-none
-                     focus:ring-1 focus:ring-stone-400 selectable"
-              data-testid="new-prop-key"
-              onkeydown={(e) => { if (e.key === 'Enter') addProperty() }}
-            />
-            {#if newKeyError}
-              <p class="text-xs text-red-600">{newKeyError}</p>
-            {/if}
-          </div>
-          <div class="flex flex-col gap-1 flex-1">
-            <input
-              type="text"
-              bind:value={newValue}
-              placeholder="value"
-              class="text-sm border border-stone-200 rounded px-2 py-1.5 focus:outline-none
-                     focus:ring-1 focus:ring-stone-400 selectable"
-              data-testid="new-prop-value"
-              onkeydown={(e) => { if (e.key === 'Enter') addProperty() }}
-            />
-            {#if newValueError}
-              <p class="text-xs text-red-600">{newValueError}</p>
-            {/if}
-          </div>
-          <button
-            onclick={addProperty}
-            disabled={!newKey.trim()}
-            class="shrink-0 bg-stone-800 hover:bg-stone-700 disabled:bg-stone-300
-                   text-white text-sm px-3 py-1.5 rounded transition-colors
-                   cursor-default disabled:cursor-not-allowed self-start"
-            data-testid="add-prop-btn"
-          >Add</button>
-        </div>
-      </div>
-      {/if}
+      <PropertyEditor
+        {node}
+        templates={projectTemplates}
+        readOnly={effectiveReadOnly}
+        {onUpdate}
+        onPromoteField={(key, type) => onPromoteField(node!.id, key, type)}
+        {onError}
+      />
     </div>
     {/if}
 

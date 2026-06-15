@@ -2,14 +2,21 @@
 // Extracted from SnapshotDialog.svelte so SnapshotsPanel.svelte and any future
 // diff-related components share one implementation.
 
-import type { DiffEntry } from '../../../shared/types'
+import type { DiffEntry, TemplateField, TemplateDiffEntry } from '../../../shared/types'
 
 export function formatChangeType(changeType: DiffEntry['changeType']): string {
   switch (changeType) {
     case 'property-changed': return 'Property Changed'
+    case 'template-changed': return 'Template Changed'
     case 'order-changed':    return 'Order Changed'
     default: return changeType.charAt(0).toUpperCase() + changeType.slice(1)
   }
+}
+
+// A node's template binding shown in a diff. null / empty → "(none)".
+export function formatTemplateRef(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '(none)'
+  return String(value)
 }
 
 export function formatPath(path: string[], nodeName: string): string {
@@ -50,4 +57,39 @@ export function describePropertyChange(diff: DiffEntry): string[] {
     if (before[key] !== after[key]) return [`${key}: ${formatValue(before[key])} → ${formatValue(after[key])}`]
     return []
   })
+}
+
+// ─── Template / schema diffs ────────────────────────────────────────────────────
+
+function fieldType(value: unknown): string {
+  const f = value as TemplateField | undefined
+  return f?.type ?? 'field'
+}
+
+// Concise summary of how a single field definition changed (type/options/required).
+function describeFieldChange(oldValue: unknown, newValue: unknown): string {
+  const a = oldValue as TemplateField | undefined
+  const b = newValue as TemplateField | undefined
+  const parts: string[] = []
+  if (a?.type !== b?.type) parts.push(`${a?.type ?? '?'} → ${b?.type ?? '?'}`)
+  const aOpts = (a?.options ?? []).join(', ')
+  const bOpts = (b?.options ?? []).join(', ')
+  if (aOpts !== bOpts) parts.push('options changed')
+  if ((a?.required ?? false) !== (b?.required ?? false)) {
+    parts.push(b?.required ? 'now required' : 'no longer required')
+  }
+  return parts.length > 0 ? parts.join('; ') : 'updated'
+}
+
+export function describeTemplateChange(e: TemplateDiffEntry): string {
+  const label = e.templateLabel || e.templateId
+  switch (e.changeType) {
+    case 'template-added':     return `Added template "${label}"`
+    case 'template-removed':   return `Removed template "${label}"`
+    case 'template-relabeled': return `Renamed template ${e.templateId}: "${String(e.oldValue)}" → "${String(e.newValue)}"`
+    case 'template-redescribed': return `${label}: description changed`
+    case 'field-added':        return `${label}: added field "${e.fieldKey}" (${fieldType(e.newValue)})`
+    case 'field-removed':      return `${label}: removed field "${e.fieldKey}"`
+    case 'field-changed':      return `${label}: field "${e.fieldKey}" changed (${describeFieldChange(e.oldValue, e.newValue)})`
+  }
 }

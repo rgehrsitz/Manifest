@@ -24,7 +24,7 @@ import { mkdirSync } from 'fs'
 import { join } from 'path'
 import type { ManifestNode, Project } from '../shared/types'
 
-const SCHEMA_VERSION = 1
+const SCHEMA_VERSION = 2
 
 export interface NodeHistoryRow {
   snapshotId: string
@@ -35,6 +35,7 @@ export interface NodeHistoryRow {
   parentId: string | null
   nodeOrder: number | null
   properties: Record<string, string | number | boolean | null> | null
+  templateId: string | null
 }
 
 export interface RecordSnapshotOptions {
@@ -55,6 +56,7 @@ interface RawHistoryRow {
   parent_id: string | null
   node_order: number | null
   properties_json: string | null
+  template_id: string | null
 }
 
 export class HistoryIndexService {
@@ -112,6 +114,7 @@ export class HistoryIndexService {
         parentId: node.parentId,
         nodeOrder: node.order,
         properties: node.properties,
+        templateId: node.templateId ?? null,
       })
     }
 
@@ -129,14 +132,15 @@ export class HistoryIndexService {
         parentId: null,
         nodeOrder: null,
         properties: null,
+        templateId: null,
       })
     }
 
     const expected = inserts.length
-    const insertRow = db.prepare<[string, number, string, 'present' | 'absent', string | null, string | null, number | null, string | null]>(
+    const insertRow = db.prepare<[string, number, string, 'present' | 'absent', string | null, string | null, number | null, string | null, string | null]>(
       `INSERT OR REPLACE INTO node_history
-        (snapshot_id, snapshot_order, node_id, presence, node_name, parent_id, node_order, properties_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        (snapshot_id, snapshot_order, node_id, presence, node_name, parent_id, node_order, properties_json, template_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     const upsertState = db.prepare<[string, number, number, number]>(
       `INSERT OR REPLACE INTO snapshot_index_state
@@ -156,6 +160,7 @@ export class HistoryIndexService {
           row.parentId,
           row.nodeOrder,
           row.properties === null ? null : JSON.stringify(row.properties),
+          row.templateId,
         )
         actual++
       }
@@ -173,7 +178,7 @@ export class HistoryIndexService {
     const rows = db
       .prepare<[string]>(
         `SELECT snapshot_id, snapshot_order, node_id, presence,
-                node_name, parent_id, node_order, properties_json
+                node_name, parent_id, node_order, properties_json, template_id
          FROM node_history
          WHERE node_id = ?
          ORDER BY snapshot_order ASC`
@@ -242,6 +247,13 @@ export class HistoryIndexService {
       `)
     }
 
+    // v1 → v2: track the node's bound template per snapshot, so a template
+    // assignment is visible in per-node history. Additive column; existing
+    // rows get NULL (freeform), which is correct for pre-template snapshots.
+    if (userVersion < 2) {
+      db.exec(`ALTER TABLE node_history ADD COLUMN template_id TEXT;`)
+    }
+
     db.pragma(`user_version = ${SCHEMA_VERSION}`)
   }
 }
@@ -258,6 +270,7 @@ function toNodeHistoryRow(raw: RawHistoryRow): NodeHistoryRow {
     properties: raw.properties_json === null
       ? null
       : (JSON.parse(raw.properties_json) as Record<string, string | number | boolean | null>),
+    templateId: raw.template_id ?? null,
   }
 }
 
@@ -265,6 +278,7 @@ function nodeStatesEqual(a: ManifestNode, b: ManifestNode): boolean {
   if (a.name !== b.name) return false
   if (a.parentId !== b.parentId) return false
   if (a.order !== b.order) return false
+  if ((a.templateId ?? null) !== (b.templateId ?? null)) return false
   return propertiesEqual(a.properties, b.properties)
 }
 

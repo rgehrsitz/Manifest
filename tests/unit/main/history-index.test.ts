@@ -50,7 +50,7 @@ describe('HistoryIndexService', () => {
       const db = new Database(join(projectPath, '.manifest', 'index', 'history.db'))
       try {
         const version = db.pragma('user_version', { simple: true }) as number
-        expect(version).toBe(1)
+        expect(version).toBe(2)
 
         const tables = db
           .prepare(`SELECT name FROM sqlite_master WHERE type='table' ORDER BY name`)
@@ -285,6 +285,49 @@ describe('HistoryIndexService', () => {
 
       svc.open(projectPath)
       expect(svc.nodeHistory('root').length).toBe(1)
+    })
+  })
+
+  describe('templateId tracking', () => {
+    it('records and returns a node\'s bound templateId', () => {
+      const root = node('root', 'Root', null)
+      const a: ManifestNode = { ...node('a', 'Server A', 'root'), templateId: 'rack' }
+      svc.recordSnapshot({
+        snapshotId: 's0', snapshotOrder: 0,
+        project: project([root, a]), previousProject: null,
+      })
+      const rows = svc.nodeHistory('a')
+      expect(rows.length).toBe(1)
+      expect(rows[0].templateId).toBe('rack')
+    })
+
+    it('defaults templateId to null for freeform nodes', () => {
+      svc.recordSnapshot({
+        snapshotId: 's0', snapshotOrder: 0,
+        project: project([node('root', 'Root', null)]), previousProject: null,
+      })
+      expect(svc.nodeHistory('root')[0].templateId).toBeNull()
+    })
+
+    it('treats a template (re)assignment as a delta-encoded change', () => {
+      const root = node('root', 'Root', null)
+      const before = node('a', 'A', 'root')
+      const after: ManifestNode = { ...before, templateId: 'rack' }
+
+      svc.recordSnapshot({
+        snapshotId: 's0', snapshotOrder: 0,
+        project: project([root, before]), previousProject: null,
+      })
+      // Only templateId changed — must still emit a new history row.
+      svc.recordSnapshot({
+        snapshotId: 's1', snapshotOrder: 1,
+        project: project([root, after]), previousProject: project([root, before]),
+      })
+
+      const rows = svc.nodeHistory('a')
+      expect(rows.length).toBe(2)
+      expect(rows[0].templateId).toBeNull()
+      expect(rows[1].templateId).toBe('rack')
     })
   })
 })

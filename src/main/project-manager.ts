@@ -39,6 +39,9 @@ import type {
   SnapshotTimelineEvent,
   SnapshotTimeline,
   RecoveryPoint,
+  NodeTemplate,
+  TemplateField,
+  ManifestWarning,
 } from '../shared/types'
 import { ok, err, ErrorCode } from '../shared/errors'
 import { migrate, getCurrentVersion } from '../shared/migration'
@@ -47,7 +50,17 @@ import {
   migrateSnapshotHistory,
   type SnapshotHistoryState,
 } from '../shared/snapshot-history-migration'
-import { validateNodeName, validatePropertyKey, validatePropertyValue, validateSnapshotName } from '../shared/validation'
+import {
+  validateNodeName,
+  validatePropertyKey,
+  validatePropertyValue,
+  validateSnapshotName,
+  validateTemplate,
+  validateTemplateId,
+  validateTypedPropertyValue,
+  coercePropertyValue,
+  templateFields,
+} from '../shared/validation'
 import { diffProjects } from '../shared/diff-engine'
 import { buildMergedTree } from '../shared/merged-tree'
 import type { MergedTree } from '../shared/merged-tree'
@@ -167,7 +180,16 @@ export class ProjectManager {
       const validation = this.validateManifest(data)
       if (!validation.ok) return validation as Result<Project>
 
+      // Non-fatal, path-qualified integrity/type warnings. We never silently
+      // coerce or downgrade hand-edited values on load — we surface them.
+      // Warnings are a one-time, load-event payload: they ride the open
+      // response but are NOT stored on currentProject, so they don't propagate
+      // through subsequent mutation results.
+      const warnings = this.collectLoadWarnings(data)
       const project: Project = { ...data, path: projectPath }
+      if (warnings.length > 0) {
+        this.logger.warn('project loaded with warnings', { path: projectPath, count: warnings.length })
+      }
 
       // If migration bumped the version, write the migrated file back immediately.
       if (data.version !== originalVersion) {
@@ -184,7 +206,7 @@ export class ProjectManager {
       this.currentProject = project
       this.logger.info('project opened', { name: project.name, path: projectPath, nodes: project.nodes.length })
       this.scheduleHistoryBackfill()
-      return ok(project)
+      return ok(warnings.length > 0 ? { ...project, loadWarnings: warnings } : project)
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
       this.logger.error('project open failed', { path: projectPath, error: msg })
@@ -229,7 +251,7 @@ export class ProjectManager {
 
   // Create a child node under parentId.
   // New node is appended as the last child (order = sibling count).
-  nodeCreate(parentId: string, name: string): Result<Project> {
+  nodeCreate(parentId: string, name: string, templateId?: string | null): Result<Project> {
     if (!this.currentProject) return err(ErrorCode.PROJECT_NOT_FOUND, 'No project open')
 
     const nameValidation = validateNodeName(name)
@@ -252,13 +274,24 @@ export class ProjectManager {
       )
     }
 
+    // Optional template binding. When bound, seed properties from field defaults.
+    let template: NodeTemplate | undefined
+    if (templateId !== undefined && templateId !== null) {
+      template = this.currentProject.templates?.[templateId]
+      if (!template) {
+        return err(ErrorCode.TEMPLATE_NOT_FOUND, `Template not found: ${templateId}`)
+      }
+    }
+    const seededProperties = template ? seedDefaults(template) : {}
+
     const now = new Date().toISOString()
     const newNode: ManifestNode = {
       id: uuidv7(),
       parentId,
       name,
       order: siblings.length,
-      properties: {},
+      properties: seededProperties,
+      ...(templateId !== undefined && templateId !== null ? { templateId } : {}),
       created: now,
       modified: now,
     }
@@ -274,10 +307,14 @@ export class ProjectManager {
     })
   }
 
-  // Update a node's name and/or properties.
+  // Update a node's name, properties, and/or template binding.
   nodeUpdate(
     id: string,
-    changes: { name?: string; properties?: Record<string, string | number | boolean | null> }
+    changes: {
+      name?: string
+      properties?: Record<string, string | number | boolean | null>
+      templateId?: string | null
+    }
   ): Result<Project> {
     if (!this.currentProject) return err(ErrorCode.PROJECT_NOT_FOUND, 'No project open')
 
@@ -297,26 +334,65 @@ export class ProjectManager {
       }
     }
 
-    if (changes.properties !== undefined) {
-      for (const [key, value] of Object.entries(changes.properties)) {
+    // Resolve the effective template after this update (null = unbind/freeform).
+    const nextTemplateId =
+      changes.templateId !== undefined ? changes.templateId : node.templateId ?? null
+    let template: NodeTemplate | undefined
+    if (nextTemplateId !== null && nextTemplateId !== undefined) {
+      template = this.currentProject.templates?.[nextTemplateId]
+      if (!template) {
+        return err(ErrorCode.TEMPLATE_NOT_FOUND, `Template not found: ${nextTemplateId}`)
+      }
+    }
+
+    // Re-coerce/validate properties whenever the property set OR the template
+    // binding changes. Binding a node to a template (selector sends only
+    // { templateId }) must validate the node's EXISTING properties against the
+    // new template — otherwise an ad-hoc value like status:"bogus" could become
+    // silently invalid under an enum field. Keys matching a template field are
+    // coerced strictly to the field type; ad-hoc keys use lenient validation.
+    const templateBindingChanged =
+      changes.templateId !== undefined && (changes.templateId ?? null) !== (node.templateId ?? null)
+    const recoerce = changes.properties !== undefined || templateBindingChanged
+
+    let nextProperties = node.properties
+    if (recoerce) {
+      const baseProps = changes.properties !== undefined ? changes.properties : node.properties
+      const coerced: Record<string, string | number | boolean | null> = {}
+      for (const [key, value] of Object.entries(baseProps)) {
         const keyValidation = validatePropertyKey(key)
         if (!keyValidation.valid) {
           return err(ErrorCode.VALIDATION_FAILED, keyValidation.message ?? 'Invalid property key')
         }
-        if (value !== null) {
-          const valueValidation = validatePropertyValue(value)
-          if (!valueValidation.valid) {
-            return err(ErrorCode.VALIDATION_FAILED, valueValidation.message ?? 'Invalid property value')
+        const field = templateFields(template)[key]
+        if (field && value !== null) {
+          const result = coercePropertyValue(value, field)
+          if (!result.valid) {
+            return err(
+              ErrorCode.VALIDATION_FAILED,
+              `Property "${key}": ${result.message ?? 'invalid value'}`
+            )
           }
+          coerced[key] = result.value ?? null
+        } else {
+          if (value !== null) {
+            const valueValidation = validatePropertyValue(value)
+            if (!valueValidation.valid) {
+              return err(ErrorCode.VALIDATION_FAILED, valueValidation.message ?? 'Invalid property value')
+            }
+          }
+          coerced[key] = value
         }
       }
+      nextProperties = coerced
     }
 
     const now = new Date().toISOString()
     const updatedNode: ManifestNode = {
       ...node,
       ...(changes.name !== undefined ? { name: changes.name } : {}),
-      ...(changes.properties !== undefined ? { properties: changes.properties } : {}),
+      ...(recoerce ? { properties: nextProperties } : {}),
+      ...(changes.templateId !== undefined ? { templateId: changes.templateId } : {}),
       modified: now,
     }
 
@@ -328,6 +404,111 @@ export class ProjectManager {
 
     return this.commitProjectMutation(nextProject, () => {
       this.search.upsertNode(nextProject.path!, updatedNode)
+    })
+  }
+
+  // ─── Template CRUD ────────────────────────────────────────────────────────────
+
+  // Create a new node template. id must be a unique slug.
+  templateCreate(id: string, template: NodeTemplate): Result<Project> {
+    if (!this.currentProject) return err(ErrorCode.PROJECT_NOT_FOUND, 'No project open')
+
+    const idValidation = validateTemplateId(id)
+    if (!idValidation.valid) {
+      return err(ErrorCode.VALIDATION_FAILED, idValidation.message ?? 'Invalid template id')
+    }
+    if (this.currentProject.templates?.[id]) {
+      return err(ErrorCode.VALIDATION_FAILED, `A template with id "${id}" already exists`)
+    }
+    const templateValidation = validateTemplate(template)
+    if (!templateValidation.valid) {
+      return err(ErrorCode.VALIDATION_FAILED, templateValidation.message ?? 'Invalid template')
+    }
+
+    const nextProject: Project = {
+      ...this.currentProject,
+      modified: new Date().toISOString(),
+      templates: { ...this.currentProject.templates, [id]: template },
+    }
+    return this.commitProjectMutation(nextProject, () => {
+      this.search.rebuild(nextProject)
+    })
+  }
+
+  // Update an existing template. Rejects changes that would make any currently
+  // bound node's value invalid (we never retroactively coerce stored data).
+  templateUpdate(id: string, changes: Partial<NodeTemplate>): Result<Project> {
+    if (!this.currentProject) return err(ErrorCode.PROJECT_NOT_FOUND, 'No project open')
+
+    const existing = this.currentProject.templates?.[id]
+    if (!existing) return err(ErrorCode.TEMPLATE_NOT_FOUND, `Template not found: ${id}`)
+
+    const proposed: NodeTemplate = {
+      label: changes.label ?? existing.label,
+      ...(changes.description !== undefined
+        ? { description: changes.description }
+        : existing.description !== undefined
+          ? { description: existing.description }
+          : {}),
+      fields: changes.fields ?? existing.fields,
+    }
+
+    const templateValidation = validateTemplate(proposed)
+    if (!templateValidation.valid) {
+      return err(ErrorCode.VALIDATION_FAILED, templateValidation.message ?? 'Invalid template')
+    }
+
+    // Guard: every bound node's existing values must remain valid under the
+    // proposed field definitions. A field that is removed is fine (the value
+    // simply becomes ad-hoc/untyped).
+    for (const node of this.currentProject.nodes) {
+      if ((node.templateId ?? null) !== id) continue
+      for (const [key, field] of Object.entries(proposed.fields)) {
+        const value = node.properties[key]
+        if (value === undefined || value === null) continue
+        const check = validateTypedPropertyValue(value, field)
+        if (!check.valid) {
+          return err(
+            ErrorCode.VALIDATION_FAILED,
+            `Cannot change field "${key}": node "${node.name}" has value ${JSON.stringify(value)} that is invalid for the new type (${check.message})`
+          )
+        }
+      }
+    }
+
+    const nextProject: Project = {
+      ...this.currentProject,
+      modified: new Date().toISOString(),
+      templates: { ...this.currentProject.templates, [id]: proposed },
+    }
+    return this.commitProjectMutation(nextProject, () => {
+      this.search.rebuild(nextProject)
+    })
+  }
+
+  // Delete a template. Bound nodes are unbound (templateId cleared) but keep
+  // their property values — non-destructive; values become ad-hoc/untyped.
+  templateDelete(id: string): Result<Project> {
+    if (!this.currentProject) return err(ErrorCode.PROJECT_NOT_FOUND, 'No project open')
+
+    if (!this.currentProject.templates?.[id]) {
+      return err(ErrorCode.TEMPLATE_NOT_FOUND, `Template not found: ${id}`)
+    }
+
+    const remaining = { ...this.currentProject.templates }
+    delete remaining[id]
+
+    const now = new Date().toISOString()
+    const nextProject: Project = {
+      ...this.currentProject,
+      modified: now,
+      templates: remaining,
+      nodes: this.currentProject.nodes.map(n =>
+        (n.templateId ?? null) === id ? { ...n, templateId: null, modified: now } : n
+      ),
+    }
+    return this.commitProjectMutation(nextProject, () => {
+      this.search.rebuild(nextProject)
     })
   }
 
@@ -744,6 +925,7 @@ export class ProjectManager {
           parentId: row.parentId,
           nodeOrder: row.nodeOrder,
           properties: row.properties,
+          templateId: row.templateId,
         }
         if (statesEqual(newState, lastState)) continue
         entries.push({
@@ -1483,7 +1665,7 @@ export class ProjectManager {
         ...project,
         modified: touchModified ? new Date().toISOString() : project.modified,
       }
-      const { path: _path, ...persistable } = persistedProject
+      const { path: _path, loadWarnings: _warnings, ...persistable } = persistedProject
       writeFileSync(tmpPath, JSON.stringify(persistable, null, 2), 'utf8')
       renameSync(tmpPath, manifestPath)
       if (this.currentProject?.path === project.path && this.currentProject.id === project.id) {
@@ -1537,6 +1719,86 @@ export class ProjectManager {
     return ok(undefined as void)
   }
 
+  // Collect non-fatal, path-qualified warnings about template integrity and
+  // typed-value mismatches. NEVER mutates or coerces — values are left exactly
+  // as written on disk; the app surfaces these to the user.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private collectLoadWarnings(data: any): ManifestWarning[] {
+    const warnings: ManifestWarning[] = []
+    const templates: Record<string, NodeTemplate> =
+      data.templates && typeof data.templates === 'object' ? data.templates : {}
+
+    // Structurally invalid template definitions.
+    for (const [id, template] of Object.entries(templates)) {
+      const idCheck = validateTemplateId(id)
+      if (!idCheck.valid) {
+        warnings.push({
+          path: `templates.${id}`,
+          code: 'INVALID_TEMPLATE_ID',
+          message: idCheck.message ?? 'Invalid template id',
+        })
+        continue
+      }
+      const tplCheck = validateTemplate(template as NodeTemplate)
+      if (!tplCheck.valid) {
+        warnings.push({
+          path: `templates.${id}`,
+          code: 'INVALID_TEMPLATE',
+          message: tplCheck.message ?? 'Invalid template',
+        })
+      }
+    }
+
+    // Per-node: dangling templateId and typed-value mismatches.
+    const nodes = (data.nodes ?? []) as ManifestNode[]
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i]
+      const templateId = node.templateId ?? null
+      if (templateId === null) continue
+
+      const template = templates[templateId]
+      if (!template) {
+        warnings.push({
+          path: `nodes[${i}].templateId`,
+          code: 'TEMPLATE_NOT_FOUND',
+          message: `Node references unknown template "${templateId}"`,
+        })
+        continue
+      }
+
+      // The referenced template may itself be structurally invalid (already
+      // warned above). templateFields() is null-safe, so we never throw on a
+      // missing/non-iterable `fields` — load stays non-fatal.
+      const props = node.properties ?? {}
+      for (const [key, field] of Object.entries(templateFields(template))) {
+        const value = props[key]
+        if (value === undefined || value === null || value === '') {
+          // A required field that has no value is a (non-fatal) integrity
+          // warning — this gives the `required` flag a real, surfaced meaning
+          // without hard-blocking edits.
+          if (field.required) {
+            warnings.push({
+              path: `nodes[${i}].properties.${key}`,
+              code: 'MISSING_REQUIRED',
+              message: `Required field "${key}" is not set`,
+            })
+          }
+          continue
+        }
+        const check = validateTypedPropertyValue(value, field)
+        if (!check.valid) {
+          warnings.push({
+            path: `nodes[${i}].properties.${key}`,
+            code: 'INVALID_TYPED_VALUE',
+            message: `${check.message} (got ${JSON.stringify(value)})`,
+          })
+        }
+      }
+    }
+
+    return warnings
+  }
+
   private hasCircularRefs(nodes: ManifestNode[]): boolean {
     const parentMap = new Map<string, string | null>()
     for (const node of nodes) {
@@ -1563,10 +1825,18 @@ interface NodeStateProjection {
   parentId: string | null
   nodeOrder: number | null
   properties: Record<string, string | number | boolean | null> | null
+  templateId: string | null
 }
 
 function absentState(): NodeStateProjection {
-  return { presence: 'absent', nodeName: null, parentId: null, nodeOrder: null, properties: null }
+  return {
+    presence: 'absent',
+    nodeName: null,
+    parentId: null,
+    nodeOrder: null,
+    properties: null,
+    templateId: null,
+  }
 }
 
 function projectStateForNode(project: Project, nodeId: string): NodeStateProjection {
@@ -1578,6 +1848,7 @@ function projectStateForNode(project: Project, nodeId: string): NodeStateProject
     parentId: node.parentId,
     nodeOrder: node.order,
     properties: node.properties,
+    templateId: node.templateId ?? null,
   }
 }
 
@@ -1586,7 +1857,20 @@ function statesEqual(a: NodeStateProjection, b: NodeStateProjection): boolean {
   if (a.nodeName !== b.nodeName) return false
   if (a.parentId !== b.parentId) return false
   if (a.nodeOrder !== b.nodeOrder) return false
+  if (a.templateId !== b.templateId) return false
   return propsEqualOrBothNull(a.properties, b.properties)
+}
+
+// Build a node's initial property map from its template field defaults.
+function seedDefaults(template: NodeTemplate): Record<string, string | number | boolean | null> {
+  const props: Record<string, string | number | boolean | null> = {}
+  // templateFields() is null-safe against malformed templates.
+  for (const [key, field] of Object.entries(templateFields(template))) {
+    if (field.default !== undefined && field.default !== null) {
+      props[key] = field.default
+    }
+  }
+  return props
 }
 
 function propsEqualOrBothNull(

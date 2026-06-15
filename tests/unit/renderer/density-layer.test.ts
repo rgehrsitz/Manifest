@@ -203,7 +203,7 @@ describe('computeCompareSections — change breakdown on summarized sections', (
     const [section] = computeCompareSections(rows, CTX)
     expect(section.density).toBe('summarized')
     expect(section.changeBreakdown).toEqual({
-      added: 0, removed: 0, renamed: 0, moved: 0, propertyChanged: 0,
+      added: 0, removed: 0, renamed: 0, moved: 0, propertyChanged: 0, templateChanged: 0,
     })
   })
 
@@ -334,14 +334,14 @@ describe('computeCompareSections — depth-decrease split (Step 5)', () => {
 
 describe('computeCompareSections — collapsed subtree rollup (Step 5)', () => {
   function summary(s: Partial<SubtreeSummary>): SubtreeSummary {
-    return { added: 0, removed: 0, renamed: 0, moved: 0, propertyChanged: 0, orderChanged: 0, ...s }
+    return { added: 0, removed: 0, renamed: 0, moved: 0, propertyChanged: 0, templateChanged: 0, orderChanged: 0, ...s }
   }
 
   it('without subtreeSummaries, breakdown stays all zeros (Step 1 behavior preserved)', () => {
     const rows = [normal('n1'), normal('n2'), normal('n3')]
     const [section] = computeCompareSections(rows, CTX)
     expect(section.changeBreakdown).toEqual({
-      added: 0, removed: 0, renamed: 0, moved: 0, propertyChanged: 0,
+      added: 0, removed: 0, renamed: 0, moved: 0, propertyChanged: 0, templateChanged: 0,
     })
   })
 
@@ -358,7 +358,7 @@ describe('computeCompareSections — collapsed subtree rollup (Step 5)', () => {
     ])
     const [section] = computeCompareSections(rows, { ...CTX, subtreeSummaries })
     expect(section.changeBreakdown).toEqual({
-      added: 2, removed: 0, renamed: 1, moved: 1, propertyChanged: 3,
+      added: 2, removed: 0, renamed: 1, moved: 1, propertyChanged: 3, templateChanged: 0,
     })
   })
 
@@ -373,7 +373,7 @@ describe('computeCompareSections — collapsed subtree rollup (Step 5)', () => {
     ])
     const [section] = computeCompareSections(rows, { ...CTX, subtreeSummaries })
     expect(section.changeBreakdown).toEqual({
-      added: 1, removed: 0, renamed: 0, moved: 0, propertyChanged: 0,
+      added: 1, removed: 0, renamed: 0, moved: 0, propertyChanged: 0, templateChanged: 0,
     })
   })
 

@@ -451,10 +451,10 @@ describe('computeSubtreeSummaries', () => {
     const summaries = computeSubtreeSummaries(merge(nodes, nodes))
 
     expect(summaries.get('root')).toEqual({
-      added: 0, removed: 0, renamed: 0, moved: 0, propertyChanged: 0, orderChanged: 0,
+      added: 0, removed: 0, renamed: 0, moved: 0, propertyChanged: 0, templateChanged: 0, orderChanged: 0,
     })
     expect(summaries.get('child')).toEqual({
-      added: 0, removed: 0, renamed: 0, moved: 0, propertyChanged: 0, orderChanged: 0,
+      added: 0, removed: 0, renamed: 0, moved: 0, propertyChanged: 0, templateChanged: 0, orderChanged: 0,
     })
   })
 
@@ -511,7 +511,7 @@ describe('computeSubtreeSummaries', () => {
 
     expect(summaries.has('leaf')).toBe(true)
     expect(summaries.get('leaf')).toEqual({
-      added: 0, removed: 0, renamed: 0, moved: 0, propertyChanged: 0, orderChanged: 0,
+      added: 0, removed: 0, renamed: 0, moved: 0, propertyChanged: 0, templateChanged: 0, orderChanged: 0,
     })
   })
 
