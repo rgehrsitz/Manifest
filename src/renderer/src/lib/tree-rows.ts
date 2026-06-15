@@ -77,6 +77,7 @@ export type RowStatus =
   | 'moved-from'     // ghost row at the origin
   | 'renamed'
   | 'property-changed'
+  | 'template-changed'
   | 'order-changed'
   | 'mixed'          // multiple non-Low-severity changes on the same node
 
@@ -206,6 +207,7 @@ function mergedStatusToRowStatus(status: MergedStatus): RowStatus {
     case 'moved':            return 'moved-to'
     case 'renamed':          return 'renamed'
     case 'property-changed': return 'property-changed'
+    case 'template-changed': return 'template-changed'
     case 'order-changed':    return 'order-changed'
     case 'mixed':            return 'mixed'
     default:                 return 'unchanged'
@@ -217,6 +219,7 @@ const BADGE_LABELS: Partial<Record<RowStatus, string>> = {
   'moved-to':       'Moved',
   renamed:          'Renamed',
   'property-changed': 'Changed',
+  'template-changed': 'Template',
   'order-changed':  'Reordered',
   mixed:            'Modified',
 }
@@ -226,6 +229,7 @@ const BADGE_SEVERITY: Partial<Record<RowStatus, 'High' | 'Medium' | 'Low'>> = {
   'moved-to':         'High',
   renamed:            'Medium',
   'property-changed': 'Medium',
+  'template-changed': 'Medium',
   'order-changed':    'Low',
   mixed:              'High',
 }

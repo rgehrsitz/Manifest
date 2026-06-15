@@ -344,12 +344,21 @@ export class ProjectManager {
       }
     }
 
-    // Validate + coerce properties. Keys matching a template field are coerced
-    // strictly to the field type; ad-hoc keys use lenient validation.
+    // Re-coerce/validate properties whenever the property set OR the template
+    // binding changes. Binding a node to a template (selector sends only
+    // { templateId }) must validate the node's EXISTING properties against the
+    // new template — otherwise an ad-hoc value like status:"bogus" could become
+    // silently invalid under an enum field. Keys matching a template field are
+    // coerced strictly to the field type; ad-hoc keys use lenient validation.
+    const templateBindingChanged =
+      changes.templateId !== undefined && (changes.templateId ?? null) !== (node.templateId ?? null)
+    const recoerce = changes.properties !== undefined || templateBindingChanged
+
     let nextProperties = node.properties
-    if (changes.properties !== undefined) {
+    if (recoerce) {
+      const baseProps = changes.properties !== undefined ? changes.properties : node.properties
       const coerced: Record<string, string | number | boolean | null> = {}
-      for (const [key, value] of Object.entries(changes.properties)) {
+      for (const [key, value] of Object.entries(baseProps)) {
         const keyValidation = validatePropertyKey(key)
         if (!keyValidation.valid) {
           return err(ErrorCode.VALIDATION_FAILED, keyValidation.message ?? 'Invalid property key')
@@ -381,7 +390,7 @@ export class ProjectManager {
     const updatedNode: ManifestNode = {
       ...node,
       ...(changes.name !== undefined ? { name: changes.name } : {}),
-      ...(changes.properties !== undefined ? { properties: nextProperties } : {}),
+      ...(recoerce ? { properties: nextProperties } : {}),
       ...(changes.templateId !== undefined ? { templateId: changes.templateId } : {}),
       modified: now,
     }
@@ -1753,6 +1762,13 @@ export class ProjectManager {
           code: 'TEMPLATE_NOT_FOUND',
           message: `Node references unknown template "${templateId}"`,
         })
+        continue
+      }
+
+      // The referenced template may itself be structurally invalid (already
+      // warned above). Skip per-field validation rather than throwing on a
+      // missing/non-iterable `fields` — load must stay non-fatal.
+      if (!template.fields || typeof template.fields !== 'object' || Array.isArray(template.fields)) {
         continue
       }
 

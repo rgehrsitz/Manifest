@@ -28,7 +28,8 @@ const MAX_VERSION_LEN = 64
 
 // True when a string contains any C0 control character (0x00–0x1F) or DEL
 // (0x7F). Implemented via char codes to avoid embedding control literals in
-// source. Disallowed in version/string values.
+// source. Used to reject control characters in version values (free-form
+// string values are intentionally NOT restricted — they may hold multi-line text).
 function hasControlChar(value: string): boolean {
   for (let i = 0; i < value.length; i++) {
     const code = value.charCodeAt(i)
@@ -148,16 +149,19 @@ export function validateTemplateField(key: string, field: TemplateField): Valida
 }
 
 export function validateTemplate(template: NodeTemplate): ValidationResult {
-  if (!template || typeof template !== 'object') {
+  if (!template || typeof template !== 'object' || Array.isArray(template)) {
     return { valid: false, message: 'Template must be an object' }
   }
-  if (!template.label || template.label.trim().length === 0) {
-    return { valid: false, message: 'Template label cannot be empty' }
+  // Guard against hand-edited manifests: label may be a non-string (e.g. 123).
+  if (typeof template.label !== 'string' || template.label.trim().length === 0) {
+    return { valid: false, message: 'Template label must be a non-empty string' }
   }
   if (template.label.length > 255) {
     return { valid: false, message: 'Template label cannot exceed 255 characters' }
   }
-  if (!template.fields || typeof template.fields !== 'object') {
+  // typeof [] === 'object', so reject arrays explicitly — otherwise Object.entries
+  // would interpret a fields array as numeric-keyed fields.
+  if (!template.fields || typeof template.fields !== 'object' || Array.isArray(template.fields)) {
     return { valid: false, message: 'Template fields must be an object' }
   }
   for (const [key, field] of Object.entries(template.fields)) {
@@ -243,7 +247,13 @@ export function coercePropertyValue(raw: unknown, field: TemplateField): Coercio
     case 'string':
     case 'version':
     case 'enum': {
-      const value = typeof raw === 'string' ? raw : String(raw ?? '')
+      // Accept primitives only (string/number/boolean). Rejecting objects/arrays
+      // here prevents untrusted IPC payloads from being stringified into garbage
+      // like "[object Object]" and persisted.
+      if (typeof raw !== 'string' && typeof raw !== 'number' && typeof raw !== 'boolean') {
+        return { valid: false, message: 'Expected a text value' }
+      }
+      const value = String(raw)
       const check = validateTypedPropertyValue(value, field)
       return check.valid ? { valid: true, value } : { valid: false, message: check.message }
     }

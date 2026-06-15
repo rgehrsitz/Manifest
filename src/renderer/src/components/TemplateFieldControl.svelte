@@ -6,9 +6,11 @@
   // parent. Text-like types (string/number/version) commit on blur/Enter;
   // enum/date/boolean commit immediately on change.
   //
-  // The parent (PropertyEditor) keys each control by `${nodeId}|${fieldKey}`
-  // so switching nodes recreates the control and re-seeds the draft — no
-  // $effect-based prop→draft syncing (avoids stale-draft reactivity pitfalls).
+  // The parent (PropertyEditor) keys each control by
+  // `${nodeId}|${fieldKey}|${committedValue}`, so the component is recreated —
+  // and the draft re-seeded from `value` — whenever the node, field, OR the
+  // committed value changes (e.g. after the backend normalizes "05" → 5).
+  // This avoids $effect-based prop→draft syncing and stale-draft pitfalls.
   import type { TemplateField } from '../../../shared/types'
 
   interface Props {
@@ -27,9 +29,9 @@
   }
 
   // Draft for text-like inputs (string/number/version). Intentionally seeded
-  // ONCE from `value` at creation — the parent keys each control by
-  // `${nodeId}|${fieldKey}`, so it is recreated (and re-seeded) when the node
-  // or value identity changes. No prop→draft $effect syncing by design.
+  // ONCE from `value` at creation — the parent's keyed {#each} (which includes
+  // the committed value) recreates and re-seeds this control whenever the node,
+  // field, or committed value changes. No prop→draft $effect syncing by design.
   // svelte-ignore state_referenced_locally
   let draft = $state(asString(value))
 
@@ -112,6 +114,6 @@
   </div>
 
   {#if error}
-    <p class="text-xs text-red-600 ml-34" data-testid={`tpl-error-${fieldKey}`}>{error}</p>
+    <p class="text-xs text-red-600 ml-[8.5rem]" data-testid={`tpl-error-${fieldKey}`}>{error}</p>
   {/if}
 </div>

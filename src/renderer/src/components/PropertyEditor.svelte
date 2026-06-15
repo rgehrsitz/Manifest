@@ -57,6 +57,17 @@
 
   let fieldErrors = $state<Record<string, string>>({})
 
+  // Reset per-field errors when the selected node or its template changes, so a
+  // stale error from node A never shows against the same-named field on node B.
+  let _prevIdentity = ''
+  $effect(() => {
+    const identity = node.id + '|' + (templateId ?? '')
+    if (identity !== _prevIdentity) {
+      _prevIdentity = identity
+      fieldErrors = {}
+    }
+  })
+
   function setFieldError(key: string, msg: string) {
     fieldErrors = { ...fieldErrors, [key]: msg }
   }
@@ -190,7 +201,7 @@
 <!-- Typed template fields -->
 {#if templateFieldEntries.length > 0}
   <div class="space-y-2 mb-4" data-testid="template-fields">
-    {#each templateFieldEntries as [key, field] (node.id + '|' + key)}
+    {#each templateFieldEntries as [key, field] (node.id + '|' + key + '|' + String(node.properties?.[key] ?? ''))}
       <TemplateFieldControl
         fieldKey={key}
         {field}
@@ -255,11 +266,11 @@
       </div>
 
       {#if editingKey === key && editingError}
-        <p class="text-xs text-red-600 ml-34">{editingError}</p>
+        <p class="text-xs text-red-600 ml-[8.5rem]">{editingError}</p>
       {/if}
 
       {#if promotingKey === key}
-        <div class="flex items-center gap-2 ml-34 mb-1" data-testid="promote-row">
+        <div class="flex items-center gap-2 ml-[8.5rem] mb-1" data-testid="promote-row">
           <select
             bind:value={promoteType}
             class="text-xs border border-stone-300 rounded px-1.5 py-1 bg-white

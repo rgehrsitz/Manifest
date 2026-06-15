@@ -60,6 +60,7 @@
         case 'moved-to':         return 'bg-sky-50 text-sky-900'
         case 'renamed':          return 'bg-amber-50 text-amber-900'
         case 'property-changed': return 'bg-amber-50 text-amber-900'
+        case 'template-changed': return 'bg-amber-50 text-amber-900'
         case 'order-changed':    return 'bg-stone-50 text-stone-600'
         case 'mixed':            return 'bg-purple-50 text-purple-900'
         default:                 return ''

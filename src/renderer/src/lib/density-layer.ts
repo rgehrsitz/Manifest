@@ -53,6 +53,7 @@ export interface ChangeBreakdown {
   renamed: number
   moved: number
   propertyChanged: number
+  templateChanged: number
 }
 
 export interface CompareSectionContext {
@@ -83,6 +84,7 @@ const ZERO_BREAKDOWN: ChangeBreakdown = {
   renamed: 0,
   moved: 0,
   propertyChanged: 0,
+  templateChanged: 0,
 }
 
 // ─── Browse / edit (no morphing) ──────────────────────────────────────────────
@@ -218,6 +220,7 @@ function rollupCollapsedSubtreeChanges(
     breakdown.moved           += s.moved
     breakdown.renamed         += s.renamed
     breakdown.propertyChanged += s.propertyChanged
+    breakdown.templateChanged += s.templateChanged
   }
 
   return breakdown

@@ -261,4 +261,57 @@ describe('load warnings — no silent coercion or downgrade', () => {
     const project = await openWith(makeManifest({ version: 3, templates: {} }))
     expect(project.loadWarnings).toBeUndefined()
   })
+
+  it('opens (non-fatally, with a warning) when a node references a structurally-invalid template', async () => {
+    const manifest = makeManifest({
+      version: 3,
+      // `bad` has no `fields` — structurally invalid. A node references it,
+      // which previously threw on Object.entries(template.fields).
+      templates: { bad: { label: 'Bad' } },
+      nodes: [
+        {
+          id: 'root-id', parentId: null, name: 'Test Project', order: 0, properties: {},
+          created: '2026-01-01T00:00:00.000Z', modified: '2026-01-01T00:00:00.000Z',
+        },
+        {
+          id: 'n1', parentId: 'root-id', name: 'App', order: 0,
+          templateId: 'bad', properties: { anything: 'x' },
+          created: '2026-01-01T00:00:00.000Z', modified: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    })
+    const project = await openWith(manifest)  // must not throw
+    expect(project.loadWarnings?.some(w => w.path === 'templates.bad')).toBe(true)
+  })
+})
+
+describe('nodeUpdate — template binding validates existing properties', () => {
+  it('rejects binding a template when an existing ad-hoc value is invalid for it', async () => {
+    await openWith(makeManifest())
+    manager.templateCreate('software-item', softwareItem)
+    const created = manager.nodeCreate('root-id', 'App')           // freeform
+    const id = (created as any).data.nodes.find((n: any) => n.name === 'App').id
+    manager.nodeUpdate(id, { properties: { status: 'bogus' } })    // ad-hoc, lenient
+
+    // Binding the template (selector sends only { templateId }) must validate
+    // the existing 'status' against the enum field — 'bogus' is not allowed.
+    const r = manager.nodeUpdate(id, { templateId: 'software-item' })
+    expect(r.ok).toBe(false)
+  })
+
+  it('binds and coerces existing values that fit the template', async () => {
+    await openWith(makeManifest())
+    manager.templateCreate('software-item', softwareItem)
+    const created = manager.nodeCreate('root-id', 'App')
+    const id = (created as any).data.nodes.find((n: any) => n.name === 'App').id
+    manager.nodeUpdate(id, { properties: { status: 'approved', units: '5' } })  // ad-hoc strings
+
+    const r = manager.nodeUpdate(id, { templateId: 'software-item' })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    const node = r.data.nodes.find(n => n.id === id)!
+    expect(node.templateId).toBe('software-item')
+    expect(node.properties.status).toBe('approved')
+    expect(node.properties.units).toBe(5)   // coerced string → number on bind
+  })
 })
