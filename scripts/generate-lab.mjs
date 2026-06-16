@@ -1,0 +1,655 @@
+#!/usr/bin/env node
+
+// Domain-authentic synthetic data generator for dogfooding/perf/demo.
+//
+// Models a software-integration lab (the kind that mimics shipboard equipment
+// at low voltage): Rooms → Racks → Devices. Computers carry a Hardware group
+// (CPU/memory/GPU/NIC/storage) and a Software group (an OS plus several CSCIs,
+// each version-tracked). Power supplies and waveform generators are calibrated
+// test equipment; custom electronics boards fail and get repaired/replaced.
+//
+// Output is a v3 Manifest project (manifest.json with a `templates` map and
+// typed property values) under a git repo, plus a timeline of daily snapshots
+// (git commit + `snapshot/<name>` tag) applying realistic configuration churn:
+// CSCI version bumps on test days, status changes, recalibrations, grouped
+// maintenance events (a board fails → is replaced AND a co-located part is
+// swapped AND a nearby supply is recalibrated, all in one snapshot), the odd
+// quiet day, and a couple of additive template/schema edits.
+//
+// Snapshots are discovered by the app from git tags; notes live in history.json
+// (not emitted here), so the event narrative is encoded in the snapshot NAME.
+
+import { execFileSync } from 'child_process'
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'fs'
+import { join, resolve } from 'path'
+import { v7 as uuidv7 } from 'uuid'
+
+const CURRENT_VERSION = 3
+
+const DEFAULTS = {
+  name: 'Software Integration Lab',
+  rooms: 2,
+  racksPerRoom: 60,
+  computersPerRack: 4,
+  customBoardsPerRack: 3,
+  hwPerComputer: 5,
+  csciPerComputer: 5,
+  days: 40,
+  seed: 42,
+  output: null,
+  force: false,
+}
+
+// ─── Templates (schema) ─────────────────────────────────────────────────────────
+// Exercises every PropertyType: string, number, boolean, date, version, enum.
+
+const TEMPLATES = {
+  room: {
+    label: 'Room',
+    fields: {
+      floor: { type: 'string' },
+      square_feet: { type: 'number' },
+    },
+  },
+  rack: {
+    label: 'Rack',
+    fields: {
+      location: { type: 'string' },
+      power_kw: { type: 'number' },
+      status: { type: 'enum', options: ['active', 'standby', 'maintenance', 'offline'] },
+    },
+  },
+  computer: {
+    label: 'Shipboard Computer',
+    description: 'Mission computer running shipboard or test software.',
+    fields: {
+      role: { type: 'enum', options: ['shipboard', 'test', 'spare'] },
+      status: { type: 'enum', options: ['active', 'standby', 'maintenance', 'offline'] },
+      serial: { type: 'string' },
+      installed_date: { type: 'date' },
+      air_gapped: { type: 'boolean' },
+    },
+  },
+  'power-supply': {
+    label: 'Power Supply',
+    fields: {
+      vendor: { type: 'string' },
+      model: { type: 'string' },
+      serial: { type: 'string' },
+      max_voltage: { type: 'number' },
+      firmware: { type: 'version' },
+      status: { type: 'enum', options: ['active', 'standby', 'maintenance', 'failed'] },
+      last_calibrated: { type: 'date' },
+      calibration_due: { type: 'date' },
+    },
+  },
+  'waveform-generator': {
+    label: 'Waveform Generator',
+    fields: {
+      vendor: { type: 'string' },
+      model: { type: 'string' },
+      serial: { type: 'string' },
+      channels: { type: 'number' },
+      firmware: { type: 'version' },
+      status: { type: 'enum', options: ['active', 'standby', 'maintenance', 'failed'] },
+      last_calibrated: { type: 'date' },
+      calibration_due: { type: 'date' },
+    },
+  },
+  'custom-board': {
+    label: 'Custom Board',
+    description: 'In-house electronics board emulating shipboard hardware.',
+    fields: {
+      board_type: { type: 'string' },
+      revision: { type: 'version' },
+      serial: { type: 'string' },
+      status: { type: 'enum', options: ['active', 'failed', 'repaired', 'spare'] },
+      installed_date: { type: 'date' },
+    },
+  },
+  'hw-component': {
+    label: 'Hardware Component',
+    fields: {
+      type: { type: 'enum', options: ['cpu', 'memory', 'gpu', 'nic', 'storage'] },
+      model: { type: 'string' },
+      serial: { type: 'string' },
+      status: { type: 'enum', options: ['active', 'degraded', 'failed', 'spare'] },
+    },
+  },
+  os: {
+    label: 'Operating System',
+    fields: {
+      version: { type: 'version' },
+      variant: { type: 'enum', options: ['shipboard', 'test'] },
+      patch_level: { type: 'string' },
+    },
+  },
+  csci: {
+    label: 'CSCI',
+    description: 'Computer Software Configuration Item.',
+    fields: {
+      version: { type: 'version' },
+      build: { type: 'enum', options: ['shipboard', 'test'] },
+      status: { type: 'enum', options: ['active', 'deprecated'] },
+      build_date: { type: 'date' },
+    },
+  },
+}
+
+const VENDORS = ['Acme', 'Vector', 'Northstar', 'Helix', 'Summit', 'Atlas']
+const PS_MODELS = ['PS-1200', 'PS-2400', 'PS-3600', 'DCX-500']
+const WG_MODELS = ['WG-100', 'WG-200', 'AWG-7k', 'AWG-9k']
+const HW_MODELS = {
+  cpu: ['Xeon-6338', 'EPYC-7543', 'Core-i9'],
+  memory: ['DDR4-64G', 'DDR4-128G', 'DDR5-256G'],
+  gpu: ['RTX-A4000', 'RTX-A6000', 'MI210'],
+  nic: ['X710-DA2', 'E810-CQDA2', 'ConnectX-6'],
+  storage: ['NVMe-2TB', 'NVMe-4TB', 'SAS-8TB'],
+}
+const BOARD_TYPES = ['signal-conditioner', 'relay-driver', 'adc-frontend', 'power-stage', 'comms-bridge']
+const CSCI_NAMES = ['nav', 'fire-control', 'comms', 'sensor-fusion', 'hmi', 'bit', 'recorder', 'telemetry']
+
+let spareSeq = 0 // module-scoped: unique suffix for added spare boards
+
+main(process.argv.slice(2))
+
+function main(argv) {
+  const options = parseArgs(argv)
+  if (options.help) { printHelp(); return }
+  validateOptions(options)
+
+  const projectDir = resolve(options.output ?? `./tmp/${slugify(options.name)}-${stamp()}`)
+  prepareOutputDir(projectDir, options.force)
+
+  const rng = createRng(options.seed)
+  const clock = makeClock(new Date('2025-01-06T08:00:00.000Z')) // a Monday
+  const ctx = { rng, clock, seq: 0, intRange: rng.intRange }
+
+  const project = buildInitialProject(options, ctx)
+  writeManifest(projectDir, project)
+  writeSampleCsv(projectDir, project)
+  initGit(projectDir)
+
+  for (let day = 1; day <= options.days; day++) {
+    const label = applyDailyChurn(project, options, ctx, day)
+    writeManifest(projectDir, project)
+    const dayStr = isoDate(addDays(new Date('2025-02-03T00:00:00.000Z'), day))
+    snapshot(projectDir, `d${pad(day, 2)}-${dayStr}-${label}`)
+  }
+
+  const s = summarize(project)
+  console.log(`Generated lab project at ${projectDir}`)
+  console.log(`  Nodes:     ${s.nodes}`)
+  console.log(`  Templates: ${Object.keys(project.templates).length}`)
+  console.log(`  Max depth: ${s.depth}`)
+  console.log(`  Snapshots: ${options.days}`)
+  console.log(`  Seed:      ${options.seed}`)
+  console.log(`Open it in the app via "Open Project" → ${projectDir}`)
+}
+
+// ─── Build ────────────────────────────────────────────────────────────────────
+
+function buildInitialProject(options, ctx) {
+  const created = ctx.clock.next()
+  const root = node(ctx, null, options.name, null, {})
+  root.created = created
+  const project = {
+    version: CURRENT_VERSION,
+    id: uuidv7(),
+    name: options.name,
+    created,
+    modified: created,
+    templates: structuredClone(TEMPLATES),
+    nodes: [root],
+  }
+
+  for (let r = 0; r < options.rooms; r++) {
+    const room = addChild(project, ctx, root, `Room ${letter(r)}`, 'room', {
+      floor: `${r + 1}`,
+      square_feet: 1200 + r * 300,
+    })
+    for (let k = 0; k < options.racksPerRoom; k++) {
+      const rackName = `Rack ${letter(r)}-${pad(k + 1, 2)}`
+      const rack = addChild(project, ctx, room, rackName, 'rack', {
+        location: `${letter(r)}-${pad(k + 1, 2)}`,
+        power_kw: round1(3 + ctx.rng() * 9),
+        status: pick(ctx, TEMPLATES.rack.fields.status.options),
+      })
+      buildRackContents(project, ctx, rack, options)
+    }
+  }
+  return project
+}
+
+function buildRackContents(project, ctx, rack, options) {
+  for (let c = 0; c < options.computersPerRack; c++) {
+    const comp = addChild(project, ctx, rack, `Computer ${pad(c + 1, 2)}`, 'computer', {
+      role: pick(ctx, TEMPLATES.computer.fields.role.options),
+      status: pick(ctx, TEMPLATES.computer.fields.status.options),
+      serial: serial(ctx, 'CMP'),
+      installed_date: pastDate(ctx, 30, 900),
+      air_gapped: ctx.rng() < 0.4,
+    })
+
+    const hw = addChild(project, ctx, comp, 'Hardware', null, {})
+    const types = TEMPLATES['hw-component'].fields.type.options
+    for (let h = 0; h < options.hwPerComputer; h++) {
+      const t = types[h % types.length]
+      addChild(project, ctx, hw, `${t.toUpperCase()} ${pad(h + 1, 2)}`, 'hw-component', {
+        type: t,
+        model: pick(ctx, HW_MODELS[t]),
+        serial: serial(ctx, t.slice(0, 3).toUpperCase()),
+        status: weighted(ctx, [['active', 0.85], ['degraded', 0.08], ['spare', 0.05], ['failed', 0.02]]),
+      })
+    }
+
+    const sw = addChild(project, ctx, comp, 'Software', null, {})
+    addChild(project, ctx, sw, 'OS', 'os', {
+      version: version(2, ctx.intRange(2, 6), ctx.intRange(0, 9)),
+      variant: ctx.rng() < 0.5 ? 'shipboard' : 'test',
+      patch_level: `p${ctx.intRange(0, 40)}`,
+    })
+    for (let s = 0; s < options.csciPerComputer; s++) {
+      const cn = CSCI_NAMES[s % CSCI_NAMES.length]
+      addChild(project, ctx, sw, `CSCI ${cn}`, 'csci', {
+        version: version(ctx.intRange(1, 4), ctx.intRange(0, 9), ctx.intRange(0, 9)),
+        build: ctx.rng() < 0.5 ? 'shipboard' : 'test',
+        status: ctx.rng() < 0.9 ? 'active' : 'deprecated',
+        build_date: pastDate(ctx, 5, 400),
+      })
+    }
+  }
+
+  addChild(project, ctx, rack, 'Power Supply', 'power-supply', testEquipmentProps(ctx, 'PS', PS_MODELS, { max_voltage: pick(ctx, [48, 120, 250, 600]) }))
+  addChild(project, ctx, rack, 'Waveform Generator', 'waveform-generator', testEquipmentProps(ctx, 'WG', WG_MODELS, { channels: pick(ctx, [2, 4, 8]) }))
+
+  for (let b = 0; b < options.customBoardsPerRack; b++) {
+    addChild(project, ctx, rack, `Custom Board ${pad(b + 1, 2)}`, 'custom-board', {
+      board_type: pick(ctx, BOARD_TYPES),
+      revision: version(ctx.intRange(1, 3), ctx.intRange(0, 9), ctx.intRange(0, 9)),
+      serial: serial(ctx, 'BRD'),
+      status: weighted(ctx, [['active', 0.88], ['spare', 0.06], ['repaired', 0.04], ['failed', 0.02]]),
+      installed_date: pastDate(ctx, 10, 700),
+    })
+  }
+}
+
+function testEquipmentProps(ctx, prefix, models, extra) {
+  const lastCal = pastDate(ctx, 10, 350)
+  return {
+    vendor: pick(ctx, VENDORS),
+    model: pick(ctx, models),
+    serial: serial(ctx, prefix),
+    firmware: version(1, ctx.intRange(0, 6), ctx.intRange(0, 9)),
+    status: weighted(ctx, [['active', 0.9], ['standby', 0.06], ['maintenance', 0.04]]),
+    last_calibrated: lastCal,
+    calibration_due: isoDate(addDays(new Date(lastCal), 180)),
+    ...extra,
+  }
+}
+
+// ─── Daily churn ────────────────────────────────────────────────────────────────
+// Returns a short snapshot-name slug describing the day.
+
+function applyDailyChurn(project, options, ctx, day) {
+  const today = isoDate(addDays(new Date('2025-02-03T00:00:00.000Z'), day))
+  project.modified = ctx.clock.next()
+
+  // Scheduled schema edits exercise the template/schema diff.
+  if (day === 12) {
+    project.templates['power-supply'].fields.warranty_expiry = { type: 'date' }
+    return 'schema-warranty'
+  }
+  if (day === 26) {
+    project.templates.csci.description = 'CSCI — tracked per software configuration baseline.'
+    return 'schema-desc'
+  }
+
+  const roll = ctx.rng()
+  if (roll < 0.15) return 'quiet' // a quiet day — empty snapshot
+
+  if (roll < 0.30) {
+    maintenanceEvent(project, ctx, today)
+    return 'maint'
+  }
+
+  // Routine: CSCI version bumps (test activity), status flips, recalibrations.
+  const csciNodes = byTemplate(project, 'csci')
+  for (const n of sample(ctx, csciNodes, ctx.intRange(2, 6))) {
+    n.properties.version = bumpVersion(n.properties.version)
+    n.properties.build_date = today
+    n.modified = ctx.clock.next()
+  }
+  for (const n of sample(ctx, byTemplate(project, 'hw-component'), ctx.intRange(0, 3))) {
+    n.properties.status = pick(ctx, TEMPLATES['hw-component'].fields.status.options)
+    n.modified = ctx.clock.next()
+  }
+  recalibrate(project, ctx, today, ctx.intRange(1, 3))
+  return 'routine'
+}
+
+function maintenanceEvent(project, ctx, today) {
+  const boards = byTemplate(project, 'custom-board')
+  if (boards.length === 0) return
+  const board = pick(ctx, boards)
+  // Failure → replacement, in one snapshot.
+  board.properties.status = 'repaired'
+  board.properties.serial = serial(ctx, 'BRD')
+  board.properties.revision = bumpVersion(board.properties.revision)
+  board.properties.installed_date = today
+  board.modified = ctx.clock.next()
+
+  // A co-located hardware component swapped at the same time.
+  const rack = findAncestorByTemplate(project, board, 'rack')
+  if (rack) {
+    const hw = descendantsByTemplate(project, rack, 'hw-component')
+    for (const n of sample(ctx, hw, 1)) {
+      n.properties.status = 'active'
+      n.properties.serial = serial(ctx, String(n.properties.type ?? 'HW').slice(0, 3).toUpperCase())
+      n.modified = ctx.clock.next()
+    }
+    // And the rack's power supply recalibrated as part of the action.
+    const supplies = descendantsByTemplate(project, rack, 'power-supply')
+    for (const ps of supplies) {
+      ps.properties.last_calibrated = today
+      ps.properties.calibration_due = isoDate(addDays(new Date(today), 180))
+      ps.modified = ctx.clock.next()
+    }
+
+    // Sometimes the action is a physical add or decommission (exercises
+    // added / removed / order-changed diffs over the timeline).
+    const roll = ctx.rng()
+    if (roll < 0.35) {
+      spareSeq += 1
+      addChild(project, ctx, rack, `Custom Board spare ${spareSeq}`, 'custom-board', {
+        board_type: pick(ctx, BOARD_TYPES),
+        revision: version(ctx.intRange(1, 3), ctx.intRange(0, 9), ctx.intRange(0, 9)),
+        serial: serial(ctx, 'BRD'),
+        status: 'spare',
+        installed_date: today,
+      })
+    } else if (roll < 0.55) {
+      const removable = childrenOf(project, rack.id).filter(
+        n => n.templateId === 'custom-board' && ['spare', 'failed'].includes(n.properties.status)
+      )
+      if (removable.length) removeLeaf(project, pick(ctx, removable))
+    }
+  }
+}
+
+function removeLeaf(project, n) {
+  project.nodes = project.nodes.filter(x => x.id !== n.id)
+  const sibs = project.nodes.filter(x => x.parentId === n.parentId).sort((a, b) => a.order - b.order)
+  sibs.forEach((s, i) => { s.order = i })
+}
+
+function recalibrate(project, ctx, today, count) {
+  const equip = [...byTemplate(project, 'power-supply'), ...byTemplate(project, 'waveform-generator')]
+  for (const n of sample(ctx, equip, count)) {
+    n.properties.last_calibrated = today
+    n.properties.calibration_due = isoDate(addDays(new Date(today), 180))
+    n.modified = ctx.clock.next()
+  }
+}
+
+// ─── Node helpers ────────────────────────────────────────────────────────────────
+
+function node(ctx, parentId, name, templateId, properties) {
+  const ts = ctx.clock.next()
+  ctx.seq += 1
+  const n = {
+    id: uuidv7(),
+    parentId,
+    name,
+    order: 0,
+    properties,
+    created: ts,
+    modified: ts,
+  }
+  if (templateId) n.templateId = templateId
+  return n
+}
+
+function addChild(project, ctx, parent, name, templateId, properties) {
+  const order = project.nodes.filter(n => n.parentId === parent.id).length
+  const child = node(ctx, parent.id, name, templateId, properties)
+  child.order = order
+  project.nodes.push(child)
+  return child
+}
+
+function byTemplate(project, templateId) {
+  return project.nodes.filter(n => n.templateId === templateId)
+}
+
+function childrenOf(project, id) {
+  return project.nodes.filter(n => n.parentId === id)
+}
+
+function findAncestorByTemplate(project, n, templateId) {
+  const byId = new Map(project.nodes.map(x => [x.id, x]))
+  let cur = n.parentId ? byId.get(n.parentId) : null
+  while (cur) {
+    if (cur.templateId === templateId) return cur
+    cur = cur.parentId ? byId.get(cur.parentId) : null
+  }
+  return null
+}
+
+function descendantsByTemplate(project, root, templateId) {
+  const out = []
+  const stack = [root.id]
+  while (stack.length) {
+    const id = stack.pop()
+    for (const c of childrenOf(project, id)) {
+      if (c.templateId === templateId) out.push(c)
+      stack.push(c.id)
+    }
+  }
+  return out
+}
+
+function summarize(project) {
+  const byId = new Map(project.nodes.map(n => [n.id, n]))
+  let depth = 0
+  for (const n of project.nodes) {
+    let d = 0
+    let cur = n
+    while (cur.parentId) { d++; cur = byId.get(cur.parentId) }
+    depth = Math.max(depth, d)
+  }
+  return { nodes: project.nodes.length, depth }
+}
+
+// ─── Value helpers ──────────────────────────────────────────────────────────────
+
+function version(maj, min, patch) { return `v${maj}.${min}.${patch}` }
+
+function bumpVersion(v) {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(String(v))
+  if (!m) return `${v}.1`
+  const [, a, b, c] = m
+  return `v${a}.${b}.${Number(c) + 1}`
+}
+
+function serial(ctx, prefix) {
+  return `${prefix}-${String(Math.floor(ctx.rng() * 1e6)).padStart(6, '0')}`
+}
+
+function pastDate(ctx, minDays, maxDays) {
+  const base = new Date('2025-02-03T00:00:00.000Z')
+  const back = ctx.intRange(minDays, maxDays)
+  return isoDate(addDays(base, -back))
+}
+
+function isoDate(d) { return d.toISOString().slice(0, 10) }
+function addDays(d, n) { const x = new Date(d); x.setUTCDate(x.getUTCDate() + n); return x }
+function round1(n) { return Math.round(n * 10) / 10 }
+function pad(n, w) { return String(n).padStart(w, '0') }
+function letter(i) { return String.fromCharCode(65 + (i % 26)) }
+
+function pick(ctx, arr) { return arr[Math.floor(ctx.rng() * arr.length)] }
+
+function weighted(ctx, pairs) {
+  const total = pairs.reduce((s, [, w]) => s + w, 0)
+  let r = ctx.rng() * total
+  for (const [val, w] of pairs) { if ((r -= w) <= 0) return val }
+  return pairs[0][0]
+}
+
+function sample(ctx, arr, count) {
+  const a = [...arr]
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(ctx.rng() * (i + 1))
+    ;[a[i], a[j]] = [a[j], a[i]]
+  }
+  return a.slice(0, Math.min(count, a.length))
+}
+
+// ─── CSV export (a flat sheet for the upcoming importer) ─────────────────────────
+
+function writeSampleCsv(projectDir, project) {
+  const byId = new Map(project.nodes.map(n => [n.id, n]))
+  const pathOf = (n) => {
+    const parts = []
+    let cur = n.parentId ? byId.get(n.parentId) : null
+    while (cur) { parts.unshift(cur.name); cur = cur.parentId ? byId.get(cur.parentId) : null }
+    return parts.join(' / ')
+  }
+  const cols = ['parent_path', 'name', 'board_type', 'revision', 'serial', 'status', 'installed_date']
+  const esc = (v) => {
+    const s = String(v ?? '')
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+  }
+  const rows = [cols.join(',')]
+  for (const n of byTemplate(project, 'custom-board')) {
+    rows.push([
+      pathOf(n), n.name, n.properties.board_type, n.properties.revision,
+      n.properties.serial, n.properties.status, n.properties.installed_date,
+    ].map(esc).join(','))
+  }
+  writeFileSync(join(projectDir, 'import-sample-custom-boards.csv'), rows.join('\n') + '\n', 'utf8')
+}
+
+// ─── IO / git ────────────────────────────────────────────────────────────────────
+
+function writeManifest(projectDir, project) {
+  writeFileSync(join(projectDir, 'manifest.json'), JSON.stringify(project, null, 2), 'utf8')
+}
+
+function initGit(projectDir) {
+  git(projectDir, ['init'])
+  git(projectDir, ['add', 'manifest.json'])
+  git(projectDir, ['-c', 'user.email=manifest@local', '-c', 'user.name=Manifest', 'commit', '-m', 'Initial lab project'])
+}
+
+function snapshot(projectDir, name) {
+  git(projectDir, ['add', 'manifest.json'])
+  git(projectDir, ['-c', 'user.email=manifest@local', '-c', 'user.name=Manifest', 'commit', '--allow-empty', '-m', name])
+  git(projectDir, ['tag', `snapshot/${name}`])
+}
+
+function git(projectDir, args) {
+  execFileSync('git', args, { cwd: projectDir, stdio: 'pipe' })
+}
+
+// ─── CLI ──────────────────────────────────────────────────────────────────────────
+
+function parseArgs(argv) {
+  const o = { ...DEFAULTS, help: false }
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]
+    if (arg === '--help' || arg === '-h') { o.help = true; continue }
+    if (arg === '--force') { o.force = true; continue }
+    const [flag, inline] = arg.split('=')
+    const val = inline ?? argv[i + 1]
+    const take = () => { if (inline === undefined) i++; return val }
+    switch (flag) {
+      case '--output': o.output = take(); break
+      case '--name': o.name = take(); break
+      case '--rooms': o.rooms = int(flag, take()); break
+      case '--racks-per-room': o.racksPerRoom = int(flag, take()); break
+      case '--computers-per-rack': o.computersPerRack = int(flag, take()); break
+      case '--custom-boards-per-rack': o.customBoardsPerRack = int(flag, take()); break
+      case '--hw-per-computer': o.hwPerComputer = int(flag, take()); break
+      case '--csci-per-computer': o.csciPerComputer = int(flag, take()); break
+      case '--days': o.days = int(flag, take()); break
+      case '--seed': o.seed = int(flag, take()); break
+      default: throw new Error(`Unknown argument: ${arg}`)
+    }
+  }
+  return o
+}
+
+function validateOptions(o) {
+  for (const k of ['rooms', 'racksPerRoom', 'computersPerRack', 'hwPerComputer', 'csciPerComputer']) {
+    if (o[k] < 1) throw new Error(`--${k} must be at least 1`)
+  }
+  if (o.days < 0) throw new Error('--days cannot be negative')
+}
+
+function printHelp() {
+  console.log(`
+Usage:
+  bun run generate:lab -- [options]
+
+Options:
+  --output <dir>                Project directory to create
+  --name <name>                 Lab/project name
+  --rooms <n>                   Rooms (default 2)
+  --racks-per-room <n>          Racks per room (default 60)
+  --computers-per-rack <n>      Computers per rack (default 4)
+  --custom-boards-per-rack <n>  Custom boards per rack (default 3)
+  --hw-per-computer <n>         Hardware components per computer (default 5)
+  --csci-per-computer <n>       CSCIs per computer (default 5)
+  --days <n>                    Daily snapshots to generate (default 40)
+  --seed <number>               RNG seed (default 42)
+  --force                       Replace a non-empty output directory
+  --help                        Show this help
+
+Examples:
+  bun run generate:lab -- --output ./tmp/lab --force
+  bun run generate:lab -- --output ./tmp/lab-big --racks-per-room 100 --days 60 --force
+`.trim())
+}
+
+function int(flag, value) {
+  if (value === undefined || String(value).startsWith('--')) throw new Error(`Missing value for ${flag}`)
+  const n = Number.parseInt(value, 10)
+  if (!Number.isFinite(n)) throw new Error(`${flag} must be an integer`)
+  return n
+}
+
+function prepareOutputDir(dir, force) {
+  if (!existsSync(dir)) { mkdirSync(dir, { recursive: true }); return }
+  if (readdirSync(dir).length === 0) return
+  if (!force) throw new Error(`Output directory exists and is not empty: ${dir}. Use --force.`)
+  rmSync(dir, { recursive: true, force: true })
+  mkdirSync(dir, { recursive: true })
+}
+
+function createRng(seed) {
+  let state = seed >>> 0
+  const rng = () => {
+    state += 0x6d2b79f5
+    let t = state
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+  rng.intRange = (min, max) => min + Math.floor(rng() * (max - min + 1))
+  return rng
+}
+
+function makeClock(start) {
+  let cur = start.getTime()
+  return { next() { const v = new Date(cur).toISOString(); cur += 60_000; return v } }
+}
+
+function slugify(v) {
+  return v.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'lab'
+}
+
+function stamp() {
+  return new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14)
+}
