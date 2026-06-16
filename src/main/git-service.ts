@@ -9,6 +9,12 @@ import type { Logger } from './logger'
 
 const execFileAsync = promisify(execFile)
 
+// Node's default execFile stdout cap is 1 MB. A manifest.json can be much
+// larger (the project itself allows up to 50 MB), and `git show` / `for-each-ref`
+// output scales with project and snapshot count — so reading a snapshot manifest
+// for a large project would otherwise fail with ENOBUFS. Allow comfortably more.
+const MAX_GIT_BUFFER = 64 * 1024 * 1024
+
 const MIN_GIT_VERSION: [number, number, number] = [2, 25, 0]
 const MIN_GIT_VERSION_STRING = MIN_GIT_VERSION.join('.')
 const SNAPSHOT_TAG_PREFIX = 'snapshot/'
@@ -133,7 +139,7 @@ export class GitService {
           '--sort=-creatordate',
           '--format=%(refname)\t%(objectname)\t%(creatordate:iso-strict)\t%(subject)',
         ],
-        { cwd: projectDir }
+        { cwd: projectDir, maxBuffer: MAX_GIT_BUFFER }
       )
 
       const snapshots = stdout
@@ -163,6 +169,7 @@ export class GitService {
     return this.queue.enqueue(async () => {
       const { stdout } = await execFileAsync('git', ['show', `${SNAPSHOT_TAG_PREFIX}${name}:manifest.json`], {
         cwd: projectDir,
+        maxBuffer: MAX_GIT_BUFFER,
       })
       return stdout
     })
@@ -172,6 +179,7 @@ export class GitService {
     return this.queue.enqueue(async () => {
       const { stdout } = await execFileAsync('git', ['show', 'HEAD:manifest.json'], {
         cwd: projectDir,
+        maxBuffer: MAX_GIT_BUFFER,
       })
       return stdout
     })

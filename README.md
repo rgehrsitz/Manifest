@@ -69,7 +69,14 @@ bun run test            # unit test suite
 bun run test:e2e        # Electron end-to-end tests
 bun run package         # build distributable desktop packages
 bun run generate:brand  # regenerate app/web icons from resources/manifest.svg
+bun run generate:lab    # generate a realistic sample lab project (typed templates + snapshot timeline)
 ```
+
+To create a sample project to explore, run `bun run generate:lab -- --output ./tmp/lab --force`,
+then open `./tmp/lab` from the app's welcome screen. It produces a ~7k-node lab
+(rooms → racks → computers → hardware/software components) with typed-property
+templates and ~40 daily snapshots of realistic change, so the diff/compare and
+history features have meaningful data to work against.
 
 ## Project Layout
 

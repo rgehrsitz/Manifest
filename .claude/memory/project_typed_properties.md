@@ -66,14 +66,23 @@ threaded through the virtualized tree — node only carries templateId) and
 type-aware value formatting (date humanized / boolean Yes-No) — values are
 already readable, low payoff vs. threading template types into the flat diff.
 
-Typed-properties feature (Phases 1–3) complete and on PR #8
-(github.com/rgehrsitz/Manifest/pull/8). Review round (Copilot + Codex)
-addressed in commit a261f7c: nodeUpdate re-validates existing props on
-template (re)bind; collectLoadWarnings no longer throws on invalid referenced
-templates; template-changed now surfaced in NodeHistoryView, tree-rows/TreeRow
-badges, and density-layer fold chips; validateTemplate/coercePropertyValue
-hardened against hand-edited/untrusted input; fixed a NUL-byte test file and
-dropped `ml-34` Tailwind class. 324 unit + 25 E2E green.
+Typed-properties feature (Phases 1–3) **MERGED to main** via PR #8
+(merge commit 9de37a6; feature branch deleted). Three review rounds addressed:
+- nodeUpdate re-validates existing props on template (re)bind; collectLoadWarnings
+  never throws on invalid referenced templates; template-changed surfaced in
+  NodeHistoryView, tree-rows/TreeRow badges, density-layer fold chips.
+- Field default/label preserved through TemplateManager save; diffTemplates
+  detects description-only changes (template-redescribed).
+- Malformed-template hardening centralized in shared safe accessors in
+  `src/shared/validation.ts`: `templateFields()`, `isUsableTemplate()`,
+  `templateLabel()` — used by every renderer + main + diff consumer so a
+  hand-edited/garbage template never throws. coercePropertyValue rejects
+  non-primitive input.
+Final on main: 332 unit + 28 E2E green.
+
+**Decision (settled):** `required` fields are ADVISORY in v1 — a visible
+"Required — not set" cue + a `MISSING_REQUIRED` load warning, NOT a hard
+save-block. Revisit only if a config-control workflow demands hard enforcement.
 
 Next per roadmap: `reference` property type → CSV import → diff report export → Tauri.
 Full plan: `~/.claude/plans/fluffy-swimming-wozniak.md`.
