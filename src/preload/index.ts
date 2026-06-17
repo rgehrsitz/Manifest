@@ -44,6 +44,15 @@ const api: ManifestAPI = {
       ipcRenderer.invoke(IPC.TEMPLATE_DELETE, { id }),
   },
 
+  import: {
+    inspect: (path) =>
+      ipcRenderer.invoke(IPC.IMPORT_INSPECT, { path }),
+    plan: (path, mapping) =>
+      ipcRenderer.invoke(IPC.IMPORT_PLAN, { path, mapping }),
+    apply: (path, mapping) =>
+      ipcRenderer.invoke(IPC.IMPORT_APPLY, { path, mapping }),
+  },
+
   search: {
     query: (query) =>
       ipcRenderer.invoke(IPC.SEARCH_QUERY, { query }),
@@ -74,6 +83,8 @@ const api: ManifestAPI = {
   dialog: {
     openFolder: (title) =>
       ipcRenderer.invoke(IPC.DIALOG_OPEN_FOLDER, { title }),
+    openFile: (title) =>
+      ipcRenderer.invoke(IPC.DIALOG_OPEN_FILE, { title }),
   },
 }
 
