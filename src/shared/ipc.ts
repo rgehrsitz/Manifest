@@ -21,6 +21,10 @@ import type {
   SnapshotRevertRequest,
   SnapshotRevertResult,
   SnapshotTimeline,
+  ImportMapping,
+  ImportInspect,
+  ImportPlan,
+  ImportResult,
 } from './types'
 import type { MergedTree } from './merged-tree'
 
@@ -40,6 +44,9 @@ export const IPC = {
   TEMPLATE_CREATE:     'template:create',
   TEMPLATE_UPDATE:     'template:update',
   TEMPLATE_DELETE:     'template:delete',
+  IMPORT_INSPECT:      'import:inspect',
+  IMPORT_PLAN:         'import:plan',
+  IMPORT_APPLY:        'import:apply',
   SEARCH_QUERY:        'search:query',
   SNAPSHOT_CREATE:     'snapshot:create',
   SNAPSHOT_LIST:       'snapshot:list',
@@ -51,6 +58,7 @@ export const IPC = {
   GIT_CHECK:           'git:check',
   // UI utility channels (not domain operations)
   DIALOG_OPEN_FOLDER:  'dialog:openFolder',
+  DIALOG_OPEN_FILE:    'dialog:openFile',
 } as const
 
 // Typed API surface exposed on window.api by the preload script.
@@ -96,6 +104,14 @@ export interface ManifestAPI {
     /** Delete a template; bound nodes are unbound but keep their values. Returns full updated Project. */
     delete(id: string): Promise<Result<Project>>
   }
+  import: {
+    /** First look at a CSV: headers, a sample, and total row count. */
+    inspect(path: string): Promise<Result<ImportInspect>>
+    /** Full-file validation given a mapping: accepted/skipped/warning counts + capped issues. */
+    plan(path: string, mapping: ImportMapping): Promise<Result<ImportPlan>>
+    /** Apply the import (re-plans authoritatively). Returns the updated Project + a summary. */
+    apply(path: string, mapping: ImportMapping): Promise<Result<{ project: Project; summary: ImportResult }>>
+  }
   search: {
     query(query: string): Promise<Result<SearchResult[]>>
   }
@@ -114,5 +130,6 @@ export interface ManifestAPI {
   }
   dialog: {
     openFolder(title: string): Promise<string | null>
+    openFile(title: string): Promise<string | null>
   }
 }

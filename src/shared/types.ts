@@ -66,6 +66,70 @@ export interface Project {
   loadWarnings?: ManifestWarning[]
 }
 
+// ─── CSV import ─────────────────────────────────────────────────────────────────
+
+export type ImportPlacement = 'flat' | 'path'
+
+// One CSV column mapped to a node property. `key` is the (editable) property
+// key; `include: false` drops the column.
+export interface ImportColumnMapping {
+  header: string
+  key: string
+  include: boolean
+}
+
+export interface ImportMapping {
+  placement: ImportPlacement
+  // flat: every row becomes a child here. path: the base for resolving the
+  // breadcrumb column (paths walk down from this node).
+  baseParentId: string
+  nameColumn: string
+  pathColumn?: string
+  pathSeparator?: string          // default ' / '
+  // path placement only: create any missing breadcrumb ancestors (as plain
+  // untyped nodes) instead of skipping the row. Ignored when placement is flat.
+  autoCreateParents?: boolean
+  templateId?: string | null
+  columns: ImportColumnMapping[]   // property columns only (excludes name/path)
+}
+
+// Cheap first look at a file, before any mapping: headers, a sample, total count.
+export interface ImportInspect {
+  headers: string[]
+  sampleRows: string[][]
+  rowCount: number
+}
+
+// A single per-row problem. `row` is the 1-based file row (header = row 1).
+export interface ImportIssue {
+  row: number
+  column?: string
+  reason: string
+}
+
+// Full-file validation result (issue arrays capped for transport/display).
+export interface ImportPlan {
+  acceptedCount: number
+  skippedCount: number
+  warningCount: number
+  createdParents: number          // ancestors auto-created to satisfy paths
+  skipped: ImportIssue[]
+  warnings: ImportIssue[]
+  capped: boolean
+}
+
+// Outcome of an applied import. Issue arrays are capped for transport (same as
+// ImportPlan); the *Count fields carry the true totals.
+export interface ImportResult {
+  created: number
+  createdParents: number          // ancestors auto-created to satisfy paths
+  skippedCount: number
+  warningCount: number
+  skipped: ImportIssue[]
+  warnings: ImportIssue[]
+  capped: boolean
+}
+
 export type ChangeType =
   | 'added'
   | 'removed'

@@ -42,6 +42,10 @@ import type {
   NodeTemplate,
   TemplateField,
   ManifestWarning,
+  ImportMapping,
+  ImportInspect,
+  ImportPlan,
+  ImportResult,
 } from '../shared/types'
 import { ok, err, ErrorCode } from '../shared/errors'
 import { migrate, getCurrentVersion } from '../shared/migration'
@@ -63,6 +67,8 @@ import {
 } from '../shared/validation'
 import { diffProjects } from '../shared/diff-engine'
 import { buildMergedTree } from '../shared/merged-tree'
+import { parseCsv, CsvParseError } from '../shared/csv'
+import { planImport } from '../shared/import'
 import type { MergedTree } from '../shared/merged-tree'
 import type { GitService } from './git-service'
 import type { Logger } from './logger'
@@ -510,6 +516,126 @@ export class ProjectManager {
     return this.commitProjectMutation(nextProject, () => {
       this.search.rebuild(nextProject)
     })
+  }
+
+  // ─── CSV import ───────────────────────────────────────────────────────────────
+
+  // Read + parse a CSV file into rows, with the same 50 MB cap as project files.
+  private readCsv(path: string): Result<string[][]> {
+    try {
+      const stat = statSync(path)
+      if (stat.size > MAX_FILE_SIZE_BYTES) {
+        const mb = Math.round(stat.size / 1024 / 1024)
+        return err(ErrorCode.FILE_TOO_LARGE, `CSV is ${mb}MB (limit: 50MB)`)
+      }
+      const raw = readFileSync(path, 'utf8')
+      return ok(parseCsv(raw))
+    } catch (e: unknown) {
+      if (e instanceof CsvParseError) return err(ErrorCode.VALIDATION_FAILED, e.message)
+      const msg = e instanceof Error ? e.message : String(e)
+      return err(ErrorCode.VALIDATION_FAILED, `Could not read CSV: ${msg}`)
+    }
+  }
+
+  // First look at a file before any mapping: headers, a sample, total row count.
+  inspectImport(path: string): Result<ImportInspect> {
+    const parsed = this.readCsv(path)
+    if (!parsed.ok) return parsed as Result<ImportInspect>
+    const table = parsed.data
+    const headers = table[0] ?? []
+    const dataRows = table.slice(1)
+    return ok({ headers, sampleRows: dataRows.slice(0, 50), rowCount: dataRows.length })
+  }
+
+  // Full-file validation given a mapping (counts + capped issue samples).
+  planImportCsv(path: string, mapping: ImportMapping): Result<ImportPlan> {
+    if (!this.currentProject) return err(ErrorCode.PROJECT_NOT_FOUND, 'No project open')
+    const parsed = this.readCsv(path)
+    if (!parsed.ok) return parsed as Result<ImportPlan>
+    const table = parsed.data
+    const out = planImport(
+      table.slice(1), table[0] ?? [], mapping,
+      this.currentProject.templates ?? {}, this.currentProject.nodes,
+    )
+    if (out.mappingError) return err(ErrorCode.VALIDATION_FAILED, out.mappingError)
+    const CAP = 100
+    const createdParents = out.create.filter(n => n.auto).length
+    return ok({
+      acceptedCount: out.create.length - createdParents,
+      skippedCount: out.skipped.length,
+      warningCount: out.warnings.length,
+      createdParents,
+      skipped: out.skipped.slice(0, CAP),
+      warnings: out.warnings.slice(0, CAP),
+      capped: out.skipped.length > CAP || out.warnings.length > CAP,
+    })
+  }
+
+  // Apply: re-plan (authoritative), build every accepted node, append in ONE
+  // mutation/commit, and return the updated project plus a summary.
+  applyImportCsv(path: string, mapping: ImportMapping): Result<{ project: Project; summary: ImportResult }> {
+    if (!this.currentProject) return err(ErrorCode.PROJECT_NOT_FOUND, 'No project open')
+    const parsed = this.readCsv(path)
+    if (!parsed.ok) return parsed as Result<{ project: Project; summary: ImportResult }>
+    const table = parsed.data
+    const out = planImport(
+      table.slice(1), table[0] ?? [], mapping,
+      this.currentProject.templates ?? {}, this.currentProject.nodes,
+    )
+    if (out.mappingError) return err(ErrorCode.VALIDATION_FAILED, out.mappingError)
+
+    const createdParents = out.create.filter(n => n.auto).length
+    const CAP = 100
+    const summary: ImportResult = {
+      created: out.create.length - createdParents,
+      createdParents,
+      skippedCount: out.skipped.length,
+      warningCount: out.warnings.length,
+      skipped: out.skipped.slice(0, CAP),
+      warnings: out.warnings.slice(0, CAP),
+      capped: out.skipped.length > CAP || out.warnings.length > CAP,
+    }
+    if (out.create.length === 0) {
+      return ok({ project: this.currentProject, summary })
+    }
+
+    const now = new Date().toISOString()
+    // Per-parent order counters seeded from existing child counts.
+    const orderByParent = new Map<string, number>()
+    for (const n of this.currentProject.nodes) {
+      if (n.parentId !== null) orderByParent.set(n.parentId, (orderByParent.get(n.parentId) ?? 0) + 1)
+    }
+    // Auto-created ancestors carry a synthetic `localId`; map it to the real id
+    // so dependent nodes (pushed after their parent) wire up correctly.
+    const idMap = new Map<string, string>()
+    const newNodes: ManifestNode[] = out.create.map(p => {
+      const parentId = idMap.get(p.parentId) ?? p.parentId
+      const id = uuidv7()
+      if (p.localId) idMap.set(p.localId, id)
+      const order = orderByParent.get(parentId) ?? 0
+      orderByParent.set(parentId, order + 1)
+      return {
+        id,
+        parentId,
+        name: p.name,
+        order,
+        properties: p.properties,
+        ...(p.templateId ? { templateId: p.templateId } : {}),
+        created: now,
+        modified: now,
+      }
+    })
+
+    const nextProject: Project = {
+      ...this.currentProject,
+      modified: now,
+      nodes: [...this.currentProject.nodes, ...newNodes],
+    }
+    const committed = this.commitProjectMutation(nextProject, () => {
+      this.search.rebuild(nextProject)
+    })
+    if (!committed.ok) return committed as Result<{ project: Project; summary: ImportResult }>
+    return ok({ project: committed.data, summary })
   }
 
   // Delete a node and all its descendants.

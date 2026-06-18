@@ -40,6 +40,7 @@
     onRenameRequest?: () => void
     onDelete?: (id: string) => void
     onMoveTo?: (id: string) => void
+    onImportHere?: (id: string) => void
     editingDisabled?: boolean
     selectedScrollAlign?: 'auto' | 'center'
   }
@@ -59,6 +60,7 @@
     onRenameRequest,
     onDelete,
     onMoveTo,
+    onImportHere,
     editingDisabled = false,
     selectedScrollAlign = 'auto',
   }: Props = $props()
@@ -632,6 +634,12 @@
       role="menuitem"
       onclick={() => { const id = menuRow!.node.id; closeContextMenu(); onAddChild?.(id) }}
     >Add Child</button>
+
+    <button
+      class="w-full text-left px-3 py-1.5 hover:bg-stone-50 [-webkit-app-region:no-drag]"
+      role="menuitem"
+      onclick={() => { const id = menuRow!.node.id; closeContextMenu(); onImportHere?.(id) }}
+    >Import rows here…</button>
 
     {#if !menuIsRoot}
       <div class="border-t border-stone-100 my-1"></div>

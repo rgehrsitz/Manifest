@@ -6,7 +6,7 @@ import { ProjectManager } from './project-manager'
 import { GitService } from './git-service'
 import { IPC } from '../shared/ipc'
 import { ok, err, ErrorCode } from '../shared/errors'
-import type { NodeTemplate } from '../shared/types'
+import type { NodeTemplate, ImportMapping } from '../shared/types'
 
 // ─── Logging ────────────────────────────────────────────────────────────────
 
@@ -133,6 +133,20 @@ function registerIpcHandlers(): void {
     projectManager.templateDelete(id)
   )
 
+  // ── CSV import ─────────────────────────────────────────────────────────────
+
+  ipcMain.handle(IPC.IMPORT_INSPECT, (_, { path }: { path: string }) =>
+    projectManager.inspectImport(path)
+  )
+
+  ipcMain.handle(IPC.IMPORT_PLAN, (_, { path, mapping }: { path: string; mapping: ImportMapping }) =>
+    projectManager.planImportCsv(path, mapping)
+  )
+
+  ipcMain.handle(IPC.IMPORT_APPLY, (_, { path, mapping }: { path: string; mapping: ImportMapping }) =>
+    projectManager.applyImportCsv(path, mapping)
+  )
+
   // ── Search ───────────────────────────────────────────────────────────────
 
   ipcMain.handle(IPC.SEARCH_QUERY, (_, { query }: { query: string }) =>
@@ -152,6 +166,15 @@ function registerIpcHandlers(): void {
     const result = await dialog.showOpenDialog({
       title,
       properties: ['openDirectory', 'createDirectory'],
+    })
+    return result.canceled ? null : result.filePaths[0]
+  })
+
+  ipcMain.handle(IPC.DIALOG_OPEN_FILE, async (_, { title }: { title: string }) => {
+    const result = await dialog.showOpenDialog({
+      title,
+      properties: ['openFile'],
+      filters: [{ name: 'CSV', extensions: ['csv'] }],
     })
     return result.canceled ? null : result.filePaths[0]
   })

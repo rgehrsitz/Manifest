@@ -2,7 +2,7 @@
 
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte'
-  import type { Project, ManifestNode, ManifestWarning, NodeTemplate, PropertyType, RecoveryPoint, SearchResult, Snapshot, SnapshotTimelineEvent } from '../../shared/types'
+  import type { Project, ManifestNode, ManifestWarning, NodeTemplate, PropertyType, RecoveryPoint, SearchResult, Snapshot, SnapshotTimelineEvent, ImportResult } from '../../shared/types'
   import { isUsableTemplate, templateLabel } from '../../shared/validation'
   import type { MergedTree } from '../../shared/merged-tree'
   import { computeSubtreeSummaries } from '../../shared/merged-tree'
@@ -12,6 +12,7 @@
   import DetailPane from './components/DetailPane.svelte'
   import MoveToDialog from './components/MoveToDialog.svelte'
   import TemplateManager from './components/TemplateManager.svelte'
+  import ImportDialog from './components/ImportDialog.svelte'
   import RecoveryDialog from './components/RecoveryDialog.svelte'
   import RevertDialog from './components/RevertDialog.svelte'
   import SnapshotsPanel from './components/SnapshotsPanel.svelte'
@@ -568,6 +569,45 @@
     return result.error.message
   }
 
+  // ─── CSV import ───────────────────────────────────────────────────────────────
+
+  let importDialogOpen = $state(false)
+  let importBaseParent = $state<ManifestNode | null>(null)
+  let importSummary = $state<ImportResult | null>(null)
+  let importSummaryDismissed = $state(false)
+  const showImportSummary = $derived(importSummary !== null && !importSummaryDismissed)
+
+  function resolveBaseParent(node?: ManifestNode): ManifestNode | null {
+    if (!project) return null
+    if (node) return node
+    const sel = selectedId ? project.nodes.find(n => n.id === selectedId) : undefined
+    return sel ?? project.nodes.find(n => n.parentId === null) ?? null
+  }
+
+  function openImportDialog(node?: ManifestNode) {
+    if (editingLocked) { showToast(lockReason()); return }
+    const base = resolveBaseParent(node)
+    if (!base) return
+    importBaseParent = base
+    importDialogOpen = true
+  }
+
+  function handleImportHere(id: string) {
+    const node = project?.nodes.find(n => n.id === id)
+    openImportDialog(node)
+  }
+
+  function handleImported(next: Project, summary: ImportResult) {
+    applyProject(next)
+    markWorkingCopyChanged()
+    // Reveal the imported rows by expanding the base parent (flat imports land
+    // directly under it; path imports go deeper, but expanding the base is a
+    // sensible starting point).
+    if (importBaseParent) expandedIds = new Set([...expandedIds, importBaseParent.id])
+    importSummary = summary
+    importSummaryDismissed = false
+  }
+
   // ─── Search ───────────────────────────────────────────────────────────────
 
   let searchTimer: ReturnType<typeof setTimeout> | null = null
@@ -912,6 +952,16 @@
   />
 {/if}
 
+<!-- ─── Import dialog ─────────────────────────────────────────────────────── -->
+{#if importDialogOpen && project && importBaseParent}
+  <ImportDialog
+    baseParent={importBaseParent}
+    templates={project.templates ?? {}}
+    onImported={handleImported}
+    onClose={() => { importDialogOpen = false }}
+  />
+{/if}
+
 <!-- ─── Welcome ────────────────────────────────────────────────────────────── -->
 {#if appState === 'welcome'}
   <div class="flex flex-col h-full items-center justify-center bg-stone-50">
@@ -1066,6 +1116,14 @@
       </div>
       <div class="flex items-center gap-2 [-webkit-app-region:no-drag]">
         <button
+          onclick={() => openImportDialog()}
+          class="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-600
+                 transition-colors hover:bg-stone-50 cursor-default"
+          data-testid="open-import-btn"
+        >
+          Import…
+        </button>
+        <button
           onclick={openTemplateManager}
           class="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-600
                  transition-colors hover:bg-stone-50 cursor-default"
@@ -1122,6 +1180,41 @@
             class="shrink-0 text-amber-700 hover:text-amber-900 cursor-default"
             aria-label="Dismiss warnings"
             data-testid="dismiss-load-warnings"
+          >✕</button>
+        </div>
+      </div>
+    {/if}
+
+    <!-- Post-import summary -->
+    {#if showImportSummary && importSummary}
+      <div
+        class="shrink-0 border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-xs text-emerald-900"
+        data-testid="import-summary-banner"
+      >
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <p class="font-semibold">
+              Imported {importSummary.created} node{importSummary.created === 1 ? '' : 's'}
+              {#if importSummary.createdParents > 0}<span class="font-normal text-emerald-800"> · {importSummary.createdParents} parent{importSummary.createdParents === 1 ? '' : 's'} created</span>{/if}
+              {#if importSummary.skippedCount > 0}<span class="font-normal text-emerald-800"> · {importSummary.skippedCount} skipped</span>{/if}
+              {#if importSummary.warningCount > 0}<span class="font-normal text-amber-700"> · {importSummary.warningCount} warnings</span>{/if}
+            </p>
+            {#if importSummary.skipped.length > 0}
+              <ul class="mt-1 space-y-0.5">
+                {#each importSummary.skipped.slice(0, 5) as s (s.row + (s.column ?? ''))}
+                  <li class="truncate text-emerald-800">row {s.row}{s.column ? ` · ${s.column}` : ''} — {s.reason}</li>
+                {/each}
+                {#if importSummary.skippedCount > 5}
+                  <li class="text-emerald-700">…and {importSummary.skippedCount - 5} more</li>
+                {/if}
+              </ul>
+            {/if}
+          </div>
+          <button
+            onclick={() => { importSummaryDismissed = true }}
+            class="shrink-0 text-emerald-700 hover:text-emerald-900 cursor-default"
+            aria-label="Dismiss import summary"
+            data-testid="dismiss-import-summary"
           >✕</button>
         </div>
       </div>
@@ -1235,6 +1328,7 @@
                 onSelect={handleSelect}
                 onToggle={handleToggle}
                 onAddChild={handleAddChild}
+                onImportHere={handleImportHere}
                 onMoveUp={handleMoveUp}
                 onMoveDown={handleMoveDown}
                 onRenameRequest={handleRenameRequest}
