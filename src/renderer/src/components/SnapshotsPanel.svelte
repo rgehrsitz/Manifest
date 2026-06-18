@@ -37,6 +37,10 @@
     onExitCompare: () => void
     onRestore: (name: string) => Promise<void>
     onApplyRecovery: (id: string) => Promise<void>
+    /** Export the current compare as a saved report (Markdown or CSV). */
+    onExportReport?: (format: 'markdown' | 'csv') => Promise<void>
+    /** Copy the current compare as Markdown to the clipboard. */
+    onCopyReport?: () => Promise<void>
   }
 
   let {
@@ -60,11 +64,20 @@
     onExitCompare,
     onRestore,
     onApplyRecovery,
+    onExportReport,
+    onCopyReport,
   }: Props = $props()
 
   let snapshotName = $state('')
   let compareFrom = $state('')
   let compareTo = $state('')
+  let reportBusy = $state(false)
+
+  async function runReport(fn: (() => Promise<void> | undefined) | undefined) {
+    if (!fn || reportBusy) return
+    reportBusy = true
+    try { await fn() } finally { reportBusy = false }
+  }
 
   // Ref to scrollable body — used to scroll highlighted diff into view.
   let scrollEl: HTMLElement | null = $state(null)
@@ -270,6 +283,28 @@
         <p class="text-xs text-stone-400">{totalChanges} {totalChanges === 1 ? 'change' : 'changes'}</p>
       </div>
       <div class="flex items-center gap-1">
+        <button
+          onclick={() => runReport(onCopyReport)}
+          disabled={reportBusy}
+          title="Copy this comparison as Markdown"
+          class="rounded-lg border border-stone-200 px-2 py-1 text-xs text-stone-600
+                 transition-colors hover:bg-stone-50 disabled:opacity-50 cursor-default"
+          data-testid="report-copy-md"
+        >Copy MD</button>
+        <button
+          onclick={() => runReport(() => onExportReport?.('markdown'))}
+          disabled={reportBusy}
+          class="rounded-lg border border-stone-200 px-2 py-1 text-xs text-stone-600
+                 transition-colors hover:bg-stone-50 disabled:opacity-50 cursor-default"
+          data-testid="report-export-md"
+        >Export MD</button>
+        <button
+          onclick={() => runReport(() => onExportReport?.('csv'))}
+          disabled={reportBusy}
+          class="rounded-lg border border-stone-200 px-2 py-1 text-xs text-stone-600
+                 transition-colors hover:bg-stone-50 disabled:opacity-50 cursor-default"
+          data-testid="report-export-csv"
+        >Export CSV</button>
         <button
           onclick={onExitCompare}
           class="rounded-lg border border-stone-200 px-2 py-1 text-xs text-stone-600
