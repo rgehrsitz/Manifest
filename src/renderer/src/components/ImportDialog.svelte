@@ -325,7 +325,7 @@
                 </ul>
               {/if}
               {#if plan.capped}
-                <p class="text-xs text-stone-400 mt-1">Showing the first 100 issues; counts above are the full totals.</p>
+                <p class="text-xs text-stone-400 mt-1">Counts above are the exact totals; only the first few skipped rows are listed (warnings are counted only).</p>
               {/if}
             </div>
           {/if}

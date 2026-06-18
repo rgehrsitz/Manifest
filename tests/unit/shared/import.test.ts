@@ -389,4 +389,15 @@ describe('planImport — mapping errors', () => {
     const out = planImport([['B1']], ['name'], mapping({ placement: 'path' }), TEMPLATES, NODES)
     expect(out.mappingError).toMatch(/path column/i)
   })
+
+  it('rejects an included column whose header is not in the file (stale mapping)', () => {
+    const out = planImport(
+      [['B1', 'a']],
+      ['name', 'x'],   // "ghost" is mapped but absent from the file
+      mapping({ columns: [{ header: 'ghost', key: 'ghost', include: true }] }),
+      TEMPLATES, NODES,
+    )
+    expect(out.mappingError).toMatch(/not in the file/)
+    expect(out.create).toHaveLength(0)
+  })
 })

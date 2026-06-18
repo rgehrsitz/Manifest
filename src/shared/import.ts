@@ -89,6 +89,12 @@ export function planImport(
   const included = mapping.columns.filter(c => c.include)
   const seenKeys = new Set<string>()
   for (const c of included) {
+    // Fail fast if a mapped header isn't in the file (stale mapping, or the file
+    // changed between inspect and apply) — otherwise the cell silently reads as
+    // empty and the row imports with the property quietly missing.
+    if (!headerIndex.has(c.header)) {
+      return mappingError(`Mapped column "${c.header}" is not in the file`)
+    }
     if (c.header === mapping.nameColumn || c.header === mapping.pathColumn) {
       return mappingError(`Column "${c.header}" is already used as the name/path column`)
     }
