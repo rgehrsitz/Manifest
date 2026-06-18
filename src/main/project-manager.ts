@@ -64,11 +64,18 @@ import {
   validateTypedPropertyValue,
   coercePropertyValue,
   templateFields,
+  templateLabel,
 } from '../shared/validation'
-import { diffProjects } from '../shared/diff-engine'
+import { diffProjects, diffTemplates } from '../shared/diff-engine'
 import { buildMergedTree } from '../shared/merged-tree'
 import { parseCsv, CsvParseError } from '../shared/csv'
 import { planImport } from '../shared/import'
+import {
+  formatDiffReportMarkdown,
+  formatDiffReportCsv,
+  type ReportFormat,
+  type ReportContext,
+} from '../shared/report'
 import type { MergedTree } from '../shared/merged-tree'
 import type { GitService } from './git-service'
 import type { Logger } from './logger'
@@ -1174,6 +1181,82 @@ export class ProjectManager {
     if (!projectB.ok) return projectB as Result<{ projectA: Project; projectB: Project; diffs: DiffEntry[] }>
     const diffs = diffProjects(projectA.data, projectB.data)
     return ok({ projectA: projectA.data, projectB: projectB.data, diffs })
+  }
+
+  /** Resolve a node id to its full display path ("A / B / Name") within a project. */
+  private buildPathResolver(project: Project): (id: string) => string | null {
+    const byId = new Map(project.nodes.map(n => [n.id, n]))
+    return (id: string) => {
+      const node = byId.get(id)
+      if (!node) return null
+      const names = [node.name]
+      let pid = node.parentId
+      while (pid !== null) {
+        const parent = byId.get(pid)
+        if (!parent) break
+        names.unshift(parent.name)
+        pid = parent.parentId
+      }
+      return names.join(' / ')
+    }
+  }
+
+  /**
+   * Build a shareable diff report (Markdown or CSV) between two snapshots.
+   * Re-runs the authoritative diff via loadAndDiff (renderer never decides
+   * content) and returns the formatted string plus a suggested filename; the
+   * IPC handler owns the save dialog + file write.
+   */
+  async buildReport(
+    from: string,
+    to: string,
+    format: ReportFormat,
+  ): Promise<Result<{ content: string; suggestedName: string }>> {
+    if (!this.currentProject?.path) {
+      return err(ErrorCode.PROJECT_NOT_FOUND, 'No project is currently open')
+    }
+    try {
+      const loaded = await this.loadAndDiff(from, to)
+      if (!loaded.ok) return loaded as Result<{ content: string; suggestedName: string }>
+      const { projectA, projectB, diffs } = loaded.data
+      const templateDiffs = diffTemplates(projectA, projectB)
+
+      // loadAndDiff returns no Snapshot records, so resolve metadata separately
+      // for the report header (date + short commit hash).
+      const listed = await this.snapshotList()
+      const snaps = listed.ok ? listed.data : []
+      const meta = (name: string) => {
+        const s = snaps.find(x => x.name === name)
+        return {
+          name,
+          date: s ? s.createdAt.slice(0, 16).replace('T', ' ') : '',
+          hash: s ? s.commitHash.slice(0, 7) : '',
+        }
+      }
+
+      const ctx: ReportContext = {
+        projectName: projectB.name || this.currentProject.name,
+        from: meta(from),
+        to: meta(to),
+        generatedAt: new Date().toISOString(),
+        oldPathById: this.buildPathResolver(projectA),
+        templateLabelOld: (v) => (v ? templateLabel(projectA.templates?.[String(v)], String(v)) : '(none)'),
+        templateLabelNew: (v) => (v ? templateLabel(projectB.templates?.[String(v)], String(v)) : '(none)'),
+      }
+
+      const content = format === 'csv'
+        ? formatDiffReportCsv(diffs, templateDiffs, ctx)
+        : formatDiffReportMarkdown(diffs, templateDiffs, ctx)
+
+      const safe = (s: string) => s.replace(/[^a-zA-Z0-9._-]+/g, '_').replace(/^_+|_+$/g, '') || 'snapshot'
+      const ext = format === 'csv' ? 'csv' : 'md'
+      const suggestedName = `${safe(ctx.projectName)}-changes-${safe(from)}-to-${safe(to)}.${ext}`
+      return ok({ content, suggestedName })
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      this.logger.error('report build failed', { path: this.currentProject.path, from, to, format, error: msg })
+      return err(ErrorCode.SNAPSHOT_READ_FAILED, `Failed to build report: ${msg}`)
+    }
   }
 
   async snapshotRevert(request: SnapshotRevertRequest): Promise<Result<SnapshotRevertResult>> {

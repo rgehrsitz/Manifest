@@ -80,6 +80,13 @@ const api: ManifestAPI = {
       ipcRenderer.invoke(IPC.GIT_CHECK, {}),
   },
 
+  report: {
+    export: (from, to, format) =>
+      ipcRenderer.invoke(IPC.REPORT_EXPORT, { from, to, format }),
+    build: (from, to, format) =>
+      ipcRenderer.invoke(IPC.REPORT_BUILD, { from, to, format }),
+  },
+
   dialog: {
     openFolder: (title) =>
       ipcRenderer.invoke(IPC.DIALOG_OPEN_FOLDER, { title }),
