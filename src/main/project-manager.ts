@@ -261,6 +261,13 @@ export class ProjectManager {
         incompleteSnapshotIds = this.history.getIncompleteSnapshots().map(snapshot => snapshot.snapshotId)
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e)
+        if (/history index is not open/i.test(msg)) {
+          return {
+            ...this.backfillStatus,
+            incompleteCount: 0,
+            incompleteSnapshotIds: [],
+          }
+        }
         this.logger.warn('history index status failed', { error: msg })
       }
     }

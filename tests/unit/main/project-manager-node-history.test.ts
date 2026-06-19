@@ -5,6 +5,8 @@ import { tmpdir } from 'os'
 import Database from 'better-sqlite3'
 import { ProjectManager } from '../../../src/main/project-manager'
 import { GitService } from '../../../src/main/git-service'
+import { SearchIndexService } from '../../../src/main/search-index'
+import type { HistoryIndexService } from '../../../src/main/history-index'
 
 const noopLogger = {
   error: () => {},
@@ -73,6 +75,44 @@ describe('nodeHistory IPC', () => {
       incompleteCount: 0,
       incompleteSnapshotIds: [],
     })
+  })
+
+  it('does not warn on status polling when the history index is unavailable', async () => {
+    const warnings: Array<Record<string, unknown>> = []
+    const logger = {
+      ...noopLogger,
+      warn: (_message: string, meta: Record<string, unknown>) => { warnings.push(meta) },
+    }
+    const unavailableHistory = {
+      open: () => {},
+      close: () => {},
+      getIncompleteSnapshots: () => { throw new Error('History index is not open') },
+      recordSnapshot: () => {},
+      nodeHistory: () => [],
+      recordedSnapshotIds: () => new Set<string>(),
+      incompleteSnapshotIds: () => [],
+    } as unknown as HistoryIndexService
+
+    const git = new GitService(logger as any)
+    const noisyManager = new ProjectManager(
+      git,
+      logger as any,
+      new SearchIndexService(),
+      unavailableHistory,
+    )
+    try {
+      const created = await noisyManager.createProject('Unavailable History Project', tmpDir)
+      expect(created.ok).toBe(true)
+
+      expect(noisyManager.getHistoryIndexStatus()).toMatchObject({
+        incompleteCount: 0,
+        incompleteSnapshotIds: [],
+      })
+      expect(warnings).toEqual([])
+    } finally {
+      noisyManager.cancelAutosave()
+      await noisyManager.flushAndClose()
+    }
   })
 
   it('emits one entry per state change across snapshots, skipping unchanged snapshots', async () => {
