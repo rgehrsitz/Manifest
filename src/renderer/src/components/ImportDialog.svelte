@@ -33,6 +33,11 @@
   let templateId = $state<string | null>(null)
   let columnKey = $state<Record<string, string>>({})
   let columnInclude = $state<Record<string, boolean>>({})
+  // Update-on-key: match existing nodes by a key column and update them instead
+  // of skipping as collisions. keyColumn is a HEADER (the name column or an
+  // included property column).
+  let updateExisting = $state(false)
+  let keyColumn = $state('')
 
   // Plan (full-file validation) — cleared whenever the mapping changes.
   let plan = $state<ImportPlan | null>(null)
@@ -104,6 +109,8 @@
     pathColumn = strongPath || hdrs.find(h => /path/i.test(h)) || ''
     placement = strongPath ? 'path' : 'flat'
     autoCreateParents = false
+    updateExisting = false
+    keyColumn = ''
     templateId = null
     const key: Record<string, string> = {}
     const inc: Record<string, boolean> = {}
@@ -126,10 +133,18 @@
       baseParentId: baseParent.id,
       nameColumn,
       ...(placement === 'path' ? { pathColumn, pathSeparator, autoCreateParents } : {}),
+      ...(updateExisting ? { updateExisting: true, keyColumn } : {}),
       templateId,
       columns,
     }
   }
+
+  // Columns eligible to be the match key: the name column + included property
+  // columns (matched by their mapped key).
+  const keyColumnOptions = $derived([
+    nameColumn,
+    ...propertyHeaders.filter(h => columnInclude[h]),
+  ])
 
   async function validate() {
     if (!filePath) return
@@ -257,6 +272,25 @@
             </label>
           </div>
 
+          <!-- Update-on-key -->
+          <div class="flex flex-col gap-1">
+            <label class="flex items-center gap-2 text-sm text-stone-600">
+              <input type="checkbox" bind:checked={updateExisting}
+                onchange={() => { if (updateExisting && !keyColumn) keyColumn = nameColumn; touched() }}
+                data-testid="import-update-existing" />
+              Update existing rows matched by a key (instead of skipping collisions)
+            </label>
+            {#if updateExisting}
+              <div class="flex items-center gap-2 mt-1 ml-6">
+                <span class="text-xs text-stone-500">Match key</span>
+                <select bind:value={keyColumn} onchange={touched}
+                  class="text-sm border border-stone-300 rounded px-2 py-1 bg-white" data-testid="import-key-column">
+                  {#each keyColumnOptions as h (h)}<option value={h}>{h}</option>{/each}
+                </select>
+              </div>
+            {/if}
+          </div>
+
           <!-- Property columns -->
           <div class="flex flex-col gap-1">
             <span class="text-xs font-semibold text-stone-500 uppercase tracking-wide">Property columns</span>
@@ -312,6 +346,7 @@
             <div class="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2" data-testid="import-summary">
               <p class="text-xs text-stone-700">
                 <span class="font-semibold text-emerald-700">{plan.acceptedCount} will import</span>
+                {#if plan.updatedCount > 0}· <span class="text-sky-700">{plan.updatedCount} update</span>{/if}
                 · <span class="text-red-700">{plan.skippedCount} skipped</span>
                 · <span class="text-amber-700">{plan.warningCount} warnings</span>
                 {#if plan.createdParents > 0}· <span class="text-sky-700">{plan.createdParents} parents created</span>{/if}
@@ -342,10 +377,10 @@
                  text-sm font-medium px-4 py-2 rounded-lg cursor-default" data-testid="import-validate">
           Validate
         </button>
-        <button onclick={doImport} disabled={busy || !plan || plan.acceptedCount === 0}
+        <button onclick={doImport} disabled={busy || !plan || (plan.acceptedCount + plan.updatedCount) === 0}
           class="bg-stone-800 hover:bg-stone-700 disabled:bg-stone-300 text-white text-sm font-medium
                  px-4 py-2 rounded-lg cursor-default disabled:cursor-not-allowed" data-testid="import-apply">
-          Import{plan ? ` ${plan.acceptedCount}` : ''}
+          Import{plan ? ` ${plan.acceptedCount + plan.updatedCount}` : ''}
         </button>
         <span class="text-xs text-stone-400 ml-auto">Validate to see what will import.</span>
       </div>
