@@ -569,6 +569,7 @@ export class ProjectManager {
     const createdParents = out.create.filter(n => n.auto).length
     return ok({
       acceptedCount: out.create.length - createdParents,
+      updatedCount: out.update.length,
       skippedCount: out.skipped.length,
       warningCount: out.warnings.length,
       createdParents,
@@ -595,6 +596,7 @@ export class ProjectManager {
     const CAP = 100
     const summary: ImportResult = {
       created: out.create.length - createdParents,
+      updated: out.update.length,
       createdParents,
       skippedCount: out.skipped.length,
       warningCount: out.warnings.length,
@@ -602,7 +604,7 @@ export class ProjectManager {
       warnings: out.warnings.slice(0, CAP),
       capped: out.skipped.length > CAP || out.warnings.length > CAP,
     }
-    if (out.create.length === 0) {
+    if (out.create.length === 0 && out.update.length === 0) {
       return ok({ project: this.currentProject, summary })
     }
 
@@ -633,10 +635,26 @@ export class ProjectManager {
       }
     })
 
+    // Apply update-on-key changes to existing nodes (name / properties / binding;
+    // `templateId` omitted ⇒ leave the existing binding). The planner already
+    // validated rebinds against the new template, so no invalid node is committed.
+    const updateById = new Map(out.update.map(u => [u.nodeId, u]))
+    const updatedNodes: ManifestNode[] = this.currentProject.nodes.map(n => {
+      const u = updateById.get(n.id)
+      if (!u) return n
+      return {
+        ...n,
+        name: u.name,
+        properties: u.properties,
+        ...(u.templateId !== undefined ? { templateId: u.templateId } : {}),
+        modified: now,
+      }
+    })
+
     const nextProject: Project = {
       ...this.currentProject,
       modified: now,
-      nodes: [...this.currentProject.nodes, ...newNodes],
+      nodes: [...updatedNodes, ...newNodes],
     }
     const committed = this.commitProjectMutation(nextProject, () => {
       this.search.rebuild(nextProject)

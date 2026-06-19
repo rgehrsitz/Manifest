@@ -91,6 +91,12 @@ export interface ImportMapping {
   autoCreateParents?: boolean
   templateId?: string | null
   columns: ImportColumnMapping[]   // property columns only (excludes name/path)
+  // Update-on-key: when true, a row whose key matches an existing child of the
+  // resolved parent UPDATES that node instead of being skipped as a collision.
+  // keyColumn is a HEADER — the name column, or an included property column
+  // (matched by that column's mapped `key`, not the header text).
+  updateExisting?: boolean
+  keyColumn?: string
 }
 
 // Cheap first look at a file, before any mapping: headers, a sample, total count.
@@ -109,7 +115,8 @@ export interface ImportIssue {
 
 // Full-file validation result (issue arrays capped for transport/display).
 export interface ImportPlan {
-  acceptedCount: number
+  acceptedCount: number           // rows that will CREATE a node (unchanged meaning)
+  updatedCount: number            // existing nodes that will be UPDATED (update-on-key)
   skippedCount: number
   warningCount: number
   createdParents: number          // ancestors auto-created to satisfy paths
@@ -122,6 +129,7 @@ export interface ImportPlan {
 // ImportPlan); the *Count fields carry the true totals.
 export interface ImportResult {
   created: number
+  updated: number                 // existing nodes updated (update-on-key)
   createdParents: number          // ancestors auto-created to satisfy paths
   skippedCount: number
   warningCount: number

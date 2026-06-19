@@ -1219,6 +1219,7 @@
           <div class="min-w-0">
             <p class="font-semibold">
               Imported {importSummary.created} node{importSummary.created === 1 ? '' : 's'}
+              {#if importSummary.updated > 0}<span class="font-normal text-emerald-800"> · {importSummary.updated} updated</span>{/if}
               {#if importSummary.createdParents > 0}<span class="font-normal text-emerald-800"> · {importSummary.createdParents} parent{importSummary.createdParents === 1 ? '' : 's'} created</span>{/if}
               {#if importSummary.skippedCount > 0}<span class="font-normal text-emerald-800"> · {importSummary.skippedCount} skipped</span>{/if}
               {#if importSummary.warningCount > 0}<span class="font-normal text-amber-700"> · {importSummary.warningCount} warnings</span>{/if}

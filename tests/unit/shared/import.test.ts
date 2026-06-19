@@ -401,3 +401,242 @@ describe('planImport — mapping errors', () => {
     expect(out.create).toHaveLength(0)
   })
 })
+
+// ─── Update-on-key re-import ───────────────────────────────────────────────────
+
+describe('planImport — update-on-key', () => {
+  const UROOT: ManifestNode = { id: 'root', parentId: null, name: 'Lab', order: 0, properties: {}, created: '', modified: '' }
+  const RACK: ManifestNode = { id: 'rack', parentId: 'root', name: 'Rack', order: 0, properties: {}, created: '', modified: '' }
+  function child(id: string, name: string, properties: Record<string, string | number | boolean | null> = {}, templateId?: string): ManifestNode {
+    return { id, parentId: 'rack', name, order: 0, properties, created: '', modified: '', ...(templateId ? { templateId } : {}) }
+  }
+  const umap = (over: Partial<ImportMapping> = {}): ImportMapping =>
+    mapping({ baseParentId: 'rack', updateExisting: true, ...over })
+
+  it('updates an existing sibling matched by name (not skip, not create)', () => {
+    const out = planImport(
+      [['Board 1', 'SN-9']],
+      ['name', 'serial'],
+      umap({ keyColumn: 'name', columns: [{ header: 'serial', key: 'serial', include: true }] }),
+      TEMPLATES, [UROOT, RACK, child('b1', 'Board 1', { serial: 'SN-1' })],
+    )
+    expect(out.create).toHaveLength(0)
+    expect(out.skipped).toHaveLength(0)
+    expect(out.update).toEqual([{ nodeId: 'b1', name: 'Board 1', properties: { serial: 'SN-9' } }])
+  })
+
+  it('matches by the column’s mapped key, not its header text', () => {
+    // Header "Serial Number" maps to property key "serial"; existing nodes store
+    // by "serial". Matching must use the key, not the header.
+    const out = planImport(
+      [['Board 1', 'SN-1', 'spare']],
+      ['name', 'Serial Number', 'status'],
+      umap({ keyColumn: 'Serial Number', columns: [
+        { header: 'Serial Number', key: 'serial', include: true },
+        { header: 'status', key: 'status', include: true },
+      ] }),
+      TEMPLATES, [UROOT, RACK, child('b1', 'Board 1', { serial: 'SN-1', status: 'active' })],
+    )
+    expect(out.update).toHaveLength(1)
+    expect(out.update[0].properties).toEqual({ serial: 'SN-1', status: 'spare' })
+  })
+
+  it('compares a non-string key value via normalization', () => {
+    const out = planImport(
+      [['Board 1', '5', 'spare']],
+      ['name', 'count', 'status'],
+      umap({ keyColumn: 'count', templateId: 'board', columns: [
+        { header: 'count', key: 'count', include: true },
+        { header: 'status', key: 'status', include: true },
+      ] }),
+      TEMPLATES, [UROOT, RACK, child('b1', 'Board 1', { count: 5, status: 'active' }, 'board')],
+    )
+    expect(out.update).toHaveLength(1)
+    expect(out.update[0].nodeId).toBe('b1')
+    expect(out.update[0].properties.status).toBe('spare')
+  })
+
+  it('creates when no existing node matches the key', () => {
+    const out = planImport(
+      [['Board 99', 'SN-99']],
+      ['name', 'serial'],
+      umap({ keyColumn: 'name', columns: [{ header: 'serial', key: 'serial', include: true }] }),
+      TEMPLATES, [UROOT, RACK, child('b1', 'Board 1', { serial: 'SN-1' })],
+    )
+    expect(out.update).toHaveLength(0)
+    expect(out.create).toHaveLength(1)
+    expect(out.create[0]).toMatchObject({ name: 'Board 99', parentId: 'rack' })
+  })
+
+  it('leaves an existing value when the cell is blank (no wipe)', () => {
+    const out = planImport(
+      [['Board 1', '', 'spare']],
+      ['name', 'serial', 'status'],
+      umap({ keyColumn: 'name', columns: [
+        { header: 'serial', key: 'serial', include: true },
+        { header: 'status', key: 'status', include: true },
+      ] }),
+      TEMPLATES, [UROOT, RACK, child('b1', 'Board 1', { serial: 'SN-1', status: 'active' })],
+    )
+    expect(out.update[0].properties).toEqual({ serial: 'SN-1', status: 'spare' })
+  })
+
+  it('renames on a property-key match whose row name differs', () => {
+    const out = planImport(
+      [['New Name', 'SN-1']],
+      ['name', 'serial'],
+      umap({ keyColumn: 'serial', columns: [{ header: 'serial', key: 'serial', include: true }] }),
+      TEMPLATES, [UROOT, RACK, child('b1', 'Old Name', { serial: 'SN-1' })],
+    )
+    expect(out.update).toHaveLength(1)
+    expect(out.update[0]).toMatchObject({ nodeId: 'b1', name: 'New Name' })
+  })
+
+  it('skips a rename that would collide with another sibling', () => {
+    const out = planImport(
+      [['Board 2', 'SN-1']],
+      ['name', 'serial'],
+      umap({ keyColumn: 'serial', columns: [{ header: 'serial', key: 'serial', include: true }] }),
+      TEMPLATES, [UROOT, RACK, child('b1', 'Board 1', { serial: 'SN-1' }), child('b2', 'Board 2', { serial: 'SN-2' })],
+    )
+    expect(out.update).toHaveLength(0)
+    expect(out.skipped[0].reason).toMatch(/already exists/)
+  })
+
+  it('coerces row cells against the node’s effective template when the mapping has none', () => {
+    const out = planImport(
+      [['Board 1', '5']],
+      ['name', 'count'],
+      umap({ keyColumn: 'name', columns: [{ header: 'count', key: 'count', include: true }] }),
+      TEMPLATES, [UROOT, RACK, child('b1', 'Board 1', {}, 'board')],
+    )
+    expect(out.update).toHaveLength(1)
+    expect(out.update[0].properties.count).toBe(5)          // number, coerced via board.count
+    expect(typeof out.update[0].properties.count).toBe('number')
+  })
+
+  it('skips a rebind when an existing property cannot be coerced under the new template', () => {
+    const out = planImport(
+      [['Board 1']],
+      ['name'],
+      umap({ keyColumn: 'name', templateId: 'board', columns: [] }),
+      TEMPLATES, [UROOT, RACK, child('b1', 'Board 1', { count: 'abc' })],   // 'abc' can't coerce to board.count(number)
+    )
+    expect(out.update).toHaveLength(0)
+    expect(out.skipped[0].reason).toMatch(/invalid under new template/)
+  })
+
+  it('coerces a carried-over value on rebind (mirrors nodeUpdate)', () => {
+    // Freeform node with serial "5"; rebinding to board (serial:string) leaves it,
+    // but a numeric-string under a number field coerces rather than being rejected.
+    const out = planImport(
+      [['Board 1']],
+      ['name'],
+      umap({ keyColumn: 'name', templateId: 'board', columns: [] }),
+      TEMPLATES, [UROOT, RACK, child('b1', 'Board 1', { count: '5' })],   // "5" → number 5 under board.count
+    )
+    expect(out.skipped).toHaveLength(0)
+    expect(out.update).toHaveLength(1)
+    expect(out.update[0].properties.count).toBe(5)
+    expect(out.update[0].templateId).toBe('board')
+  })
+
+  it('applies a case-only rename (exact-name comparison, no false no-op)', () => {
+    const out = planImport(
+      [['old name', 'SN-1']],
+      ['name', 'serial'],
+      umap({ keyColumn: 'serial', columns: [{ header: 'serial', key: 'serial', include: true }] }),
+      TEMPLATES, [UROOT, RACK, child('b1', 'Old Name', { serial: 'SN-1' })],
+    )
+    expect(out.update).toHaveLength(1)
+    expect(out.update[0].name).toBe('old name')
+  })
+
+  it('a skipped row does not reserve its key value for a later row', () => {
+    // Row 1 (serial SN-9) skips on an invalid cell; row 2 reuses SN-9 and creates.
+    const out = planImport(
+      [['B-a', 'SN-9', 'abc'], ['B-b', 'SN-9', '7']],
+      ['name', 'serial', 'count'],
+      umap({ keyColumn: 'serial', templateId: 'board', columns: [
+        { header: 'serial', key: 'serial', include: true },
+        { header: 'count', key: 'count', include: true },
+      ] }),
+      TEMPLATES, [UROOT, RACK],
+    )
+    expect(out.create).toHaveLength(1)
+    expect(out.create[0].name).toBe('B-b')
+    expect(out.skipped).toHaveLength(1)
+    expect(out.skipped[0].reason).not.toMatch(/duplicate key/)   // skipped for invalid count, not dup
+  })
+
+  it('skips a second NEW row that shares a property-key value (would dup the key)', () => {
+    const out = planImport(
+      [['Board A', 'SN-9'], ['Board B', 'SN-9']],   // neither matches; same serial
+      ['name', 'serial'],
+      umap({ keyColumn: 'serial', columns: [{ header: 'serial', key: 'serial', include: true }] }),
+      TEMPLATES, [UROOT, RACK],
+    )
+    expect(out.create).toHaveLength(1)
+    expect(out.skipped[0].reason).toMatch(/duplicate key value/)
+  })
+
+  it('does not emit a no-op update (row identical to the node)', () => {
+    const out = planImport(
+      [['Board 1', 'SN-1']],
+      ['name', 'serial'],
+      umap({ keyColumn: 'name', columns: [{ header: 'serial', key: 'serial', include: true }] }),
+      TEMPLATES, [UROOT, RACK, child('b1', 'Board 1', { serial: 'SN-1' })],
+    )
+    expect(out.update).toHaveLength(0)
+    expect(out.create).toHaveLength(0)
+    expect(out.skipped).toHaveLength(0)
+  })
+
+  it('skips an ambiguous match (2+ existing share the key value)', () => {
+    const out = planImport(
+      [['Board X', 'SN-1']],
+      ['name', 'serial'],
+      umap({ keyColumn: 'serial', columns: [{ header: 'serial', key: 'serial', include: true }] }),
+      TEMPLATES, [UROOT, RACK, child('a', 'A', { serial: 'SN-1' }), child('b', 'B', { serial: 'SN-1' })],
+    )
+    expect(out.update).toHaveLength(0)
+    expect(out.skipped[0].reason).toMatch(/ambiguous/)
+  })
+
+  it('skips a second row that matches an already-updated node', () => {
+    const out = planImport(
+      [['Board 1', 'spare'], ['Board 1', 'active']],
+      ['name', 'status'],
+      umap({ keyColumn: 'name', columns: [{ header: 'status', key: 'status', include: true }] }),
+      TEMPLATES, [UROOT, RACK, child('b1', 'Board 1', { status: 'active' })],
+    )
+    expect(out.update).toHaveLength(1)
+    expect(out.update[0].properties.status).toBe('spare')
+    expect(out.skipped[0].reason).toMatch(/already updated/)
+  })
+
+  it('skips a row with a blank key value', () => {
+    const out = planImport(
+      [['Board 1', '', 'spare']],
+      ['name', 'serial', 'status'],
+      umap({ keyColumn: 'serial', columns: [
+        { header: 'serial', key: 'serial', include: true },
+        { header: 'status', key: 'status', include: true },
+      ] }),
+      TEMPLATES, [UROOT, RACK, child('b1', 'Board 1', { serial: 'SN-1' })],
+    )
+    expect(out.skipped[0].reason).toMatch(/missing key/)
+  })
+
+  it('rejects update mode with no key column, or an excluded key column', () => {
+    const base = [UROOT, RACK, child('b1', 'Board 1')]
+    expect(planImport([['Board 1']], ['name'], umap({ columns: [] }), TEMPLATES, base).mappingError).toMatch(/key column/i)
+    const out = planImport(
+      [['Board 1', 'SN-1']],
+      ['name', 'serial'],
+      umap({ keyColumn: 'serial', columns: [{ header: 'serial', key: 'serial', include: false }] }),
+      TEMPLATES, base,
+    )
+    expect(out.mappingError).toMatch(/key column/i)
+  })
+})

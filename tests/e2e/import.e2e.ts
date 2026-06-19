@@ -261,3 +261,59 @@ test('duplicate keys block Validate, and editing after a plan re-disables Import
   await expect(appPage.getByTestId('import-summary')).toHaveCount(0)
   await expect(appPage.getByTestId('import-apply')).toBeDisabled()
 })
+
+test('update-on-key: re-import updates a matched node instead of duplicating it', async ({ appPage, electronApp, workspaceDir }) => {
+  await createProjectThroughUi(appPage, electronApp, workspaceDir, 'Update Lab')
+
+  // First import creates Widget with note=first (flat under root, freeform).
+  const v1 = join(workspaceDir, 'v1.csv')
+  writeFileSync(v1, 'name,note\nWidget,first\n', 'utf8')
+  await appPage.getByTestId('open-import-btn').click()
+  await setDialogPath(electronApp, v1)
+  await appPage.getByTestId('import-choose-file').click()
+  await appPage.getByTestId('import-validate').click()
+  await expect(appPage.getByTestId('import-summary')).toContainText('1 will import')
+  await appPage.getByTestId('import-apply').click()
+  await expect(appPage.getByTestId('import-dialog')).toHaveCount(0)
+  await expect(treeRow(appPage, 'Widget')).toBeVisible()
+
+  // Re-import with a changed note, update mode keyed on name.
+  const v2 = join(workspaceDir, 'v2.csv')
+  writeFileSync(v2, 'name,note\nWidget,second\n', 'utf8')
+  await appPage.getByTestId('open-import-btn').click()
+  await setDialogPath(electronApp, v2)
+  await appPage.getByTestId('import-choose-file').click()
+  await appPage.getByTestId('import-update-existing').check()
+  await expect(appPage.getByTestId('import-key-column')).toHaveValue('name')
+  await appPage.getByTestId('import-validate').click()
+  await expect(appPage.getByTestId('import-summary')).toContainText('1 update')
+  await appPage.getByTestId('import-apply').click()
+  await expect(appPage.getByTestId('import-summary-banner')).toContainText('1 updated')
+
+  // Exactly one Widget; its note is now "second".
+  await expect(appPage.locator('[data-testid="tree-node"]', { hasText: 'Widget' })).toHaveCount(1)
+  await treeRow(appPage, 'Widget').click()
+  await expect(appPage.getByTestId('prop-value').filter({ hasText: 'second' })).toBeVisible()
+})
+
+test('update-on-key: a byte-identical re-import is a no-op (import disabled)', async ({ appPage, electronApp, workspaceDir }) => {
+  await createProjectThroughUi(appPage, electronApp, workspaceDir, 'Noop Lab')
+  const csv = join(workspaceDir, 'n.csv')
+  writeFileSync(csv, 'name,note\nWidget,same\n', 'utf8')
+
+  await appPage.getByTestId('open-import-btn').click()
+  await setDialogPath(electronApp, csv)
+  await appPage.getByTestId('import-choose-file').click()
+  await appPage.getByTestId('import-validate').click()
+  await appPage.getByTestId('import-apply').click()
+  await expect(appPage.getByTestId('import-dialog')).toHaveCount(0)
+
+  // Re-import the identical file with update mode → nothing to do.
+  await appPage.getByTestId('open-import-btn').click()
+  await setDialogPath(electronApp, csv)
+  await appPage.getByTestId('import-choose-file').click()
+  await appPage.getByTestId('import-update-existing').check()
+  await appPage.getByTestId('import-validate').click()
+  await expect(appPage.getByTestId('import-summary')).toContainText('0 will import')
+  await expect(appPage.getByTestId('import-apply')).toBeDisabled()
+})

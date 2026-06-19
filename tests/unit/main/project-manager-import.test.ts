@@ -225,3 +225,95 @@ describe('import without a project open', () => {
     expect((pm.applyImportCsv(path, flatMapping())).ok).toBe(false)
   })
 })
+
+describe('applyImportCsv — update-on-key', () => {
+  const TPL = {
+    board: { label: 'Board', fields: {
+      serial: { type: 'string' }, count: { type: 'number' },
+      status: { type: 'enum', options: ['active', 'spare'] }, sku: { type: 'string', required: true },
+    } },
+  }
+  async function openSeeded(extra: unknown[]): Promise<void> {
+    const m = {
+      version: 3, id: 'imp-id', name: 'Lab', created: TS, modified: TS, templates: TPL,
+      nodes: [
+        { id: 'root-id', parentId: null, name: 'Lab', order: 0, properties: {}, created: TS, modified: TS },
+        { id: 'rack-id', parentId: 'root-id', name: 'Rack A-01', order: 0, properties: {}, created: TS, modified: TS },
+        ...extra,
+      ],
+    }
+    writeFileSync(join(tmpDir, 'manifest.json'), JSON.stringify(m, null, 2), 'utf8')
+    manager = new ProjectManager(noopGit as any, noopLogger as any)
+    const r = await manager.openProject(tmpDir)
+    expect(r.ok).toBe(true)
+  }
+  const board = (id: string, name: string, properties: Record<string, unknown>) =>
+    ({ id, parentId: 'rack-id', name, order: 0, properties, templateId: 'board', created: TS, modified: TS })
+  const umap = (over: Partial<ImportMapping> = {}): ImportMapping =>
+    ({ placement: 'flat', baseParentId: 'rack-id', nameColumn: 'name', columns: [], updateExisting: true, ...over })
+
+  it('updates a matched node: merges props, leaves blanks, bumps modified, commits once', async () => {
+    await openSeeded([board('b1', 'Board 1', { serial: 'SN-1', sku: 'OLD' })])
+    const path = writeCsv('u.csv', 'name,serial\nBoard 1,SN-2\n')
+    const r = manager.applyImportCsv(path, umap({ keyColumn: 'name', columns: [{ header: 'serial', key: 'serial', include: true }] }))
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.data.summary.updated).toBe(1)
+    expect(r.data.summary.created).toBe(0)
+    const b1 = r.data.project.nodes.find(n => n.id === 'b1')!
+    expect(b1.properties).toEqual({ serial: 'SN-2', sku: 'OLD' })   // serial overwritten, sku left
+    expect(b1.modified).not.toBe(TS)
+    const s = await manager.searchNodes('SN-2')
+    expect(s.ok && s.data.length).toBeGreaterThan(0)
+  })
+
+  it('renames via a property-key match', async () => {
+    await openSeeded([board('b1', 'Old Name', { serial: 'SN-1', sku: 'X' })])
+    const path = writeCsv('r.csv', 'name,serial\nNew Name,SN-1\n')
+    const r = manager.applyImportCsv(path, umap({ keyColumn: 'serial', columns: [{ header: 'serial', key: 'serial', include: true }] }))
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.data.summary.updated).toBe(1)
+    expect(r.data.project.nodes.find(n => n.id === 'b1')!.name).toBe('New Name')
+  })
+
+  it('handles a create + update mix in one import', async () => {
+    await openSeeded([board('b1', 'Board 1', { serial: 'SN-1', sku: 'X' })])
+    const path = writeCsv('m.csv', 'name,serial\nBoard 1,SN-1b\nBoard 2,SN-2\n')
+    const r = manager.applyImportCsv(path, umap({ keyColumn: 'name', columns: [{ header: 'serial', key: 'serial', include: true }] }))
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.data.summary.updated).toBe(1)
+    expect(r.data.summary.created).toBe(1)
+    expect(r.data.project.nodes.some(n => n.name === 'Board 2')).toBe(true)
+  })
+
+  it('a skipped rebind leaves the project unchanged (no commit)', async () => {
+    const freeform = { id: 'f1', parentId: 'rack-id', name: 'Legacy', order: 0, properties: { count: 'abc' }, created: TS, modified: TS }
+    await openSeeded([freeform])
+    const path = writeCsv('rb.csv', 'name\nLegacy\n')
+    const r = manager.applyImportCsv(path, umap({ keyColumn: 'name', templateId: 'board', columns: [] }))
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.data.summary.updated).toBe(0)
+    expect(r.data.summary.created).toBe(0)
+    expect(r.data.summary.skipped.length).toBe(1)
+    const f1 = r.data.project.nodes.find(n => n.id === 'f1')!
+    expect(f1.modified).toBe(TS)                       // untouched
+    expect(f1.properties).toEqual({ count: 'abc' })    // not coerced/committed
+    expect(f1.templateId).toBeUndefined()              // not rebound
+  })
+
+  it('a byte-identical re-import is a no-op: 0 updated, node not dirtied', async () => {
+    await openSeeded([board('b1', 'Board 1', { serial: 'SN-1', sku: 'X' })])
+    const path = writeCsv('noop.csv', 'name,serial,sku\nBoard 1,SN-1,X\n')
+    const r = manager.applyImportCsv(path, umap({ keyColumn: 'name', columns: [
+      { header: 'serial', key: 'serial', include: true }, { header: 'sku', key: 'sku', include: true },
+    ] }))
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.data.summary.updated).toBe(0)
+    expect(r.data.summary.created).toBe(0)
+    expect(r.data.project.nodes.find(n => n.id === 'b1')!.modified).toBe(TS)   // untouched
+  })
+})

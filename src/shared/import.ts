@@ -32,8 +32,20 @@ export interface PlannedNode {
   auto?: boolean
 }
 
+// An update to an existing node (update-on-key). `properties` is the FINAL merged
+// map (existing ∪ row cells); `name` is the final name (renamed only on a
+// property-key match whose row name differs). `templateId` present = set this
+// binding; absent = leave the node's existing binding.
+export interface PlannedUpdate {
+  nodeId: string
+  name: string
+  templateId?: string | null
+  properties: Record<string, string | number | boolean | null>
+}
+
 export interface PlanOutput {
   create: PlannedNode[]
+  update: PlannedUpdate[]
   skipped: ImportIssue[]
   warnings: ImportIssue[]
   // A mapping-level error (not a per-row problem) — e.g. duplicate keys or a
@@ -65,7 +77,7 @@ export function planImport(
   templates: Record<string, NodeTemplate>,
   nodes: ManifestNode[],
 ): PlanOutput {
-  const out: PlanOutput = { create: [], skipped: [], warnings: [] }
+  const out: PlanOutput = { create: [], update: [], skipped: [], warnings: [] }
 
   // ── Mapping validation (preconditions) ──────────────────────────────────────
   const headerIndex = new Map(headers.map((h, i) => [h, i]))
@@ -104,7 +116,25 @@ export function planImport(
     seenKeys.add(c.key)
   }
 
+  // Update-on-key: resolve the key column to either name-matching (keyPropKey
+  // null) or property-matching (keyPropKey = the column's mapped property key,
+  // NOT its header). The key column must be the name column or an *included*
+  // property column.
+  const updateExisting = mapping.updateExisting === true
+  let keyPropKey: string | null = null
+  if (updateExisting) {
+    if (!mapping.keyColumn) return mappingError('Update mode requires a key column')
+    if (mapping.keyColumn === mapping.nameColumn) {
+      keyPropKey = null
+    } else {
+      const keyCol = included.find(c => c.header === mapping.keyColumn)
+      if (!keyCol) return mappingError(`Key column "${mapping.keyColumn}" must be the name column or an included property column`)
+      keyPropKey = keyCol.key
+    }
+  }
+
   const nameIdx = headerIndex.get(mapping.nameColumn)!
+  const keyIdx = mapping.keyColumn ? headerIndex.get(mapping.keyColumn) : undefined
   const pathIdx = mapping.pathColumn ? headerIndex.get(mapping.pathColumn) : undefined
   const sep = mapping.pathSeparator || DEFAULT_PATH_SEPARATOR
   const rootName = nodes.find(n => n.parentId === null)?.name ?? ''
@@ -176,6 +206,76 @@ export function planImport(
     return { id: cur, pending }
   }
 
+  // ── Update-on-key matching ──────────────────────────────────────────────────
+  const norm = (x: unknown): string => String(x ?? '').trim().toLowerCase()
+  const updatedIds = new Set<string>()
+  // Property-key values claimed by in-batch CREATEs, per parent — so two new rows
+  // sharing a key value don't both create (which would make a re-import ambiguous).
+  const batchKeyClaims = new Map<string, Set<string>>()
+  // Lazy per-parent index of existing children by normalized key-property value.
+  const propIndexByParent = new Map<string, Map<string, ManifestNode[]>>()
+  const findMatches = (parentId: string, keyValue: string): ManifestNode[] => {
+    if (keyPropKey === null) {                  // name is the key
+      const m = childByName(parentId, keyValue)
+      return m ? [m] : []
+    }
+    let idx = propIndexByParent.get(parentId)
+    if (!idx) {
+      idx = new Map()
+      for (const c of childrenByParent.get(parentId) ?? []) {
+        const v = c.properties[keyPropKey]
+        if (v === undefined || v === null) continue   // null/absent never matches
+        const nk = norm(v)
+        const arr = idx.get(nk)
+        if (arr) arr.push(c)
+        else idx.set(nk, [c])
+      }
+      propIndexByParent.set(parentId, idx)
+    }
+    return idx.get(norm(keyValue)) ?? []
+  }
+
+  type FieldMap = ReturnType<typeof templateFields>
+  type PropMap = Record<string, string | number | boolean | null>
+
+  // Apply the row's included cells onto `base` ({} for a create, the existing
+  // node's props for an update), coercing against `flds` (the EFFECTIVE template).
+  // Blank cell ⇒ leave untouched (no wipe). Invalid cell ⇒ push skip + return null.
+  const buildProperties = (cells: string[], flds: FieldMap, fileRow: number, base: PropMap): PropMap | null => {
+    const properties: PropMap = { ...base }
+    for (const col of included) {
+      const raw = (cells[headerIndex.get(col.header)!] ?? '').trim()
+      if (raw === '') continue
+      const field = flds[col.key]
+      if (field) {
+        const result = coercePropertyValue(raw, field)
+        if (!result.valid) { out.skipped.push({ row: fileRow, column: col.header, reason: result.message ?? 'Invalid value' }); return null }
+        properties[col.key] = result.value ?? null
+      } else {
+        const check = validatePropertyValue(raw)
+        if (!check.valid) { out.skipped.push({ row: fileRow, column: col.header, reason: check.message ?? 'Invalid value' }); return null }
+        properties[col.key] = raw
+      }
+    }
+    return properties
+  }
+
+  const requiredWarnings = (properties: PropMap, flds: FieldMap, fileRow: number): void => {
+    for (const [key, field] of Object.entries(flds)) {
+      const v = properties[key]
+      if (field.required && (v === undefined || v === null || v === '')) {
+        out.warnings.push({ row: fileRow, column: key, reason: `required field "${key}" is not set` })
+      }
+    }
+  }
+
+  const sameProps = (a: PropMap, b: PropMap): boolean => {
+    const ak = Object.keys(a)
+    if (ak.length !== Object.keys(b).length) return false
+    for (const k of ak) if (a[k] !== b[k]) return false
+    return true
+  }
+
   // ── Per-row planning ────────────────────────────────────────────────────────
   rows.forEach((cells, r) => {
     const fileRow = r + 2 // header is file row 1
@@ -193,46 +293,110 @@ export function planImport(
       return
     }
     const parentId = resolved.id
+    // Deferred until the create actually commits, so a row that later skips
+    // (collision / invalid cell) does not falsely reserve its key value.
+    let commitKeyClaim: (() => void) | null = null
+
+    // ── Update-on-key: a keyed row matching an existing child updates it ───────
+    if (updateExisting) {
+      const keyValue = keyPropKey === null ? name : (cells[keyIdx!] ?? '').trim()
+      if (keyValue === '') {
+        out.skipped.push({ row: fileRow, column: mapping.keyColumn, reason: 'missing key value' })
+        return
+      }
+      const matches = findMatches(parentId, keyValue)
+      if (matches.length > 1) {
+        out.skipped.push({ row: fileRow, column: mapping.keyColumn, reason: `ambiguous: ${matches.length} existing nodes match key "${keyValue}"` })
+        return
+      }
+      if (matches.length === 1) {
+        const m = matches[0]
+        if (updatedIds.has(m.id)) {
+          out.skipped.push({ row: fileRow, column: mapping.keyColumn, reason: `key "${keyValue}" already updated by an earlier row` })
+          return
+        }
+        // Coerce/validate row cells against the node's EFFECTIVE template (the
+        // mapping's if it binds one, else the node's own) — not the mapping's alone.
+        const effTemplateId = mapping.templateId != null ? mapping.templateId : (m.templateId ?? null)
+        const effFields = templateFields(effTemplateId ? templates[effTemplateId] : undefined)
+
+        const merged = buildProperties(cells, effFields, fileRow, { ...m.properties })
+        if (merged === null) return
+
+        // Rebinding to a different template ⇒ every carried-over property must be
+        // valid under the new template. Coerce them (mirrors nodeUpdate: a freeform
+        // "5" becomes number 5), writing the coerced value back; skip only if a
+        // value genuinely can't satisfy the new field. Never commit an invalid node.
+        const rebinding = mapping.templateId != null && mapping.templateId !== (m.templateId ?? null)
+        if (rebinding) {
+          let bad = false
+          for (const [key, value] of Object.entries(merged)) {
+            const field = effFields[key]
+            if (!field || value === null) continue
+            const result = coercePropertyValue(value, field)
+            if (!result.valid) {
+              out.skipped.push({ row: fileRow, column: key, reason: `existing value invalid under new template: ${result.message ?? key}` })
+              bad = true
+              break
+            }
+            merged[key] = result.value ?? null
+          }
+          if (bad) return
+        }
+
+        // Rename only on a property-key match whose row name differs (exact, so a
+        // case-only change still applies). The collision check excludes m itself.
+        const finalName = keyPropKey !== null && name !== m.name ? name : m.name
+        if (finalName !== m.name) {
+          const other = childByName(parentId, finalName)
+          if ((other && other.id !== m.id) || batchChildren.has(childKey(parentId, finalName))) {
+            out.skipped.push({ row: fileRow, column: mapping.nameColumn, reason: `cannot rename to "${finalName}" — name already exists under the target parent` })
+            return
+          }
+        }
+
+        // No-op: nothing actually changes ⇒ don't emit (avoids a false dirty state
+        // — modified would bump but the snapshot diff would show nothing).
+        if (finalName === m.name && !rebinding && sameProps(merged, m.properties)) {
+          return
+        }
+
+        requiredWarnings(merged, effFields, fileRow)
+        // Claim the final name → the real node id, so later rows resolve through
+        // and collide with the renamed/matched node. Mark it so a later row
+        // can't update the same node twice.
+        claim(parentId, finalName, m.id)
+        updatedIds.add(m.id)
+        out.update.push({
+          nodeId: m.id,
+          name: finalName,
+          ...(mapping.templateId != null ? { templateId: mapping.templateId } : {}),
+          properties: merged,
+        })
+        return
+      }
+      // 0 matches → CREATE. In property-key mode, guard against two new rows
+      // sharing the same key value (name-key creates are already deduped by name).
+      if (keyPropKey !== null) {
+        let claims = batchKeyClaims.get(parentId)
+        if (!claims) { claims = new Set(); batchKeyClaims.set(parentId, claims) }
+        const nk = norm(keyValue)
+        if (claims.has(nk)) {
+          out.skipped.push({ row: fileRow, column: mapping.keyColumn, reason: `duplicate key value "${keyValue}" in this import` })
+          return
+        }
+        commitKeyClaim = () => claims!.add(nk)   // recorded only once the create commits
+      }
+    }
 
     if (taken(parentId, name)) {
       out.skipped.push({ row: fileRow, column: mapping.nameColumn, reason: `name "${name}" already exists under the target parent` })
       return
     }
 
-    // Build properties; an invalid typed/ad-hoc cell skips the whole row.
-    const properties: Record<string, string | number | boolean | null> = {}
-    let rowFailed = false
-    for (const col of included) {
-      const raw = (cells[headerIndex.get(col.header)!] ?? '').trim()
-      if (raw === '') continue // empty cell → leave unset
-      const field = fields[col.key]
-      if (field) {
-        const result = coercePropertyValue(raw, field)
-        if (!result.valid) {
-          out.skipped.push({ row: fileRow, column: col.header, reason: result.message ?? 'Invalid value' })
-          rowFailed = true
-          break
-        }
-        properties[col.key] = result.value ?? null
-      } else {
-        const check = validatePropertyValue(raw)
-        if (!check.valid) {
-          out.skipped.push({ row: fileRow, column: col.header, reason: check.message ?? 'Invalid value' })
-          rowFailed = true
-          break
-        }
-        properties[col.key] = raw
-      }
-    }
-    if (rowFailed) return
-
-    // Missing required fields are advisory warnings — keep the row.
-    for (const [key, field] of Object.entries(fields)) {
-      const v = properties[key]
-      if (field.required && (v === undefined || v === null || v === '')) {
-        out.warnings.push({ row: fileRow, column: key, reason: `required field "${key}" is not set` })
-      }
-    }
+    const properties = buildProperties(cells, fields, fileRow, {})
+    if (properties === null) return
+    requiredWarnings(properties, fields, fileRow)
 
     // Commit any staged ancestors this row needed, then the row itself. Each
     // gets a local id and is registered so later rows resolve THROUGH it (and
@@ -244,6 +408,7 @@ export function planImport(
     const rowLocalId = nextLocalId()
     claim(parentId, name, rowLocalId)
     out.create.push({ parentId, name, properties, templateId: mapping.templateId ?? null, localId: rowLocalId })
+    commitKeyClaim?.()
   })
 
   return out
