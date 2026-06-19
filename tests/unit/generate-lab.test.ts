@@ -14,11 +14,23 @@ import { planImport } from '../../src/shared/import'
 import { diffProjects } from '../../src/shared/diff-engine'
 import type { ImportMapping, Project } from '../../src/shared/types'
 
-// Small but structurally complete: needs racks A-01..A-07 for the scheduled
-// structural events, and >= 35 days so d34 (the unbind) fires.
+// Small but structurally complete. The shape requirements (racks A-01..A-07,
+// >= 2 boards/rack, >= 34 days) are now ENFORCED by validateOptions, so an
+// under-spec config is rejected rather than silently skipping a ChangeType.
 const OPTS = {
   seed: 42, days: 40, rooms: 1, racksPerRoom: 8,
   computersPerRack: 1, hwPerComputer: 1, csciPerComputer: 1, customBoardsPerRack: 3,
+}
+
+const ALL_CHANGE_TYPES = ['added', 'removed', 'renamed', 'moved', 'property-changed', 'template-changed', 'order-changed']
+function changeTypesAcross(tl: { initial: Project; snapshots: Snap[] }): Set<string> {
+  const seen = new Set<string>()
+  let prev = tl.initial
+  for (const snap of tl.snapshots) {
+    for (const d of diffProjects(prev, snap.project)) seen.add(d.changeType)
+    prev = snap.project
+  }
+  return seen
 }
 
 interface Snap { day: number; label: string; name: string; date: string; project: Project }
@@ -74,14 +86,31 @@ describe('generate-lab — timeline regression guards', () => {
   })
 
   it('the timeline exercises every node diff ChangeType', () => {
-    const seen = new Set<string>()
-    let prev = timeline.initial
-    for (const snap of timeline.snapshots) {
-      for (const d of diffProjects(prev, snap.project)) seen.add(d.changeType)
-      prev = snap.project
-    }
-    const ALL = ['added', 'removed', 'renamed', 'moved', 'property-changed', 'template-changed', 'order-changed']
-    const missing = ALL.filter(t => !seen.has(t))
+    const seen = changeTypesAcross(timeline)
+    const missing = ALL_CHANGE_TYPES.filter(t => !seen.has(t))
     expect(missing, `missing ChangeTypes: ${missing.join(', ') || 'none'}`).toHaveLength(0)
+  })
+
+  // The structural events fire on fixed days against specific racks/boards, so a
+  // too-small config can't produce the full timeline. Rather than silently drop a
+  // ChangeType, validateOptions must reject such configs up front.
+  it('rejects configs that cannot produce the full structural timeline', () => {
+    expect(() => generateTimeline({ ...OPTS, customBoardsPerRack: 1 }))
+      .toThrow(/custom-boards-per-rack must be at least 2/)   // day-20 order-changed needs 2 boards
+    expect(() => generateTimeline({ ...OPTS, racksPerRoom: 6 }))
+      .toThrow(/racks-per-room must be at least 7/)           // day-34 template-changed needs Rack A-07
+    expect(() => generateTimeline({ ...OPTS, days: 33 }))
+      .toThrow(/days must be at least 34/)                    // day-34 unbind must fire
+  })
+
+  // Bracket the validation: the smallest config it accepts must still produce
+  // full coverage, so the thresholds are correct (not arbitrary).
+  it('the minimum accepted config still exercises every ChangeType', () => {
+    const min = generateTimeline({
+      seed: 42, rooms: 1, racksPerRoom: 7, customBoardsPerRack: 2, days: 34,
+      computersPerRack: 1, hwPerComputer: 1, csciPerComputer: 1,
+    }) as { initial: Project; snapshots: Snap[] }
+    const missing = ALL_CHANGE_TYPES.filter(t => !changeTypesAcross(min).has(t))
+    expect(missing, `missing ChangeTypes at minimum config: ${missing.join(', ') || 'none'}`).toHaveLength(0)
   })
 })

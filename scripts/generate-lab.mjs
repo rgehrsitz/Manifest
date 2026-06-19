@@ -437,9 +437,15 @@ function maintenanceEvent(project, ctx, today) {
 // added (d6), moved (d16), then removed (d30), so node count nets back to
 // baseline while the timeline still shows added/moved/removed in isolation.
 function scheduledStructuralChurn(project, ctx, day, today) {
+  // validateOptions guarantees the racks/boards these events target exist; a
+  // missing target here means the validation thresholds and the churn targets
+  // have drifted, so fail loudly rather than silently dropping a ChangeType.
+  const must = (value, what) => {
+    if (!value) throw new Error(`scheduledStructuralChurn(day ${day}): ${what} not found — validateOptions thresholds and churn targets have drifted`)
+    return value
+  }
   if (day === 6) {                                   // ADDED
-    const rack = rackByName(project, 'Rack A-01')
-    if (!rack) return null
+    const rack = must(rackByName(project, 'Rack A-01'), 'Rack A-01')
     addChild(project, ctx, rack, ADDED_BOARD_NAME, 'custom-board', {
       board_type: pick(ctx, BOARD_TYPES),
       revision: version(1, 0, 0),
@@ -451,17 +457,15 @@ function scheduledStructuralChurn(project, ctx, day, today) {
     return 'add-board'
   }
   if (day === 10) {                                  // RENAMED
-    const b = firstBoard(project, 'Rack A-02')
-    if (!b) return null
+    const b = must(firstBoard(project, 'Rack A-02'), 'a board under Rack A-02')
     b.name = `${b.name} (relabeled)`
     b.modified = ctx.clock.next()
     project.modified = ctx.clock.next()
     return 'rename'
   }
   if (day === 16) {                                  // MOVED (reparent to a sibling rack)
-    const dst = rackByName(project, 'Rack A-05')
-    const b = project.nodes.find(n => n.name === ADDED_BOARD_NAME)
-    if (!dst || !b) return null
+    const dst = must(rackByName(project, 'Rack A-05'), 'Rack A-05')
+    const b = must(project.nodes.find(n => n.name === ADDED_BOARD_NAME), `the "${ADDED_BOARD_NAME}" board`)
     b.order = childrenOf(project, dst.id).length     // append index — count BEFORE reparenting
     b.parentId = dst.id
     b.modified = ctx.clock.next()
@@ -470,7 +474,7 @@ function scheduledStructuralChurn(project, ctx, day, today) {
   }
   if (day === 20) {                                  // ORDER-CHANGED (swap two siblings)
     const boards = boardsOf(project, 'Rack A-06')
-    if (boards.length < 2) return null
+    if (boards.length < 2) throw new Error(`scheduledStructuralChurn(day ${day}): Rack A-06 needs >= 2 custom boards to swap — validateOptions thresholds and churn targets have drifted`)
     const [x, y] = boards
     const t = x.order; x.order = y.order; y.order = t
     x.modified = ctx.clock.next()
@@ -479,8 +483,7 @@ function scheduledStructuralChurn(project, ctx, day, today) {
     return 'reorder'
   }
   if (day === 30) {                                  // REMOVED (decommission the added board)
-    const b = project.nodes.find(n => n.name === ADDED_BOARD_NAME)
-    if (!b) return null
+    const b = must(project.nodes.find(n => n.name === ADDED_BOARD_NAME), `the "${ADDED_BOARD_NAME}" board`)
     removeLeaf(project, b)
     project.modified = ctx.clock.next()
     return 'remove-board'
@@ -491,9 +494,8 @@ function scheduledStructuralChurn(project, ctx, day, today) {
     // the sample CSV (and forcing it back in would make a re-import rebind it,
     // breaking the clean round-trip). A power-supply unbind is invisible to the
     // CSV while still exercising the node-level template-changed diff.
-    const rack = rackByName(project, 'Rack A-07')
-    const ps = rack && childrenOf(project, rack.id).find(n => n.templateId === 'power-supply')
-    if (!ps) return null
+    const rack = must(rackByName(project, 'Rack A-07'), 'Rack A-07')
+    const ps = must(childrenOf(project, rack.id).find(n => n.templateId === 'power-supply'), 'a power supply under Rack A-07')
     ps.templateId = null
     ps.modified = ctx.clock.next()
     project.modified = ctx.clock.next()
@@ -773,6 +775,21 @@ function validateOptions(o) {
     if (o[k] < 1) throw new Error(`--${flag} must be at least 1`)
   }
   if (o.days < 0) throw new Error('--days cannot be negative')
+
+  // Enforce the shape the scheduled structural churn needs, so the generator can
+  // never SILENTLY produce a lab that skips a node diff ChangeType. These events
+  // fire on fixed days against specific racks/boards (see scheduledStructuralChurn):
+  // a config that can't satisfy them is rejected rather than degrading to routine.
+  // Keep these thresholds in sync with the days/racks/boards that churn targets.
+  if (o.racksPerRoom < 7) {
+    throw new Error('--racks-per-room must be at least 7: the scheduled structural events target racks A-01..A-07 (the day-34 template-changed unbind needs A-07)')
+  }
+  if (o.customBoardsPerRack < 2) {
+    throw new Error('--custom-boards-per-rack must be at least 2: the day-20 order-changed event swaps two sibling boards under one rack')
+  }
+  if (o.days < 34) {
+    throw new Error('--days must be at least 34: the last scheduled structural event (the day-34 template-changed unbind) must fire')
+  }
 }
 
 function printHelp() {
