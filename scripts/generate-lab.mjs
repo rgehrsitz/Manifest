@@ -152,8 +152,10 @@ const HW_MODELS = {
 }
 const BOARD_TYPES = ['signal-conditioner', 'relay-driver', 'adc-frontend', 'power-stage', 'comms-bridge']
 const CSCI_NAMES = ['nav', 'fire-control', 'comms', 'sensor-fusion', 'hmi', 'bit', 'recorder', 'telemetry']
-
-let spareSeq = 0 // module-scoped: unique suffix for added spare boards
+// The one synthetic board that scheduledStructuralChurn adds (d6), moves (d16),
+// then removes (d30) — declared here (not inside the function) because main()
+// runs at module load, before a mid-file const would initialize (TDZ).
+const ADDED_BOARD_NAME = 'Custom Board (added)'
 
 main(process.argv.slice(2))
 
@@ -172,7 +174,6 @@ function main(argv) {
 
   const project = buildInitialProject(options, ctx)
   writeManifest(projectDir, project)
-  writeSampleCsv(projectDir, project)
   initGit(projectDir, '2025-02-03T00:00:00Z')
 
   for (let day = 1; day <= options.days; day++) {
@@ -183,6 +184,12 @@ function main(argv) {
     // creatordate) shows a stable, chronological timeline.
     snapshot(projectDir, `d${pad(day, 2)}-${dayStr}-${label}`, `${dayStr}T12:00:00Z`)
   }
+
+  // Export the sample CSV from the FINAL (post-churn) project, so it faithfully
+  // matches the manifest a user actually opens. Writing it before the loop (from
+  // the day-0 state) left it stale: maintenance churn re-serializes some boards,
+  // so the day-0 CSV no longer round-trips against the day-N manifest.
+  writeSampleCsv(projectDir, project)
 
   const s = summarize(project)
   console.log(`Generated lab project at ${projectDir}`)
@@ -315,6 +322,15 @@ function applyDailyChurn(project, options, ctx, day) {
     return 'schema-desc'
   }
 
+  // Scheduled STRUCTURAL edits. The diff engine is the project's core
+  // differentiator, so the canonical timeline must DETERMINISTICALLY exercise
+  // every node ChangeType — added, removed, renamed, moved, order-changed, and
+  // node-level template-changed — not leave them to a probabilistic roll that
+  // some seeds never hit. Each is a single-purpose day (like the schema edits)
+  // so the resulting snapshot diff isolates exactly one change type.
+  const structural = scheduledStructuralChurn(project, ctx, day, today)
+  if (structural) return structural
+
   // A quiet day changes nothing — leave the manifest byte-identical so the
   // snapshot is a genuine no-op (don't even bump project.modified).
   const roll = ctx.rng()
@@ -371,26 +387,97 @@ function maintenanceEvent(project, ctx, today) {
       ps.properties.calibration_due = isoDate(addDays(new Date(today), 180))
       ps.modified = ctx.clock.next()
     }
-
-    // Sometimes the action is a physical add or decommission (exercises
-    // added / removed / order-changed diffs over the timeline).
-    const roll = ctx.rng()
-    if (roll < 0.35) {
-      spareSeq += 1
-      addChild(project, ctx, rack, `Custom Board spare ${spareSeq}`, 'custom-board', {
-        board_type: pick(ctx, BOARD_TYPES),
-        revision: version(ctx.intRange(1, 3), ctx.intRange(0, 9), ctx.intRange(0, 9)),
-        serial: serial(ctx, 'BRD'),
-        status: 'spare',
-        installed_date: today,
-      })
-    } else if (roll < 0.55) {
-      const removable = childrenOf(project, rack.id).filter(
-        n => n.templateId === 'custom-board' && ['spare', 'failed'].includes(n.properties.status)
-      )
-      if (removable.length) removeLeaf(project, pick(ctx, removable))
-    }
   }
+  // NOTE: physical add/decommission churn used to live here behind a per-event
+  // probability; with seed 42 over 40 days it never fired, so the canonical lab
+  // exercised zero structural diffs. It is now scheduled deterministically in
+  // scheduledStructuralChurn() so every structural ChangeType always appears.
+}
+
+// Deterministic, single-purpose structural edits keyed to fixed days (like the
+// d12/d26 schema edits). Targets are chosen by structure — not the RNG — so the
+// same change lands on the same node every run. Returns a snapshot-name slug, or
+// null on a non-structural day. One synthetic board ("Custom Board (added)") is
+// added (d6), moved (d16), then removed (d30), so node count nets back to
+// baseline while the timeline still shows added/moved/removed in isolation.
+function scheduledStructuralChurn(project, ctx, day, today) {
+  if (day === 6) {                                   // ADDED
+    const rack = rackByName(project, 'Rack A-01')
+    if (!rack) return null
+    addChild(project, ctx, rack, ADDED_BOARD_NAME, 'custom-board', {
+      board_type: pick(ctx, BOARD_TYPES),
+      revision: version(1, 0, 0),
+      serial: serial(ctx, 'BRD'),
+      status: 'spare',
+      installed_date: today,
+    })
+    project.modified = ctx.clock.next()
+    return 'add-board'
+  }
+  if (day === 10) {                                  // RENAMED
+    const b = firstBoard(project, 'Rack A-02')
+    if (!b) return null
+    b.name = `${b.name} (relabeled)`
+    b.modified = ctx.clock.next()
+    project.modified = ctx.clock.next()
+    return 'rename'
+  }
+  if (day === 16) {                                  // MOVED (reparent to a sibling rack)
+    const dst = rackByName(project, 'Rack A-05')
+    const b = project.nodes.find(n => n.name === ADDED_BOARD_NAME)
+    if (!dst || !b) return null
+    b.order = childrenOf(project, dst.id).length     // append index — count BEFORE reparenting
+    b.parentId = dst.id
+    b.modified = ctx.clock.next()
+    project.modified = ctx.clock.next()
+    return 'move'
+  }
+  if (day === 20) {                                  // ORDER-CHANGED (swap two siblings)
+    const boards = boardsOf(project, 'Rack A-06')
+    if (boards.length < 2) return null
+    const [x, y] = boards
+    const t = x.order; x.order = y.order; y.order = t
+    x.modified = ctx.clock.next()
+    y.modified = ctx.clock.next()
+    project.modified = ctx.clock.next()
+    return 'reorder'
+  }
+  if (day === 30) {                                  // REMOVED (decommission the added board)
+    const b = project.nodes.find(n => n.name === ADDED_BOARD_NAME)
+    if (!b) return null
+    removeLeaf(project, b)
+    project.modified = ctx.clock.next()
+    return 'remove-board'
+  }
+  if (day === 34) {                                  // node TEMPLATE-CHANGED (unbind to freeform)
+    // Target the rack's Power Supply, NOT a custom board: writeSampleCsv exports
+    // only custom-board nodes, so unbinding a board would silently drop it from
+    // the sample CSV (and forcing it back in would make a re-import rebind it,
+    // breaking the clean round-trip). A power-supply unbind is invisible to the
+    // CSV while still exercising the node-level template-changed diff.
+    const rack = rackByName(project, 'Rack A-07')
+    const ps = rack && childrenOf(project, rack.id).find(n => n.templateId === 'power-supply')
+    if (!ps) return null
+    ps.templateId = null
+    ps.modified = ctx.clock.next()
+    project.modified = ctx.clock.next()
+    return 'unbind'
+  }
+  return null
+}
+
+function rackByName(project, name) {
+  return project.nodes.find(n => n.templateId === 'rack' && n.name === name)
+}
+function boardsOf(project, rackName) {
+  const rack = rackByName(project, rackName)
+  if (!rack) return []
+  return childrenOf(project, rack.id)
+    .filter(n => n.templateId === 'custom-board')
+    .sort((a, b) => a.order - b.order)
+}
+function firstBoard(project, rackName) {
+  return boardsOf(project, rackName)[0]
 }
 
 function removeLeaf(project, n) {
