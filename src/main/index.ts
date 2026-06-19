@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron'
 import { existsSync } from 'fs'
+import { writeFile } from 'fs/promises'
 import { join } from 'path'
 import { createLogger } from './logger'
 import { ProjectManager } from './project-manager'
@@ -7,6 +8,7 @@ import { GitService } from './git-service'
 import { IPC } from '../shared/ipc'
 import { ok, err, ErrorCode } from '../shared/errors'
 import type { NodeTemplate, ImportMapping } from '../shared/types'
+import type { ReportFormat } from '../shared/report'
 
 // ─── Logging ────────────────────────────────────────────────────────────────
 
@@ -159,6 +161,34 @@ function registerIpcHandlers(): void {
     const status = await gitService.checkVersion()
     return ok(status)
   })
+
+  // ── Report export ──────────────────────────────────────────────────────────
+  // Main builds the content authoritatively (ProjectManager.buildReport) and owns
+  // the save dialog + file write — the renderer never touches the filesystem.
+
+  ipcMain.handle(IPC.REPORT_EXPORT, async (_, { from, to, format }: { from: string; to: string; format: ReportFormat }) => {
+    const built = await projectManager.buildReport(from, to, format)
+    if (!built.ok) return built
+    // showSaveDialog AND writeFile are both inside the try so a dialog or write
+    // rejection resolves to a Result, never throwing across the IPC boundary.
+    try {
+      const result = await dialog.showSaveDialog({
+        title: 'Export change report',
+        defaultPath: built.data.suggestedName,
+        filters: [format === 'csv' ? { name: 'CSV', extensions: ['csv'] } : { name: 'Markdown', extensions: ['md'] }],
+      })
+      if (result.canceled || !result.filePath) return ok({ savedPath: null })
+      await writeFile(result.filePath, built.data.content, 'utf8')
+      return ok({ savedPath: result.filePath })
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      return err(ErrorCode.REPORT_WRITE_FAILED, `Failed to write report: ${msg}`)
+    }
+  })
+
+  ipcMain.handle(IPC.REPORT_BUILD, (_, { from, to, format }: { from: string; to: string; format: ReportFormat }) =>
+    projectManager.buildReport(from, to, format)
+  )
 
   // ── Dialog helpers ───────────────────────────────────────────────────────
 

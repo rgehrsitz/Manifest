@@ -228,6 +228,29 @@
     toastTimer = setTimeout(() => { toastMsg = null }, 4000)
   }
 
+  // Export the loaded compare as a saved report. Main builds + writes (renderer
+  // never touches the filesystem); a canceled save dialog is a silent no-op.
+  async function handleExportReport(format: 'markdown' | 'csv') {
+    if (!mergedTree) return
+    const res = await window.api.report.export(mergedTree.fromSnapshot, mergedTree.toSnapshot, format)
+    if (!res.ok) { showToast(`Export failed: ${res.error.message}`); return }
+    if (res.data.savedPath) showToast(`Report saved to ${res.data.savedPath}`)
+  }
+
+  // Copy the loaded compare as Markdown. Clipboard is a renderer-side write, not
+  // a filesystem touch, so it stays in the renderer.
+  async function handleCopyReport() {
+    if (!mergedTree) return
+    const res = await window.api.report.build(mergedTree.fromSnapshot, mergedTree.toSnapshot, 'markdown')
+    if (!res.ok) { showToast(`Copy failed: ${res.error.message}`); return }
+    try {
+      await navigator.clipboard.writeText(res.data.content)
+      showToast('Report copied to clipboard')
+    } catch {
+      showToast('Could not access the clipboard')
+    }
+  }
+
   async function focusInput(el: HTMLInputElement | null) {
     await tick()
     el?.focus()
@@ -925,7 +948,8 @@
 <!-- ─── Toast ─────────────────────────────────────────────────────────────── -->
 {#if toastMsg}
   <div class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 bg-red-700 text-white
-              text-sm px-4 py-2 rounded-lg shadow-lg max-w-sm text-center">
+              text-sm px-4 py-2 rounded-lg shadow-lg max-w-sm text-center"
+       data-testid="toast">
     {toastMsg}
   </div>
 {/if}
@@ -1455,6 +1479,8 @@
             onExitCompare={exitCompareMode}
             onRestore={handleSnapshotRestore}
             onApplyRecovery={handleApplyRecovery}
+            onExportReport={handleExportReport}
+            onCopyReport={handleCopyReport}
           />
         </div>
       {/if}

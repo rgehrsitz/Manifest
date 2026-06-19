@@ -27,6 +27,7 @@ import type {
   ImportResult,
 } from './types'
 import type { MergedTree } from './merged-tree'
+import type { ReportFormat } from './report'
 
 // Channel name constants — use these everywhere, never raw strings.
 export const IPC = {
@@ -56,6 +57,8 @@ export const IPC = {
   SNAPSHOT_TIMELINE:     'snapshot:timeline',
   RECOVERY_APPLY:        'recovery:apply',
   GIT_CHECK:           'git:check',
+  REPORT_EXPORT:       'report:export',
+  REPORT_BUILD:        'report:build',
   // UI utility channels (not domain operations)
   DIALOG_OPEN_FOLDER:  'dialog:openFolder',
   DIALOG_OPEN_FILE:    'dialog:openFile',
@@ -127,6 +130,12 @@ export interface ManifestAPI {
   }
   git: {
     check(): Promise<Result<GitStatus>>
+  }
+  report: {
+    /** Build a diff report between two snapshots and write it via a save dialog. savedPath is null if canceled. */
+    export(from: string, to: string, format: ReportFormat): Promise<Result<{ savedPath: string | null }>>
+    /** Build a diff report and return its content (for clipboard copy). */
+    build(from: string, to: string, format: ReportFormat): Promise<Result<{ content: string; suggestedName: string }>>
   }
   dialog: {
     openFolder(title: string): Promise<string | null>

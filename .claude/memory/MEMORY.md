@@ -10,3 +10,5 @@ Project-scoped memory for Manifest. User-scoped preferences and Svelte 5 gotchas
 - [Synthetic lab data generator + scale findings](project_synthetic_data.md) — generate-lab.mjs builds a ~7.4k-node test-lab with templates + 40-snapshot timeline; surfaced+fixed a git-show maxBuffer scale bug
 - [CSV import design](project_csv_import.md) — shared parser + authoritative planImport; flat + path placement; auto-create parents; unified in-batch namespace; on branch feat/csv-import
 - [Scan for NUL before commit](feedback-scan-nul-before-commit.md) — Write/Edit can embed a literal NUL where a separator was meant, making the file binary in git; scan before committing
+- [Diff/report export](project_report_export.md) — Markdown/CSV export of the snapshot diff; pure formatter over diffProjects/diffTemplates; on branch feat/report-export
+- [Native ABI rebuild order](feedback-native-abi-rebuild-order.md) — better-sqlite3: rebuild:native:node for unit, rebuild:native:electron for E2E/dev; never leave it node-built

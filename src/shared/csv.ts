@@ -80,3 +80,27 @@ export function parseCsv(text: string): string[][] {
 
   return rows
 }
+
+// Serialize rows back to RFC-4180 CSV text (symmetric with parseCsv). A field is
+// quoted when it contains a comma, quote, or CR/LF; embedded quotes are doubled.
+// Rows are joined with CRLF and the output ends with a trailing CRLF.
+//
+// Formula-injection guard: spreadsheets (Excel/Sheets) execute a cell whose first
+// character is = + - @ (or a leading tab/CR), so any such cell is prefixed with a
+// single quote before quoting. These exports are built to be opened in a
+// spreadsheet and the import side accepts arbitrary external CSVs, so an injected
+// value must never round-trip into an executable formula.
+const FORMULA_LEADERS = new Set(['=', '+', '-', '@', '\t', '\r'])
+
+function escapeCsvField(value: string): string {
+  let v = value
+  if (v.length > 0 && FORMULA_LEADERS.has(v[0])) v = `'${v}`
+  if (/[",\r\n]/.test(v)) {
+    return `"${v.replace(/"/g, '""')}"`
+  }
+  return v
+}
+
+export function serializeCsv(rows: string[][]): string {
+  return rows.map(row => row.map(escapeCsvField).join(',')).join('\r\n') + '\r\n'
+}

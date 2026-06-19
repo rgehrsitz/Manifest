@@ -56,7 +56,8 @@ scope, path base = baseParentId.
 **Deferred:** native `.xlsx`, NetBox relational adapter, update-on-key re-import,
 import presets.
 
-Status: complete on branch; 382 unit + 35 E2E green; typecheck + svelte-check
-clean. Passed a multi-agent pre-landing review (12 findings; the namespace bug
-above was the headline P2). Related: [[project_typed_properties]],
-[[project_synthetic_data]], [[project_target_domain]], [[feedback-scan-nul-before-commit]].
+Status: **merged to main via PR #10.** Passed a multi-agent pre-landing review
+(12 findings; the namespace bug above was the headline P2) plus a Copilot review
+(2 findings folded). Related: [[project_typed_properties]],
+[[project_synthetic_data]], [[project_target_domain]], [[project_report_export]],
+[[feedback-scan-nul-before-commit]].
