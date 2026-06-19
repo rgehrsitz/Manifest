@@ -8,8 +8,11 @@
   import {
     computeBrowseSections,
     computeCompareSections,
+    computeSelectionFoldIds,
+    findParentRowIndex,
     type CompareSectionContext,
     type LensSection,
+    type LensNavItem,
   } from '../lib/density-layer'
   import {
     mergeDisplay,
@@ -369,6 +372,14 @@
     get(virtualizerStore).scrollToIndex(idx, { align: selectedScrollAlign })
   })
 
+  // Per-render lookup: for each fold's foldId, does it contain the
+  // currently-selected node? Used to paint a "your selection is in here"
+  // highlight on the marker. O(total fold-content rows) per render but
+  // sections is small and rows[].node.id is a fast comparison.
+  const selectionFoldIds = $derived.by((): Set<string> =>
+    computeSelectionFoldIds(sections, rows, selectedId)
+  )
+
   function findDisplayedIndexForNode(nodeId: string): number {
     for (let i = 0; i < displayedItems.length; i++) {
       const item = displayedItems[i]
@@ -434,18 +445,14 @@
   function findParentDisplayedIndex(idx: number, depth: number): number {
     // Ghost ancestors are valid landing spots (issue #3) — a removed subtree
     // nests its ghosts under ghost:parentId, so a nested ghost's parent is
-    // itself a ghost that the user can inspect.
-    for (let i = idx - 1; i >= 0; i--) {
-      const item = displayedItems[i]
-      if (
-        item.phase !== 'exiting' &&
-        item.payload.kind === 'row' &&
-        item.payload.row.depth === depth - 1
-      ) {
-        return i
-      }
-    }
-    return -1
+    // itself a ghost that the user can inspect. Scan logic lives in
+    // findParentRowIndex (density-layer) so it's unit-tested.
+    const nav: LensNavItem[] = displayedItems.map(item => ({
+      exiting: item.phase === 'exiting',
+      isRow: item.payload.kind === 'row',
+      depth: item.payload.kind === 'row' ? item.payload.row.depth : -1,
+    }))
+    return findParentRowIndex(nav, idx, depth)
   }
 
   function handleKeyDown(e: KeyboardEvent) {
@@ -495,6 +502,16 @@
             onToggle?.(item.row.node.id)
           } else if (item.row.depth > 0) {
             const parentIdx = findParentDisplayedIndex(idx, item.row.depth)
+            if (parentIdx >= 0) void navigateTo(parentIdx)
+          }
+        } else if (item?.kind === 'fold') {
+          // ArrowLeft on a FoldMarker escapes the fold context — moves to
+          // the parent of the fold's first row. Symmetric with row behavior
+          // (which moves to the parent when there's nothing to collapse).
+          // The fold itself is already collapsed; no "collapse fold" action.
+          const firstRow = rows[item.section.startIndex]
+          if (firstRow && firstRow.depth > 0) {
+            const parentIdx = findParentDisplayedIndex(idx, firstRow.depth)
             if (parentIdx >= 0) void navigateTo(parentIdx)
           }
         }
@@ -586,6 +603,7 @@
                 nodeNames={rows
                   .slice(item.section.startIndex, item.section.endIndex + 1)
                   .map(r => r.node.name)}
+                containsSelection={!!item.section.foldId && selectionFoldIds.has(item.section.foldId)}
                 onExpand={() => onFoldExpand?.(item.section.foldId ?? '')}
               />
             {:else}

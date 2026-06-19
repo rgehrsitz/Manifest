@@ -49,9 +49,9 @@ never-silently-hide-a-change invariant. So `formatDiffReportCsv` takes
 `templateDiffs` and emits a single `schema-change` notice row when any exist
 (detail stays in Markdown). Caught by the pre-landing review.
 
-Status: complete on branch `feat/report-export`; 411 unit + 40 E2E green;
-typecheck + svelte-check clean. Passed a multi-agent pre-landing review (7
-findings folded: the CSV schema-only trap + showSaveDialog-outside-try-catch +
-5 test gaps). Plan + review report: `~/.claude/plans/diff-report-export.md`.
+Status: **merged to main via PR #11.** Passed a multi-agent pre-landing review
+(7 findings folded: the CSV schema-only trap + showSaveDialog-outside-try-catch +
+5 test gaps) plus a human review that added Markdown-injection escaping (the
+report-local `md()` helper). Plan + review report: `~/.claude/plans/diff-report-export.md`.
 Related: [[project_csv_import]], [[project_target_domain]],
 [[feedback-native-abi-rebuild-order]].

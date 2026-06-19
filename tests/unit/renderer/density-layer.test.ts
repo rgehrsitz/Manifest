@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   computeBrowseSections,
   computeCompareSections,
+  computeSelectionFoldIds,
+  findParentRowIndex,
   DEFAULT_MIN_FOLD_SIZE,
   type LensSection,
+  type LensNavItem,
 } from '../../../src/renderer/src/lib/density-layer'
 import type { VisibleRow } from '../../../src/renderer/src/lib/tree-rows'
 import type { ManifestNode } from '../../../src/shared/types'
@@ -385,5 +388,56 @@ describe('computeCompareSections — collapsed subtree rollup (Step 5)', () => {
     ])
     const [section] = computeCompareSections(rows, { ...CTX, subtreeSummaries })
     expect(section.changeBreakdown?.added).toBe(5)
+  })
+})
+
+// ─── Selection highlight + fold-escape nav (lens polish) ───────────────────────
+
+describe('computeSelectionFoldIds', () => {
+  const rows = [normal('a', 1), normal('b', 1), normal('c', 1), decorated('d', 1)]
+  const fold: LensSection = { startIndex: 0, endIndex: 2, density: 'summarized', reason: 'compare-unchanged', foldId: 'f1' }
+  const full: LensSection = { startIndex: 3, endIndex: 3, density: 'full', reason: 'compare-changed' }
+
+  it('returns the foldId of a summarized section that contains the selection', () => {
+    expect(computeSelectionFoldIds([fold, full], rows, 'b')).toEqual(new Set(['f1']))
+  })
+
+  it('ignores a selection that lives in a full (unfolded) section', () => {
+    expect(computeSelectionFoldIds([fold, full], rows, 'd')).toEqual(new Set())
+  })
+
+  it('is empty with no selection or an absent id', () => {
+    expect(computeSelectionFoldIds([fold], rows, null)).toEqual(new Set())
+    expect(computeSelectionFoldIds([fold], rows, 'zzz')).toEqual(new Set())
+  })
+
+  it('picks only the fold that actually contains the selection', () => {
+    const r = [normal('a', 1), normal('b', 1), normal('c', 1), normal('e', 1)]
+    const f1: LensSection = { startIndex: 0, endIndex: 1, density: 'summarized', reason: 'compare-unchanged', foldId: 'f1' }
+    const f2: LensSection = { startIndex: 2, endIndex: 3, density: 'summarized', reason: 'compare-unchanged', foldId: 'f2' }
+    expect(computeSelectionFoldIds([f1, f2], r, 'e')).toEqual(new Set(['f2']))
+  })
+})
+
+describe('findParentRowIndex', () => {
+  const R = (depth: number): LensNavItem => ({ exiting: false, isRow: true, depth })
+  const FOLD: LensNavItem = { exiting: false, isRow: false, depth: -1 }
+
+  it('finds the nearest preceding row at childDepth - 1 (ArrowLeft from a fold escapes to its parent)', () => {
+    // [0] root (depth 0), [1] fold whose first row is depth 1 → parent is row 0.
+    expect(findParentRowIndex([R(0), FOLD], 1, 1)).toBe(0)
+  })
+
+  it('returns -1 when there is no parent at the target depth', () => {
+    expect(findParentRowIndex([R(1), R(2)], 1, 1)).toBe(-1)
+  })
+
+  it('skips exiting items', () => {
+    const items: LensNavItem[] = [R(0), { exiting: true, isRow: true, depth: 0 }, R(2)]
+    expect(findParentRowIndex(items, 2, 1)).toBe(0)
+  })
+
+  it('treats fold markers as non-parents (only rows qualify)', () => {
+    expect(findParentRowIndex([FOLD, R(2)], 1, 2)).toBe(-1)
   })
 })

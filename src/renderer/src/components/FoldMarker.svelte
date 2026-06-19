@@ -24,9 +24,25 @@
      * Optional — empty array suppresses the tooltip.
      */
     nodeNames?: string[]
+    /**
+     * True when the currently-selected node lives inside this fold. The
+     * marker renders a stronger ring so the user can see WHERE their
+     * selection landed after auto-scroll. Pairs with
+     * ManifestView's findDisplayedIndexForNode, which scrolls this marker
+     * into view when the selection is inside.
+     */
+    containsSelection?: boolean
   }
 
-  let { foldId, nodeCount, changeBreakdown, depth, onExpand, nodeNames = [] }: Props = $props()
+  let {
+    foldId,
+    nodeCount,
+    changeBreakdown,
+    depth,
+    onExpand,
+    nodeNames = [],
+    containsSelection = false,
+  }: Props = $props()
 
   // Tooltip: surface the first few node names on hover so the user can peek
   // without committing to an expand. Capped to keep the tooltip readable;
@@ -81,10 +97,13 @@
   aria-label={ariaLabel}
   title={tooltipText}
   data-fold-id={foldId}
-  class="flex items-center gap-2 w-full h-full text-left
-         rounded-md border border-amber-200 bg-amber-50/80
-         hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-400
-         text-amber-900 text-xs font-medium overflow-hidden"
+  data-contains-selection={containsSelection ? 'true' : undefined}
+  class="flex items-center gap-2 w-full h-full text-left rounded-md border
+         text-amber-900 text-xs font-medium overflow-hidden
+         focus:outline-none focus:ring-2 focus:ring-amber-400
+         {containsSelection
+           ? 'border-amber-400 bg-amber-100 ring-1 ring-amber-400'
+           : 'border-amber-200 bg-amber-50/80 hover:bg-amber-100'}"
   style:padding-left={paddingLeft}
   style:padding-right="8px"
   onclick={onExpand}
