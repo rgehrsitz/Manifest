@@ -147,8 +147,26 @@ export function planImport(
     if (arr) arr.push(n)
     else childrenByParent.set(n.parentId, [n])
   }
-  const childByName = (parentId: string, name: string): ManifestNode | undefined =>
-    (childrenByParent.get(parentId) ?? []).find(c => lower(c.name) === lower(name))
+  // Lazy per-parent lowercased-name → node index. Built once per parent and
+  // reused, so name lookups (parent resolution, collision checks, name-key
+  // matching) are O(1) instead of re-scanning a parent's children on every
+  // call — the only super-linear term in the planner at large scale. "First
+  // wins" mirrors the previous Array.find() semantics for duplicate-named
+  // siblings. childrenByParent is never mutated during planning (in-batch nodes
+  // live in batchChildren), so the index stays valid for the whole plan.
+  const nameIndexByParent = new Map<string, Map<string, ManifestNode>>()
+  const childByName = (parentId: string, name: string): ManifestNode | undefined => {
+    let idx = nameIndexByParent.get(parentId)
+    if (!idx) {
+      idx = new Map()
+      for (const c of childrenByParent.get(parentId) ?? []) {
+        const k = lower(c.name)
+        if (!idx.has(k)) idx.set(k, c)
+      }
+      nameIndexByParent.set(parentId, idx)
+    }
+    return idx.get(lower(name))
+  }
 
   // Single index of nodes created/claimed THIS batch, keyed by (parent, name).
   // Both leaf rows and auto-created ancestors register here, so collision checks
@@ -296,10 +314,13 @@ export function planImport(
     // Deferred until the create actually commits, so a row that later skips
     // (collision / invalid cell) does not falsely reserve its key value.
     let commitKeyClaim: (() => void) | null = null
+    // Hoisted so the create-path collision guard can craft a key-aware skip
+    // reason when a keyed row matched nothing and then collides on name.
+    let keyValue = ''
 
     // ── Update-on-key: a keyed row matching an existing child updates it ───────
     if (updateExisting) {
-      const keyValue = keyPropKey === null ? name : (cells[keyIdx!] ?? '').trim()
+      keyValue = keyPropKey === null ? name : (cells[keyIdx!] ?? '').trim()
       if (keyValue === '') {
         out.skipped.push({ row: fileRow, column: mapping.keyColumn, reason: 'missing key value' })
         return
@@ -390,7 +411,15 @@ export function planImport(
     }
 
     if (taken(parentId, name)) {
-      out.skipped.push({ row: fileRow, column: mapping.nameColumn, reason: `name "${name}" already exists under the target parent` })
+      // In property-key update mode, reaching here means the key matched no
+      // existing node (else we'd have updated) AND the name is taken — surface
+      // BOTH facts so a user re-importing their own export understands why the
+      // row neither updated nor created, instead of a bare "name exists".
+      if (updateExisting && keyPropKey !== null) {
+        out.skipped.push({ row: fileRow, column: mapping.keyColumn, reason: `no existing node matched ${mapping.keyColumn} "${keyValue}", and a node named "${name}" already exists under the target parent — not created` })
+      } else {
+        out.skipped.push({ row: fileRow, column: mapping.nameColumn, reason: `name "${name}" already exists under the target parent` })
+      }
       return
     }
 

@@ -89,6 +89,12 @@ function fullPath(entry: DiffEntry): string {
 // structure. CR/LF/tab collapse to a space (no injected headings or list items);
 // inline emphasis / code / link / HTML characters are backslash-escaped. The CSV
 // path is handled separately by serializeCsv (quoting + formula escaping).
+//
+// SCOPE: this is for INLINE / list-item contexts only. It deliberately does not
+// escape line-start block markers (#, -, +, >, |) because CR/LF are already
+// collapsed to spaces, so an interpolated value can never start a line. If a
+// future section interpolates values into a Markdown TABLE, add '|' to the
+// escape set first — otherwise an embedded pipe would break table columns.
 function md(value: unknown): string {
   return String(value ?? '')
     .replace(/[\r\n\t]+/g, ' ')
