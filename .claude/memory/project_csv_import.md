@@ -53,8 +53,22 @@ own RFC-4180 parser).
 header→key mapping, required-advisory, honest "CSV (from spreadsheet exports)"
 scope, path base = baseParentId.
 
-**Deferred:** native `.xlsx`, NetBox relational adapter, update-on-key re-import,
-import presets.
+**Update-on-key re-import (added on `feat/update-on-key-import`):** opt-in
+`mapping.updateExisting` + `keyColumn` (name col OR an included property column,
+matched by the column's mapped key, normalized). A keyed row matching an existing
+child of the resolved parent → `PlanOutput.update` (merge: blank leaves, invalid
+skips) instead of skip-as-collision; 0 → create, 2+ → skip ambiguous. Coerces
+against the matched node's EFFECTIVE template (mapping's ?? node's); a rebind
+coerces+validates ALL carried props (mirrors nodeUpdate). Renames on a
+property-key match (exact compare, collision excludes the node); updates claim
+their final name in batchChildren. No-op updates aren't emitted (no false dirty).
+`applyImportCsv` applies updates in the one commit; commit guard fires on
+creates OR updates; ImportPlan.updatedCount / ImportResult.updated. Codex
+validated plan + impl + final diff (3 passes).
+
+**Deferred:** native `.xlsx`, NetBox relational adapter, import presets,
+delete-missing/full-sync, global (cross-parent) key match, blank=clear,
+reusing a renamed-away name within the same import.
 
 Status: **merged to main via PR #10.** Passed a multi-agent pre-landing review
 (12 findings; the namespace bug above was the headline P2) plus a Copilot review
