@@ -639,16 +639,19 @@ export class ProjectManager {
     // `templateId` omitted ⇒ leave the existing binding). The planner already
     // validated rebinds against the new template, so no invalid node is committed.
     const updateById = new Map(out.update.map(u => [u.nodeId, u]))
+    const updatedNodeList: ManifestNode[] = []
     const updatedNodes: ManifestNode[] = this.currentProject.nodes.map(n => {
       const u = updateById.get(n.id)
       if (!u) return n
-      return {
+      const updated: ManifestNode = {
         ...n,
         name: u.name,
         properties: u.properties,
         ...(u.templateId !== undefined ? { templateId: u.templateId } : {}),
         modified: now,
       }
+      updatedNodeList.push(updated)
+      return updated
     })
 
     const nextProject: Project = {
@@ -656,8 +659,14 @@ export class ProjectManager {
       modified: now,
       nodes: [...updatedNodes, ...newNodes],
     }
+    // Incrementally upsert only the created + updated nodes (imports never delete)
+    // instead of rebuilding the whole index — keeps import cost O(import size),
+    // not O(tree size). Mirrors nodeCreate/nodeUpdate/nodeMove; if a sync throws,
+    // commitProjectMutation falls back to a full rebuild via restoreSearchIndex.
     const committed = this.commitProjectMutation(nextProject, () => {
-      this.search.rebuild(nextProject)
+      const projectPath = nextProject.path!
+      for (const node of newNodes) this.search.upsertNode(projectPath, node)
+      for (const node of updatedNodeList) this.search.upsertNode(projectPath, node)
     })
     if (!committed.ok) return committed as Result<{ project: Project; summary: ImportResult }>
     return ok({ project: committed.data, summary })

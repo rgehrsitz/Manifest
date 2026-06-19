@@ -316,4 +316,27 @@ describe('applyImportCsv — update-on-key', () => {
     expect(r.data.summary.created).toBe(0)
     expect(r.data.project.nodes.find(n => n.id === 'b1')!.modified).toBe(TS)   // untouched
   })
+
+  it('incrementally indexes created + updated nodes (old value gone, unrelated kept)', async () => {
+    // b1 will be UPDATED (serial ALPHA→BRAVO via name key); b2 is UNRELATED.
+    await openSeeded([
+      board('b1', 'Board 1', { serial: 'ALPHA', sku: 'X' }),
+      board('b2', 'Board 2', { serial: 'CHARLIE', sku: 'Y' }),
+    ])
+    const path = writeCsv('idx.csv', 'name,serial\nBoard 1,BRAVO\nBoard NEW,DELTA\n')
+    const r = manager.applyImportCsv(path, umap({ keyColumn: 'name', columns: [{ header: 'serial', key: 'serial', include: true }] }))
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.data.summary.updated).toBe(1)
+    expect(r.data.summary.created).toBe(1)
+
+    const hits = async (q: string) => {
+      const s = await manager.searchNodes(q)
+      return s.ok ? s.data.map(h => h.nodeId) : []
+    }
+    expect(await hits('BRAVO')).toContain('b1')   // updated node re-indexed
+    expect((await hits('DELTA')).length).toBeGreaterThan(0)  // created node indexed
+    expect(await hits('CHARLIE')).toContain('b2') // unrelated node still indexed (no full wipe)
+    expect(await hits('ALPHA')).toHaveLength(0)    // old value removed by the upsert
+  })
 })
