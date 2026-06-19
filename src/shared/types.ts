@@ -276,7 +276,15 @@ export interface NodeHistory {
   // "Indexing N/M…" banner consistently with the entries it just received.
   // Without this, a parallel status query could race the entries query and
   // return stale inProgress=false alongside empty entries.
-  backfillStatus: { inProgress: boolean; completed: number; total: number }
+  backfillStatus: NodeHistoryIndexStatus
+}
+
+export interface NodeHistoryIndexStatus {
+  inProgress: boolean
+  completed: number
+  total: number
+  incompleteCount: number
+  incompleteSnapshotIds: string[]
 }
 
 export interface SearchResult {

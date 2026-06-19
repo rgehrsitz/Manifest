@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdirSync, rmSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
+import Database from 'better-sqlite3'
 import { ProjectManager } from '../../../src/main/project-manager'
 import { GitService } from '../../../src/main/git-service'
 
@@ -41,6 +42,37 @@ describe('nodeHistory IPC', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.data.entries).toEqual([])
+  })
+
+  it('surfaces incomplete history index state and reindexes it on demand', async () => {
+    const rootId = manager.getCurrent()!.nodes.find(n => n.parentId === null)!.id
+    manager.nodeCreate(rootId, 'Server')
+    await manager.snapshotCreate('s1')
+    manager.nodeCreate(rootId, 'Switch')
+    await manager.snapshotCreate('s2')
+
+    const db = new Database(join(tmpDir, 'NodeHistory Project', '.manifest', 'index', 'history.db'))
+    try {
+      db.prepare(`UPDATE snapshot_index_state SET complete=0 WHERE snapshot_id='s2'`).run()
+    } finally {
+      db.close()
+    }
+
+    expect(manager.getHistoryIndexStatus()).toMatchObject({
+      inProgress: false,
+      incompleteCount: 1,
+      incompleteSnapshotIds: ['s2'],
+    })
+
+    const reindex = manager.reindexHistory()
+    expect(reindex.ok).toBe(true)
+    await manager.waitForHistoryBackfill()
+
+    expect(manager.getHistoryIndexStatus()).toMatchObject({
+      inProgress: false,
+      incompleteCount: 0,
+      incompleteSnapshotIds: [],
+    })
   })
 
   it('emits one entry per state change across snapshots, skipping unchanged snapshots', async () => {

@@ -116,7 +116,11 @@ function registerIpcHandlers(): void {
   )
 
   ipcMain.handle(IPC.NODE_HISTORY_BACKFILL_STATUS, () =>
-    ok(projectManager.getHistoryBackfillStatus())
+    ok(projectManager.getHistoryIndexStatus())
+  )
+
+  ipcMain.handle(IPC.NODE_HISTORY_REINDEX, () =>
+    projectManager.reindexHistory()
   )
 
   // ── Templates ──────────────────────────────────────────────────────────────
