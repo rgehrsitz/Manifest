@@ -2,12 +2,17 @@
 
 <script lang="ts">
   import { tick } from 'svelte'
-  import type { ManifestNode, Project } from '../../../shared/types'
-  import { validateNodeName, validatePropertyKey, validatePropertyValue } from '../../../shared/validation'
+  import type { ManifestNode, Project, PropertyType } from '../../../shared/types'
+  import type { MergedTreeNode } from '../../../shared/merged-tree'
+  import { validateNodeName } from '../../../shared/validation'
   import NodeHistoryView from './NodeHistoryView.svelte'
+  import PropertyEditor from './PropertyEditor.svelte'
 
   interface Props {
-    node: ManifestNode | null
+    // Accepts a plain ManifestNode (browse mode) or a MergedTreeNode (compare
+    // mode, which carries an extra `status` field on ghosts). The union makes
+    // the runtime check `'status' in node` narrow cleanly without unknown casts.
+    node: ManifestNode | MergedTreeNode | null
     project: Project
     /** Bumped by App.svelte when the user presses F2 or "Rename" in the tree context menu. */
     renameRequestId?: number
@@ -16,7 +21,10 @@
     onUpdate: (id: string, changes: {
       name?: string
       properties?: Record<string, string | number | boolean | null>
+      templateId?: string | null
     }) => Promise<void>
+    /** Promote an ad-hoc property to a typed field on the node's template. */
+    onPromoteField: (nodeId: string, key: string, type: PropertyType) => Promise<void>
     onError: (msg: string) => void
   }
 
@@ -27,6 +35,7 @@
     readOnly = false,
     readOnlyReason = 'Exit read-only mode to edit the current project.',
     onUpdate,
+    onPromoteField,
     onError,
   }: Props = $props()
 
@@ -65,7 +74,7 @@
   let nameInputEl = $state<HTMLInputElement | null>(null)
 
   function startEditName() {
-    if (!node || readOnly) return
+    if (!node || effectiveReadOnly) return
     nameInput = node.name
     nameError = null
     editingName = true
@@ -77,7 +86,7 @@
   }
 
   async function commitName() {
-    if (!node || readOnly) return
+    if (!node || effectiveReadOnly) return
     const trimmed = nameInput.trim()
     if (trimmed === node.name) { editingName = false; return }
 
@@ -106,83 +115,51 @@
     if (e.key === 'Escape') cancelEditName()
   }
 
-  // ─── Properties ───────────────────────────────────────────────────────────
-
-  let newKey = $state('')
-  let newValue = $state('')
-  let newKeyError = $state<string | null>(null)
-  let newValueError = $state<string | null>(null)
-
-  async function addProperty() {
-    if (!node || readOnly) {
-      onError(readOnlyReason)
-      return
-    }
-    const k = newKey.trim()
-    const v = newValue.trim()
-    if (!k) { newKeyError = 'Key is required'; return }
-
-    const keyVal = validatePropertyKey(k)
-    if (!keyVal.valid) { newKeyError = keyVal.message ?? 'Invalid key'; return }
-
-    if (k in (node.properties ?? {})) { newKeyError = 'Key already exists'; return }
-
-    const valVal = validatePropertyValue(v)
-    if (!valVal.valid) { newValueError = valVal.message ?? 'Invalid value'; return }
-
-    newKeyError = null
-    newValueError = null
-    newKey = ''
-    newValue = ''
-    await onUpdate(node.id, {
-      properties: { ...(node.properties ?? {}), [k]: v },
-    })
-  }
-
-  async function deleteProperty(key: string) {
-    if (!node || readOnly) return
-    const props = { ...(node.properties ?? {}) }
-    delete props[key]
-    await onUpdate(node.id, { properties: props })
-  }
-
-  let editingPropKey = $state<string | null>(null)
-  let editingPropValue = $state('')
-  let editingPropError = $state<string | null>(null)
-  let propValueInputEl = $state<HTMLInputElement | null>(null)
-
-  function startEditProp(key: string) {
-    if (readOnly) return
-    editingPropKey = key
-    editingPropValue = String(node?.properties?.[key] ?? '')
-    editingPropError = null
-  }
-
-  async function commitProp(key: string) {
-    if (!node || readOnly) return
-    const v = editingPropValue.trim()
-    const valVal = validatePropertyValue(v)
-    if (!valVal.valid) { editingPropError = valVal.message ?? 'Invalid value'; return }
-
-    editingPropKey = null
-    editingPropError = null
-    await onUpdate(node.id, {
-      properties: { ...(node.properties ?? {}), [key]: v },
-    })
-  }
-
-  function handlePropKeyDown(e: KeyboardEvent, key: string) {
-    if (e.key === 'Enter') commitProp(key)
-    if (e.key === 'Escape') { editingPropKey = null; editingPropError = null }
-  }
-
   // ─── Derived ──────────────────────────────────────────────────────────────
 
   const isRoot = $derived(node?.parentId === null)
   const parentNode = $derived(
     node?.parentId ? project.nodes.find(n => n.id === node!.parentId) : null
   )
-  const propEntries = $derived(Object.entries(node?.properties ?? {}))
+  const projectTemplates = $derived(project.templates ?? {})
+
+  // ─── Ghost (tombstone) mode (issue #3) ────────────────────────────────────
+  // A ghost selection is a row in compare mode whose underlying node was
+  // removed (or is the moved-from origin) in the destination snapshot. The
+  // DetailPane renders it read-only with a distinctive banner so the user
+  // can inspect what was there without being able to edit it.
+  //
+  // Ghost id format: `ghost:${originalNodeId}` (see merged-tree.ts). The
+  // original id is what NodeHistoryView needs to find the live history,
+  // and what the user expects to see in the footer.
+  const isGhost = $derived(node?.id?.startsWith('ghost:') ?? false)
+  const originalNodeId = $derived(
+    isGhost && node ? node.id.slice('ghost:'.length) : node?.id ?? ''
+  )
+  const ghostStatus = $derived.by<'removed' | 'moved-from' | null>(() => {
+    if (!isGhost || !node) return null
+    // Narrow via the discriminating `status` field. Ghost nodes are always
+    // MergedTreeNodes in practice (issue #3), so `'status' in node` is true.
+    // Default to 'removed' if status is missing — defensive but unreachable.
+    if ('status' in node) {
+      return node.status === 'moved-from' ? 'moved-from' : 'removed'
+    }
+    return 'removed'
+  })
+  // Whether ANY edit-affecting code path should treat the node as read-only.
+  // Composed of: explicit readOnly prop OR ghost selection.
+  const effectiveReadOnly = $derived(readOnly || isGhost)
+  // The reason text follows ghostStatus so a moved-from tombstone doesn't
+  // claim the node was "removed" — same fix the banner uses.
+  const effectiveReadOnlyReason = $derived.by(() => {
+    if (ghostStatus === 'moved-from') {
+      return 'This node was moved to a different parent in the newer snapshot. You are viewing the origin position, read-only.'
+    }
+    if (isGhost) {
+      return 'This node was removed in the newer snapshot. You are viewing a read-only tombstone.'
+    }
+    return readOnlyReason
+  })
 
   async function focusInput(el: HTMLInputElement | null) {
     await tick()
@@ -193,12 +170,6 @@
   $effect(() => {
     if (editingName) {
       void focusInput(nameInputEl)
-    }
-  })
-
-  $effect(() => {
-    if (editingPropKey !== null) {
-      void focusInput(propValueInputEl)
     }
   })
 </script>
@@ -212,7 +183,31 @@
 
     <!-- Header / name -->
     <div class="px-5 py-4 border-b border-stone-100">
-      {#if readOnly}
+      {#if isGhost}
+        <!--
+          Tombstone banner: this node was removed (or is the moved-from origin
+          of a moved node) in the destination snapshot. Distinct red tone
+          separates it from the generic "you're in read-only mode" banner so
+          the user immediately understands this is historical content.
+        -->
+        <div
+          class="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800
+                 flex items-start gap-2"
+          data-testid="detail-tombstone-banner"
+          data-ghost-status={ghostStatus}
+        >
+          <span aria-hidden="true" class="mt-px">⌫</span>
+          <span>
+            {#if ghostStatus === 'moved-from'}
+              <strong class="font-semibold">Moved away.</strong>
+              This is the origin position of a node that was relocated. Read-only.
+            {:else}
+              <strong class="font-semibold">Removed.</strong>
+              This node was deleted in the newer snapshot. Read-only.
+            {/if}
+          </span>
+        </div>
+      {:else if readOnly}
         <div
           class="mb-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800"
           data-testid="detail-readonly-banner"
@@ -243,12 +238,15 @@
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
-          class="group flex items-center gap-2 {readOnly ? '' : 'cursor-text'}"
+          class="group flex items-center gap-2 {effectiveReadOnly ? '' : 'cursor-text'}"
           onclick={startEditName}
           data-testid="node-name"
         >
-          <h2 class="text-lg font-semibold text-stone-900 truncate">{node.name}</h2>
-          {#if !readOnly}
+          <h2 class="text-lg font-semibold text-stone-900 truncate
+                     {isGhost ? 'line-through decoration-stone-400 text-stone-500' : ''}">
+            {node.name}
+          </h2>
+          {#if !effectiveReadOnly}
             <span class="text-xs text-stone-300 group-hover:text-stone-400 shrink-0">Edit</span>
           {/if}
         </div>
@@ -260,6 +258,12 @@
           under {parentNode.name}
           {#if isRoot}<span class="ml-1 text-stone-300">(root)</span>{/if}
         </p>
+      {:else if isGhost && node.parentId}
+        <!--
+          Parent was also removed (parentId points to ghost:... so it's not
+          in project.nodes). Avoid showing "Root node" — that would be wrong.
+        -->
+        <p class="text-xs text-stone-400 mt-0.5 italic">under a removed parent</p>
       {:else}
         <p class="text-xs text-stone-400 mt-0.5">Root node</p>
       {/if}
@@ -293,7 +297,12 @@
 
     {#if activeTab === 'history'}
       <div class="flex-1 overflow-y-auto px-5 py-4" data-testid="detail-history-pane">
-        <NodeHistoryView nodeId={node.id} nodeName={node.name} />
+        <!--
+          For ghosts, strip the `ghost:` prefix so the history lookup finds
+          the live (pre-removal) history of the original node. The history
+          itself is read-only by design, so no extra gating is needed here.
+        -->
+        <NodeHistoryView nodeId={originalNodeId} nodeName={node.name} />
       </div>
     {:else}
     <!-- Properties -->
@@ -302,102 +311,14 @@
         <h3 class="text-xs font-semibold text-stone-500 uppercase tracking-wide">Properties</h3>
       </div>
 
-      <!-- Existing properties -->
-      {#if propEntries.length > 0}
-        <div class="space-y-1 mb-4">
-          {#each propEntries as [key, value] (key)}
-            <div class="flex items-center gap-2 group">
-              <span class="text-xs font-mono text-stone-500 w-32 shrink-0 truncate">{key}</span>
-
-              {#if editingPropKey === key}
-                <input
-                  type="text"
-                  bind:this={propValueInputEl}
-                  bind:value={editingPropValue}
-                  onkeydown={(e) => handlePropKeyDown(e, key)}
-                  onblur={() => commitProp(key)}
-                  class="flex-1 text-sm text-stone-700 border border-stone-300 rounded
-                         px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-stone-400
-                         selectable"
-                  data-testid="prop-value-input"
-                />
-              {:else}
-                <!-- svelte-ignore a11y_click_events_have_key_events -->
-                <!-- svelte-ignore a11y_no_static_element_interactions -->
-                <span
-                  class="flex-1 text-sm text-stone-700 truncate cursor-text
-                         hover:text-stone-900"
-                  onclick={() => startEditProp(key)}
-                  data-testid="prop-value"
-                >
-                  {String(value)}
-                </span>
-              {/if}
-
-              <button
-                class="text-stone-300 hover:text-red-400 opacity-0 group-hover:opacity-100
-                       transition-opacity text-xs shrink-0 disabled:opacity-0"
-                onclick={() => deleteProperty(key)}
-                disabled={readOnly}
-                aria-label="Delete property {key}"
-                data-testid="delete-prop"
-              >✕</button>
-            </div>
-            {#if editingPropKey === key && editingPropError}
-              <p class="text-xs text-red-600 ml-34">{editingPropError}</p>
-            {/if}
-          {/each}
-        </div>
-      {:else}
-        <p class="text-xs text-stone-400 mb-4">No properties yet</p>
-      {/if}
-
-      <!-- Add property form -->
-      {#if !readOnly}
-      <div class="border-t border-stone-100 pt-3">
-        <p class="text-xs font-semibold text-stone-400 uppercase tracking-wide mb-2">
-          Add Property
-        </p>
-        <div class="flex gap-2">
-          <div class="flex flex-col gap-1 flex-1">
-            <input
-              type="text"
-              bind:value={newKey}
-              placeholder="key"
-              class="text-sm border border-stone-200 rounded px-2 py-1.5 focus:outline-none
-                     focus:ring-1 focus:ring-stone-400 selectable"
-              data-testid="new-prop-key"
-              onkeydown={(e) => { if (e.key === 'Enter') addProperty() }}
-            />
-            {#if newKeyError}
-              <p class="text-xs text-red-600">{newKeyError}</p>
-            {/if}
-          </div>
-          <div class="flex flex-col gap-1 flex-1">
-            <input
-              type="text"
-              bind:value={newValue}
-              placeholder="value"
-              class="text-sm border border-stone-200 rounded px-2 py-1.5 focus:outline-none
-                     focus:ring-1 focus:ring-stone-400 selectable"
-              data-testid="new-prop-value"
-              onkeydown={(e) => { if (e.key === 'Enter') addProperty() }}
-            />
-            {#if newValueError}
-              <p class="text-xs text-red-600">{newValueError}</p>
-            {/if}
-          </div>
-          <button
-            onclick={addProperty}
-            disabled={!newKey.trim()}
-            class="shrink-0 bg-stone-800 hover:bg-stone-700 disabled:bg-stone-300
-                   text-white text-sm px-3 py-1.5 rounded transition-colors
-                   cursor-default disabled:cursor-not-allowed self-start"
-            data-testid="add-prop-btn"
-          >Add</button>
-        </div>
-      </div>
-      {/if}
+      <PropertyEditor
+        {node}
+        templates={projectTemplates}
+        readOnly={effectiveReadOnly}
+        {onUpdate}
+        onPromoteField={(key, type) => onPromoteField(node!.id, key, type)}
+        {onError}
+      />
     </div>
     {/if}
 
@@ -405,7 +326,7 @@
     <div class="px-5 py-3 border-t border-stone-100 text-xs text-stone-400 space-y-0.5">
       <p>Created {new Date(node.created).toLocaleString()}</p>
       <p>Modified {new Date(node.modified).toLocaleString()}</p>
-      <p class="font-mono text-stone-300">{node.id}</p>
+      <p class="font-mono text-stone-300">{originalNodeId}</p>
     </div>
 
   </div>

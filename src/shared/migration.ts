@@ -4,7 +4,7 @@
 
 import { v7 as uuidv7 } from 'uuid'
 
-const CURRENT_VERSION = 2
+const CURRENT_VERSION = 3
 
 // Key = target version. migrations[2] migrates v1 → v2.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -75,6 +75,20 @@ const migrations: Record<number, (data: any) => any> = {
 
     data.nodes = [root, ...reparented, ...rest]
     data.version = 2
+    return data
+  },
+
+  // v2 → v3: introduce project-level node templates.
+  //
+  // Additive and lossless: typed properties are template-driven, so node
+  // property VALUES are unchanged (they stay clean JSON primitives). All this
+  // migration does is ensure a `templates` map exists at the project root.
+  // Nodes gain no fields; an absent templateId means "freeform".
+  3: (data: any) => {
+    if (data.templates === undefined || data.templates === null) {
+      data.templates = {}
+    }
+    data.version = 3
     return data
   },
 }

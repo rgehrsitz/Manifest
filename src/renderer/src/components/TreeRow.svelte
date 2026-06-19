@@ -31,8 +31,10 @@
   const nodeId = $derived(row.node.id)
 
   function handleContextMenu(e: MouseEvent) {
-    if (isGhost) return
+    // Ghosts have no editable actions; suppress both the app menu (issue #3)
+    // AND the OS default menu for consistency with live rows.
     e.preventDefault()
+    if (isGhost) return
     onContextMenu(row, e.clientX, e.clientY)
   }
 
@@ -58,6 +60,7 @@
         case 'moved-to':         return 'bg-sky-50 text-sky-900'
         case 'renamed':          return 'bg-amber-50 text-amber-900'
         case 'property-changed': return 'bg-amber-50 text-amber-900'
+        case 'template-changed': return 'bg-amber-50 text-amber-900'
         case 'order-changed':    return 'bg-stone-50 text-stone-600'
         case 'mixed':            return 'bg-purple-50 text-purple-900'
         default:                 return ''
@@ -68,15 +71,33 @@
 </script>
 
 {#if row.kind === 'ghost'}
-  <!-- Ghost: read-only, not keyboard-navigable, role="presentation" -->
+  <!--
+    Ghost: selectable & keyboard-navigable read-only tombstone (issue #3).
+    Clicking or arrowing onto a ghost loads it into the DetailPane in
+    read-only mode so the user can inspect the removed/moved-from node.
+    Context menu is suppressed (no Rename/Add Child/Delete on tombstones).
+    Selected state uses a muted red ring + opacity lift (40% → 70%) so the
+    user sees at a glance "this is a historical row I'm inspecting".
+  -->
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div
-    role="presentation"
-    class="flex items-center gap-1 h-8 select-none text-sm text-stone-400 opacity-40 italic"
+    role="treeitem"
+    aria-selected={selected}
+    tabindex="-1"
+    class="flex items-center gap-1 h-8 rounded select-none italic text-sm cursor-default
+           focus:outline-none focus:ring-1 focus:ring-stone-400
+           {selected
+             ? 'opacity-70 ring-1 ring-red-300 text-stone-500'
+             : 'opacity-40 text-stone-400 hover:opacity-60'}
+           {focused && !selected ? 'ring-1 ring-stone-300' : ''}"
     style:padding-left={paddingLeft}
     data-testid="tree-node"
     data-node-id={nodeId}
     data-row-id={row.id}
     data-row-status={row.status}
+    data-row-ghost="true"
+    onclick={() => onSelect(row.id)}
+    oncontextmenu={handleContextMenu}
   >
     <span class="w-4 h-4 shrink-0"></span>
     <span class="flex-1 truncate line-through decoration-stone-400">{row.node.name}</span>

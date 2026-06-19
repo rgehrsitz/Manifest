@@ -79,6 +79,7 @@
     if (changeBreakdown.moved > 0)          chips.push({ label: 'moved',     count: changeBreakdown.moved,          tone: 'bg-sky-100 text-sky-800' })
     if (changeBreakdown.renamed > 0)        chips.push({ label: 'renamed',   count: changeBreakdown.renamed,        tone: 'bg-amber-100 text-amber-800' })
     if (changeBreakdown.propertyChanged > 0) chips.push({ label: 'changed',  count: changeBreakdown.propertyChanged, tone: 'bg-amber-100 text-amber-800' })
+    if (changeBreakdown.templateChanged > 0) chips.push({ label: 'template', count: changeBreakdown.templateChanged, tone: 'bg-violet-100 text-violet-800' })
     return chips
   })
 

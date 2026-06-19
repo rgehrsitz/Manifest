@@ -2,7 +2,8 @@
 
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte'
-  import type { Project, ManifestNode, RecoveryPoint, Snapshot, SnapshotTimelineEvent } from '../../shared/types'
+  import type { Project, ManifestNode, ManifestWarning, NodeTemplate, PropertyType, RecoveryPoint, SearchResult, Snapshot, SnapshotTimelineEvent, ImportResult } from '../../shared/types'
+  import { isUsableTemplate, templateLabel } from '../../shared/validation'
   import type { MergedTree } from '../../shared/merged-tree'
   import { computeSubtreeSummaries } from '../../shared/merged-tree'
   import { buildTree, getSiblingIndex, getAncestorIds } from './lib/tree'
@@ -10,6 +11,8 @@
   import ManifestView from './components/ManifestView.svelte'
   import DetailPane from './components/DetailPane.svelte'
   import MoveToDialog from './components/MoveToDialog.svelte'
+  import TemplateManager from './components/TemplateManager.svelte'
+  import ImportDialog from './components/ImportDialog.svelte'
   import RecoveryDialog from './components/RecoveryDialog.svelte'
   import RevertDialog from './components/RevertDialog.svelte'
   import SnapshotsPanel from './components/SnapshotsPanel.svelte'
@@ -27,16 +30,31 @@
 
   // Tree UI state
   let selectedId:  string | null = $state(null)
+  // When the user has a ghost selected in compare mode and leaves compare mode
+  // (closing the snapshot pair), the ghost id can't survive in `selectedId`
+  // because nothing in the live project resolves it. We stash it here so the
+  // next time the same snapshot pair is compared, the selection is restored.
+  // Cleared whenever the user makes a fresh live selection (issue #3).
+  let stashedGhostSelection: string | null = $state(null)
   let expandedIds: Set<string>   = $state(new Set())
   let searchQuery: string        = $state('')
-  let searchResults              = $state<{ nodeId: string; nodeName: string }[]>([])
+  let searchResults: SearchResult[] = $state([])
+  let searchResultsOpen: boolean = $state(false)
   let searching:   boolean       = $state(false)
+  let selectedScrollAlign: 'auto' | 'center' = $state('auto')
 
   // Inline add-child state
   let addingChildTo: string | null = $state(null)
   let addingChildName: string      = $state('')
   let addingChildError: string | null = $state(null)
+  let addingChildTemplateId: string | null = $state(null)
   let addChildInput: HTMLInputElement | null = $state(null)
+  // Only structurally-usable templates are offered in the node-create picker.
+  const addChildTemplateIds = $derived.by<string[]>(() => {
+    const p: Project | null = project
+    const map = p?.templates ?? {}
+    return Object.keys(map).filter(id => isUsableTemplate(map[id])).sort()
+  })
 
   // Rename request signal — bumping this counter triggers DetailPane.startEditName().
   // Tree raises onRenameRequest → App increments → DetailPane $effect picks it up.
@@ -199,7 +217,7 @@
   function selectRoot(p: Project) {
     const root = p.nodes.find(n => n.parentId === null)
     if (root) {
-      selectedId = root.id
+      setSelection(root.id)
       expandedIds = new Set([root.id])
     }
   }
@@ -208,6 +226,29 @@
     toastMsg = msg
     if (toastTimer) clearTimeout(toastTimer)
     toastTimer = setTimeout(() => { toastMsg = null }, 4000)
+  }
+
+  // Export the loaded compare as a saved report. Main builds + writes (renderer
+  // never touches the filesystem); a canceled save dialog is a silent no-op.
+  async function handleExportReport(format: 'markdown' | 'csv') {
+    if (!mergedTree) return
+    const res = await window.api.report.export(mergedTree.fromSnapshot, mergedTree.toSnapshot, format)
+    if (!res.ok) { showToast(`Export failed: ${res.error.message}`); return }
+    if (res.data.savedPath) showToast(`Report saved to ${res.data.savedPath}`)
+  }
+
+  // Copy the loaded compare as Markdown. Clipboard is a renderer-side write, not
+  // a filesystem touch, so it stays in the renderer.
+  async function handleCopyReport() {
+    if (!mergedTree) return
+    const res = await window.api.report.build(mergedTree.fromSnapshot, mergedTree.toSnapshot, 'markdown')
+    if (!res.ok) { showToast(`Copy failed: ${res.error.message}`); return }
+    try {
+      await navigator.clipboard.writeText(res.data.content)
+      showToast('Report copied to clipboard')
+    } catch {
+      showToast('Could not access the clipboard')
+    }
   }
 
   async function focusInput(el: HTMLInputElement | null) {
@@ -225,9 +266,12 @@
   function applyProject(p: Project) {
     project = p
     // If selected node was deleted, fall back to root.
-    if (selectedId && !p.nodes.find(n => n.id === selectedId)) {
+    // Ghost selections (issue #3) live in mergedTree.nodes, not project.nodes,
+    // so don't clobber them just because the live project mutated.
+    const isGhostSelection = selectedId?.startsWith('ghost:') ?? false
+    if (selectedId && !isGhostSelection && !p.nodes.find(n => n.id === selectedId)) {
       const root = p.nodes.find(n => n.parentId === null)
-      selectedId = root?.id ?? null
+      setSelection(root?.id ?? null)
     }
   }
 
@@ -256,6 +300,7 @@
       selectRoot(result.data)
       workingCopyBaseSnapshot = null
       workingCopyDirty = false
+      loadWarningsDismissed = false
       appState = 'open'
     } else {
       error = result.error.message
@@ -288,10 +333,9 @@
   async function closeProject() {
     await window.api.project.close()
     project = null
-    selectedId = null
+    setSelection(null)
     expandedIds = new Set()
-    searchQuery = ''
-    searchResults = []
+    clearSearch()
     appState = 'welcome'
     newName = ''
     newPath = ''
@@ -305,12 +349,29 @@
     mergedTree = null
     compareExpanded = new Set()
     lensExpandedFolds = new Set()
+    // stashedGhostSelection already cleared by setSelection(null) above.
   }
 
   // ─── Tree actions ─────────────────────────────────────────────────────────
 
-  function handleSelect(id: string) {
+  /**
+   * Single entry point for changing `selectedId`. Always invalidates any
+   * stashed ghost selection (issue #3): an explicit selection — whether
+   * triggered by tree click, search, add-child, or diff-row navigation —
+   * means the user has moved on, so don't surprise them by restoring a
+   * stale ghost the next time compare mode is re-entered.
+   *
+   * Inside compare mode the stash is already null (handleSnapshotCompare
+   * consumes it on entry), so the clear is a no-op there.
+   */
+  function setSelection(id: string | null): void {
     selectedId = id
+    stashedGhostSelection = null
+  }
+
+  function handleSelect(id: string) {
+    selectedScrollAlign = 'auto'
+    setSelection(id)
     addingChildTo = null
   }
 
@@ -334,6 +395,7 @@
     addingChildTo = parentId
     addingChildName = ''
     addingChildError = null
+    addingChildTemplateId = null
     expandedIds = new Set([...expandedIds, parentId])
   }
 
@@ -346,7 +408,11 @@
       addingChildError = 'Name is required'
       return
     }
-    const result = await window.api.node.create(addingChildTo, addingChildName.trim())
+    const result = await window.api.node.create(
+      addingChildTo,
+      addingChildName.trim(),
+      addingChildTemplateId,
+    )
     if (result.ok) {
       applyProject(result.data)
       markWorkingCopyChanged()
@@ -354,9 +420,10 @@
       const newNode = result.data.nodes
         .filter(n => n.parentId === addingChildTo)
         .sort((a, b) => b.order - a.order)[0]
-      if (newNode) selectedId = newNode.id
+      if (newNode) setSelection(newNode.id)
       addingChildTo = null
       addingChildName = ''
+      addingChildTemplateId = null
     } else {
       addingChildError = result.error.message
     }
@@ -366,6 +433,7 @@
     addingChildTo = null
     addingChildName = ''
     addingChildError = null
+    addingChildTemplateId = null
   }
 
   async function handleMoveUp(id: string) {
@@ -448,7 +516,11 @@
 
   async function handleNodeUpdate(
     id: string,
-    changes: { name?: string; properties?: Record<string, string | number | boolean | null> }
+    changes: {
+      name?: string
+      properties?: Record<string, string | number | boolean | null>
+      templateId?: string | null
+    }
   ) {
     if (editingLocked) {
       showToast(lockReason())
@@ -462,35 +534,144 @@
     else showToast(result.error.message)
   }
 
+  // Promote an ad-hoc property to a typed field on the node's template.
+  async function handlePromoteField(nodeId: string, key: string, type: PropertyType) {
+    if (!project || editingLocked) { showToast(lockReason()); return }
+    const node = project.nodes.find(n => n.id === nodeId)
+    const templateId = node?.templateId ?? null
+    if (!templateId) { showToast('Assign a template before promoting a property.'); return }
+    const template = project.templates?.[templateId]
+    if (!template) { showToast('Template not found.'); return }
+
+    // $state.snapshot: template.fields is a deep Svelte proxy; nested field
+    // objects must be plain to survive structured-clone across the IPC boundary.
+    const existingFields = $state.snapshot(template.fields) as Record<string, NodeTemplate['fields'][string]>
+    const nextFields = { ...existingFields, [key]: { type } }
+    const result = await window.api.template.update(templateId, { fields: nextFields })
+    if (result.ok) {
+      applyProject(result.data)
+      markWorkingCopyChanged()
+    } else {
+      showToast(result.error.message)
+    }
+  }
+
+  // ─── Templates ──────────────────────────────────────────────────────────────
+
+  let templateManagerOpen = $state(false)
+
+  // Load-time warnings (typed-value/integrity issues found when opening a
+  // hand-edited manifest). Delivered once on open; cleared by any mutation.
+  let loadWarningsDismissed = $state(false)
+  const loadWarnings = $derived.by<ManifestWarning[]>(() => {
+    const p: Project | null = project
+    return p?.loadWarnings ?? []
+  })
+  const showLoadWarnings = $derived(loadWarnings.length > 0 && !loadWarningsDismissed)
+
+  function openTemplateManager() {
+    if (editingLocked) { showToast(lockReason()); return }
+    templateManagerOpen = true
+  }
+
+  async function handleTemplateCreate(id: string, template: NodeTemplate): Promise<string | null> {
+    const result = await window.api.template.create(id, template)
+    if (result.ok) { applyProject(result.data); markWorkingCopyChanged(); return null }
+    return result.error.message
+  }
+
+  async function handleTemplateUpdate(id: string, template: NodeTemplate): Promise<string | null> {
+    const result = await window.api.template.update(id, template)
+    if (result.ok) { applyProject(result.data); markWorkingCopyChanged(); return null }
+    return result.error.message
+  }
+
+  async function handleTemplateDelete(id: string): Promise<string | null> {
+    const result = await window.api.template.delete(id)
+    if (result.ok) { applyProject(result.data); markWorkingCopyChanged(); return null }
+    return result.error.message
+  }
+
+  // ─── CSV import ───────────────────────────────────────────────────────────────
+
+  let importDialogOpen = $state(false)
+  let importBaseParent = $state<ManifestNode | null>(null)
+  let importSummary = $state<ImportResult | null>(null)
+  let importSummaryDismissed = $state(false)
+  const showImportSummary = $derived(importSummary !== null && !importSummaryDismissed)
+
+  function resolveBaseParent(node?: ManifestNode): ManifestNode | null {
+    if (!project) return null
+    if (node) return node
+    const sel = selectedId ? project.nodes.find(n => n.id === selectedId) : undefined
+    return sel ?? project.nodes.find(n => n.parentId === null) ?? null
+  }
+
+  function openImportDialog(node?: ManifestNode) {
+    if (editingLocked) { showToast(lockReason()); return }
+    const base = resolveBaseParent(node)
+    if (!base) return
+    importBaseParent = base
+    importDialogOpen = true
+  }
+
+  function handleImportHere(id: string) {
+    const node = project?.nodes.find(n => n.id === id)
+    openImportDialog(node)
+  }
+
+  function handleImported(next: Project, summary: ImportResult) {
+    applyProject(next)
+    markWorkingCopyChanged()
+    // Reveal the imported rows by expanding the base parent (flat imports land
+    // directly under it; path imports go deeper, but expanding the base is a
+    // sensible starting point).
+    if (importBaseParent) expandedIds = new Set([...expandedIds, importBaseParent.id])
+    importSummary = summary
+    importSummaryDismissed = false
+  }
+
   // ─── Search ───────────────────────────────────────────────────────────────
 
   let searchTimer: ReturnType<typeof setTimeout> | null = null
 
   function handleSearchInput(e: Event) {
     searchQuery = (e.target as HTMLInputElement).value
+    searchResultsOpen = true
     if (searchTimer) clearTimeout(searchTimer)
     if (!searchQuery.trim()) {
       searchResults = []
+      searchResultsOpen = false
       searching = false
       return
     }
     searching = true
+    const query = searchQuery
     searchTimer = setTimeout(async () => {
-      const result = await window.api.search.query(searchQuery)
+      const result = await window.api.search.query(query)
+      if (query !== searchQuery) return
       searching = false
       if (result.ok) searchResults = result.data
     }, 200)
   }
 
   function handleSearchSelect(nodeId: string) {
-    selectedId = nodeId
-    searchQuery = ''
-    searchResults = []
     // Expand ancestors so the node is visible.
     if (project) {
       const ancestors = getAncestorIds(nodeId, project.nodes)
       expandedIds = new Set([...expandedIds, ...ancestors, nodeId])
     }
+    selectedScrollAlign = 'center'
+    setSelection(nodeId)
+    searchResultsOpen = false
+  }
+
+  function clearSearch() {
+    if (searchTimer) clearTimeout(searchTimer)
+    searchQuery = ''
+    searchResults = []
+    searchResultsOpen = false
+    searching = false
   }
 
   // ─── Snapshots / history ────────────────────────────────────────────────
@@ -525,6 +706,14 @@
     await refreshSnapshots()
   }
 
+  async function toggleSnapshots() {
+    if (snapshotPanelOpen) {
+      closeSnapshots()
+      return
+    }
+    await openSnapshots()
+  }
+
   function closeSnapshots() {
     snapshotPanelOpen = false
     snapshotError = null
@@ -538,7 +727,17 @@
     compareMode = false
     mergedTree = null
     compareExpanded = new Set()
-    if (project && selectedId && !project.nodes.find(node => node.id === selectedId)) {
+    // If a ghost is selected, stash it so we can restore on re-entering
+    // compare mode (issue #3). Then fall back to a live selection.
+    //
+    // NB: the assignments below intentionally bypass setSelection() — that
+    // helper clears stashedGhostSelection, which would defeat the stash we
+    // just set. The stash is consumed by handleSnapshotCompare on re-entry.
+    if (selectedId?.startsWith('ghost:')) {
+      stashedGhostSelection = selectedId
+      const root = project?.nodes.find(node => node.parentId === null)
+      selectedId = root?.id ?? null
+    } else if (project && selectedId && !project.nodes.find(node => node.id === selectedId)) {
       const root = project.nodes.find(node => node.parentId === null)
       selectedId = root?.id ?? null
     }
@@ -589,6 +788,23 @@
       }
       compareExpanded = new Set([...expandedIds, ...ancestors])
       compareMode = true
+
+      // Restore a stashed ghost selection if this snapshot pair still
+      // contains the same ghost id (issue #3). Otherwise drop the stash —
+      // a different comparison shouldn't carry a stale ghost selection.
+      //
+      // NB: assigns selectedId directly (not via setSelection) because the
+      // stash is explicitly cleared two lines below; routing through the
+      // helper would clear it before the side effects below could run.
+      if (stashedGhostSelection) {
+        if (result.data.nodes.some(n => n.id === stashedGhostSelection)) {
+          selectedId = stashedGhostSelection
+          // Expand ancestors so the restored ghost is visible.
+          const ghostAncestors = getAncestorIds(stashedGhostSelection, result.data.nodes)
+          compareExpanded = new Set([...compareExpanded, ...ghostAncestors, stashedGhostSelection])
+        }
+        stashedGhostSelection = null
+      }
     } else {
       snapshotError = result.error.message
     }
@@ -598,11 +814,13 @@
   function handleDiffNodeSelect(nodeId: string) {
     if (compareMode && mergedTree) {
       const compareSelectionId = resolveCompareSelectionId(nodeId)
-      selectedId = compareSelectionId
+      // Inside compare mode, the stash is already null (handleSnapshotCompare
+      // consumed it on entry), so setSelection's clear is a defensive no-op.
+      setSelection(compareSelectionId)
       const ancestors = getAncestorIds(compareSelectionId, mergedTree.nodes)
       compareExpanded = new Set([...compareExpanded, ...ancestors, compareSelectionId])
     } else if (project) {
-      selectedId = nodeId
+      setSelection(nodeId)
       const ancestors = getAncestorIds(nodeId, project.nodes)
       expandedIds = new Set([...expandedIds, ...ancestors, nodeId])
     }
@@ -730,7 +948,8 @@
 <!-- ─── Toast ─────────────────────────────────────────────────────────────── -->
 {#if toastMsg}
   <div class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 bg-red-700 text-white
-              text-sm px-4 py-2 rounded-lg shadow-lg max-w-sm text-center">
+              text-sm px-4 py-2 rounded-lg shadow-lg max-w-sm text-center"
+       data-testid="toast">
     {toastMsg}
   </div>
 {/if}
@@ -743,6 +962,27 @@
     nodes={project.nodes}
     onConfirm={confirmMoveTo}
     onCancel={() => { moveToNodeId = null }}
+  />
+{/if}
+
+<!-- ─── Template manager ──────────────────────────────────────────────────── -->
+{#if templateManagerOpen && project}
+  <TemplateManager
+    templates={project.templates ?? {}}
+    onCreate={handleTemplateCreate}
+    onUpdate={handleTemplateUpdate}
+    onDelete={handleTemplateDelete}
+    onClose={() => { templateManagerOpen = false }}
+  />
+{/if}
+
+<!-- ─── Import dialog ─────────────────────────────────────────────────────── -->
+{#if importDialogOpen && project && importBaseParent}
+  <ImportDialog
+    baseParent={importBaseParent}
+    templates={project.templates ?? {}}
+    onImported={handleImported}
+    onClose={() => { importDialogOpen = false }}
   />
 {/if}
 
@@ -900,7 +1140,24 @@
       </div>
       <div class="flex items-center gap-2 [-webkit-app-region:no-drag]">
         <button
-          onclick={openSnapshots}
+          onclick={() => openImportDialog()}
+          class="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-600
+                 transition-colors hover:bg-stone-50 cursor-default"
+          data-testid="open-import-btn"
+        >
+          Import…
+        </button>
+        <button
+          onclick={openTemplateManager}
+          class="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-600
+                 transition-colors hover:bg-stone-50 cursor-default"
+          data-testid="open-templates-btn"
+        >
+          Templates
+        </button>
+        <button
+          onclick={toggleSnapshots}
+          aria-pressed={snapshotPanelOpen ? 'true' : 'false'}
           class="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-600
                  transition-colors hover:bg-stone-50 cursor-default"
           data-testid="open-snapshots-btn"
@@ -917,6 +1174,75 @@
         </button>
       </div>
     </div>
+
+    <!-- Load-time warnings banner (non-blocking; values left as-on-disk) -->
+    {#if showLoadWarnings}
+      <div
+        class="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900"
+        data-testid="load-warnings-banner"
+      >
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <p class="font-semibold">
+              {loadWarnings.length} data issue{loadWarnings.length === 1 ? '' : 's'} found on open
+              <span class="font-normal text-amber-700">— values were left exactly as written on disk.</span>
+            </p>
+            <ul class="mt-1 space-y-0.5">
+              {#each loadWarnings.slice(0, 5) as w (w.path)}
+                <li class="truncate">
+                  <span class="font-mono text-amber-700">{w.path}</span>
+                  <span class="text-amber-800"> — {w.message}</span>
+                </li>
+              {/each}
+              {#if loadWarnings.length > 5}
+                <li class="text-amber-700">…and {loadWarnings.length - 5} more</li>
+              {/if}
+            </ul>
+          </div>
+          <button
+            onclick={() => { loadWarningsDismissed = true }}
+            class="shrink-0 text-amber-700 hover:text-amber-900 cursor-default"
+            aria-label="Dismiss warnings"
+            data-testid="dismiss-load-warnings"
+          >✕</button>
+        </div>
+      </div>
+    {/if}
+
+    <!-- Post-import summary -->
+    {#if showImportSummary && importSummary}
+      <div
+        class="shrink-0 border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-xs text-emerald-900"
+        data-testid="import-summary-banner"
+      >
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <p class="font-semibold">
+              Imported {importSummary.created} node{importSummary.created === 1 ? '' : 's'}
+              {#if importSummary.createdParents > 0}<span class="font-normal text-emerald-800"> · {importSummary.createdParents} parent{importSummary.createdParents === 1 ? '' : 's'} created</span>{/if}
+              {#if importSummary.skippedCount > 0}<span class="font-normal text-emerald-800"> · {importSummary.skippedCount} skipped</span>{/if}
+              {#if importSummary.warningCount > 0}<span class="font-normal text-amber-700"> · {importSummary.warningCount} warnings</span>{/if}
+            </p>
+            {#if importSummary.skipped.length > 0}
+              <ul class="mt-1 space-y-0.5">
+                {#each importSummary.skipped.slice(0, 5) as s (s.row + (s.column ?? ''))}
+                  <li class="truncate text-emerald-800">row {s.row}{s.column ? ` · ${s.column}` : ''} — {s.reason}</li>
+                {/each}
+                {#if importSummary.skippedCount > 5}
+                  <li class="text-emerald-700">…and {importSummary.skippedCount - 5} more</li>
+                {/if}
+              </ul>
+            {/if}
+          </div>
+          <button
+            onclick={() => { importSummaryDismissed = true }}
+            class="shrink-0 text-emerald-700 hover:text-emerald-900 cursor-default"
+            aria-label="Dismiss import summary"
+            data-testid="dismiss-import-summary"
+          >✕</button>
+        </div>
+      </div>
+    {/if}
 
     <!-- Three-pane body — tree | drag | detail | drag | snapshots -->
     <div
@@ -939,7 +1265,7 @@
               value={searchQuery}
               oninput={handleSearchInput}
               placeholder="Search nodes…"
-              class="w-full bg-white border border-stone-200 rounded-lg pl-8 pr-3 py-1.5
+              class="w-full bg-white border border-stone-200 rounded-lg pl-8 pr-8 py-1.5
                      text-sm text-stone-700 placeholder-stone-300 focus:outline-none
                      focus:ring-1 focus:ring-stone-400 selectable"
               data-testid="search-input"
@@ -951,15 +1277,30 @@
             {#if searchQuery}
               <button
                 class="absolute right-2.5 top-1.5 text-stone-400 hover:text-stone-600 text-xs"
-                onclick={() => { searchQuery = ''; searchResults = [] }}
+                onclick={clearSearch}
                 aria-label="Clear search"
               >✕</button>
             {/if}
           </div>
+          {#if searchQuery.trim() && !searchResultsOpen}
+            <div class="mt-2 flex items-center justify-between gap-2">
+              <p class="truncate text-xs text-stone-500">
+                {searchResults.length} result{searchResults.length === 1 ? '' : 's'} for "{searchQuery}"
+              </p>
+              <button
+                class="shrink-0 rounded-md border border-stone-200 bg-white px-2 py-1 text-xs
+                       font-medium text-stone-600 hover:bg-stone-100 cursor-default"
+                onclick={() => { searchResultsOpen = true }}
+                data-testid="show-search-results"
+              >
+                Results
+              </button>
+            </div>
+          {/if}
         </div>
 
         <!-- Search results overlay -->
-        {#if searchQuery.trim()}
+        {#if searchQuery.trim() && searchResultsOpen}
           <div class="flex-1 overflow-y-auto p-2" data-testid="search-results">
             {#if searching}
               <p class="text-xs text-stone-400 px-2 py-1">Searching…</p>
@@ -967,11 +1308,16 @@
               {#each searchResults as r (r.nodeId)}
                 <button
                   class="w-full text-left px-2 py-1.5 rounded text-sm text-stone-700
-                         hover:bg-stone-100 truncate"
+                         hover:bg-stone-100"
                   onclick={() => handleSearchSelect(r.nodeId)}
                   data-testid="search-result"
                 >
-                  {r.nodeName}
+                  <span class="block truncate">{r.nodeName}</span>
+                  {#if r.parentName || r.matchField === 'property'}
+                    <span class="block truncate text-xs text-stone-400">
+                      {r.parentName ?? 'Root'}{r.matchField === 'property' ? ` · ${r.snippet}` : ''}
+                    </span>
+                  {/if}
                 </button>
               {/each}
               {#if searchResults.length === 0}
@@ -1002,9 +1348,11 @@
                   lensExpandedFolds = next
                 }}
                 {selectedId}
+                selectedScrollAlign={selectedScrollAlign}
                 onSelect={handleSelect}
                 onToggle={handleToggle}
                 onAddChild={handleAddChild}
+                onImportHere={handleImportHere}
                 onMoveUp={handleMoveUp}
                 onMoveDown={handleMoveDown}
                 onRenameRequest={handleRenameRequest}
@@ -1032,6 +1380,19 @@
                 />
                 {#if addingChildError}
                   <p class="text-xs text-red-600">{addingChildError}</p>
+                {/if}
+                {#if addChildTemplateIds.length > 0}
+                  <select
+                    bind:value={addingChildTemplateId}
+                    class="w-full text-sm border border-stone-300 rounded px-2 py-1 bg-white
+                           focus:outline-none focus:ring-1 focus:ring-stone-400"
+                    data-testid="add-child-template"
+                  >
+                    <option value={null}>Freeform (no template)</option>
+                    {#each addChildTemplateIds as id (id)}
+                      <option value={id}>{templateLabel(project?.templates?.[id], id)}</option>
+                    {/each}
+                  </select>
                 {/if}
                 <div class="flex gap-1">
                   <button
@@ -1077,6 +1438,7 @@
                 ? 'Applying recovery point — editing will resume when recovery finishes.'
                 : undefined}
           onUpdate={handleNodeUpdate}
+          onPromoteField={handlePromoteField}
           onError={showToast}
         />
         {/if}
@@ -1117,6 +1479,8 @@
             onExitCompare={exitCompareMode}
             onRestore={handleSnapshotRestore}
             onApplyRecovery={handleApplyRecovery}
+            onExportReport={handleExportReport}
+            onCopyReport={handleCopyReport}
           />
         </div>
       {/if}

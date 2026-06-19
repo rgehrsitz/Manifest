@@ -1,0 +1,263 @@
+import { mkdirSync, writeFileSync } from 'fs'
+import { join } from 'path'
+import { expect, test } from './fixtures'
+
+import type { ElectronApplication, Page } from '@playwright/test'
+
+function treeRow(page: Page, name: string) {
+  return page.locator('[data-testid="tree-node"]', { hasText: name }).first()
+}
+
+async function openContextMenuAction(page: Page, nodeName: string, actionLabel: string): Promise<void> {
+  await treeRow(page, nodeName).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: actionLabel }).click()
+}
+
+async function setDialogPath(electronApp: ElectronApplication, path: string): Promise<void> {
+  await electronApp.evaluate(({ dialog }, p) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [p] })
+  }, path)
+}
+
+async function setDialogCanceled(electronApp: ElectronApplication): Promise<void> {
+  await electronApp.evaluate(({ dialog }) => {
+    dialog.showOpenDialog = async () => ({ canceled: true, filePaths: [] })
+  })
+}
+
+async function createProjectThroughUi(appPage: Page, electronApp: ElectronApplication, parentDir: string, name: string): Promise<void> {
+  await appPage.getByTestId('create-project-btn').click()
+  await appPage.getByTestId('project-name-input').fill(name)
+  await setDialogPath(electronApp, parentDir)
+  await appPage.getByTestId('choose-folder-btn').click()
+  await appPage.getByTestId('create-btn').click()
+  await expect(appPage.getByTestId('project-view')).toBeVisible()
+}
+
+async function createTemplateWithCount(appPage: Page): Promise<void> {
+  await appPage.getByTestId('open-templates-btn').click()
+  await appPage.getByTestId('template-label').fill('Software Item')
+  await appPage.getByTestId('template-add-field').click()
+  await appPage.getByTestId('field-key').nth(0).fill('count')
+  await appPage.getByTestId('field-type').nth(0).selectOption('number')
+  await appPage.getByTestId('template-save').click()
+  await expect(appPage.getByTestId('template-list-item').filter({ hasText: 'Software Item' })).toBeVisible()
+  await appPage.getByTestId('template-manager-close').click()
+}
+
+test('imports CSV: maps a spaced header, coerces typed cells, skips invalid + duplicate rows', async ({
+  appPage,
+  electronApp,
+  workspaceDir,
+}) => {
+  await createProjectThroughUi(appPage, electronApp, workspaceDir, 'Import Lab')
+  await createTemplateWithCount(appPage)
+
+  // A spreadsheet-style CSV: a "Serial Number" header, an invalid count, and a
+  // duplicate name.
+  const csv = [
+    'name,Serial Number,count',
+    'B1,SN-1,5',
+    'B2,SN-2,abc',   // invalid count → skipped
+    'B1,SN-3,7',     // duplicate name → skipped
+  ].join('\n') + '\n'
+  const csvPath = join(workspaceDir, 'boards.csv')
+  writeFileSync(csvPath, csv, 'utf8')
+
+  await appPage.getByTestId('open-import-btn').click()
+  await expect(appPage.getByTestId('import-dialog')).toBeVisible()
+
+  await setDialogPath(electronApp, csvPath)
+  await appPage.getByTestId('import-choose-file').click()
+
+  // Name auto-detected; bind the template; rename the spaced header's key.
+  await expect(appPage.getByTestId('import-name-column')).toHaveValue('name')
+  await appPage.getByTestId('import-template').selectOption('software-item')
+  await appPage.getByTestId('import-col-key-Serial Number').fill('serial')
+
+  await appPage.getByTestId('import-validate').click()
+  const summary = appPage.getByTestId('import-summary')
+  await expect(summary).toContainText('1 will import')
+  await expect(summary).toContainText('2 skipped')
+
+  await appPage.getByTestId('import-apply').click()
+  await expect(appPage.getByTestId('import-dialog')).toHaveCount(0)
+  await expect(appPage.getByTestId('import-summary-banner')).toContainText('Imported 1')
+
+  // The imported node carries a coerced number and the ad-hoc serial.
+  await treeRow(appPage, 'B1').click()
+  await expect(appPage.getByTestId('tpl-input-count')).toHaveValue('5')
+  await expect(appPage.getByTestId('prop-value').filter({ hasText: 'SN-1' })).toBeVisible()
+})
+
+test('imported nodes show as added in a snapshot compare', async ({
+  appPage,
+  electronApp,
+  workspaceDir,
+}) => {
+  await createProjectThroughUi(appPage, electronApp, workspaceDir, 'Import Diff Lab')
+
+  await appPage.getByTestId('open-snapshots-btn').click()
+  await appPage.getByTestId('snapshot-name-input').fill('before')
+  await appPage.getByTestId('create-snapshot-btn').click()
+  await expect(appPage.getByTestId('snapshot-row').filter({ hasText: 'before' })).toBeVisible()
+
+  const csvPath = join(workspaceDir, 'rows.csv')
+  writeFileSync(csvPath, 'name\nWidget A\nWidget B\n', 'utf8')
+  await appPage.getByTestId('open-import-btn').click()
+  await setDialogPath(electronApp, csvPath)
+  await appPage.getByTestId('import-choose-file').click()
+  await appPage.getByTestId('import-validate').click()
+  await expect(appPage.getByTestId('import-summary')).toContainText('2 will import')
+  await appPage.getByTestId('import-apply').click()
+  await expect(appPage.getByTestId('import-dialog')).toHaveCount(0)
+
+  await appPage.getByTestId('snapshot-name-input').fill('after')
+  await appPage.getByTestId('create-snapshot-btn').click()
+  await expect(appPage.getByTestId('snapshot-row').filter({ hasText: 'after' })).toBeVisible()
+
+  await appPage.getByTestId('compare-from-select').selectOption('before')
+  await appPage.getByTestId('compare-to-select').selectOption('after')
+  await appPage.getByTestId('compare-snapshots-btn').click()
+  await expect(appPage.getByTestId('snapshot-diff-list')).toBeVisible()
+  await expect(appPage.getByTestId('snapshot-diff-row').filter({ hasText: 'Widget A' })).toBeVisible()
+})
+
+test('a parent_path column defaults to path mode and places rows under the resolved node', async ({
+  appPage,
+  electronApp,
+  workspaceDir,
+}) => {
+  await createProjectThroughUi(appPage, electronApp, workspaceDir, 'Path Lab')
+
+  // Give the path a real target to resolve to.
+  await openContextMenuAction(appPage, 'Path Lab', 'Add Child')
+  await appPage.getByTestId('add-child-input').fill('Bay 1')
+  await appPage.getByTestId('add-child-commit').click()
+  await expect(treeRow(appPage, 'Bay 1')).toBeVisible()
+
+  // Breadcrumb includes the root name; resolution tolerates the leading segment.
+  const csv = 'name,parent_path\nWidget,Path Lab / Bay 1\n'
+  const csvPath = join(workspaceDir, 'hier.csv')
+  writeFileSync(csvPath, csv, 'utf8')
+
+  // Import under the root explicitly so the path resolves from there.
+  await openContextMenuAction(appPage, 'Path Lab', 'Import rows here…')
+  await setDialogPath(electronApp, csvPath)
+  await appPage.getByTestId('import-choose-file').click()
+
+  // The presence of parent_path flips the default to path placement.
+  await expect(appPage.getByTestId('import-placement-path')).toBeChecked()
+  await expect(appPage.getByTestId('import-path-column')).toHaveValue('parent_path')
+
+  await appPage.getByTestId('import-validate').click()
+  await expect(appPage.getByTestId('import-summary')).toContainText('1 will import')
+  await appPage.getByTestId('import-apply').click()
+  await expect(appPage.getByTestId('import-dialog')).toHaveCount(0)
+
+  // Widget landed under Bay 1, not under the root.
+  await treeRow(appPage, 'Bay 1').dblclick()
+  await expect(treeRow(appPage, 'Widget')).toBeVisible()
+})
+
+test('auto-create builds missing parents so a hierarchical export loads into an empty project', async ({
+  appPage,
+  electronApp,
+  workspaceDir,
+}) => {
+  await createProjectThroughUi(appPage, electronApp, workspaceDir, 'AutoCreate Lab')
+
+  // A board-only export: rows reference racks/rooms that do not exist yet.
+  const csv =
+    'name,parent_path\n' +
+    'Server A,Room X / Rack 1\n' +
+    'Server B,Room X / Rack 1\n'
+  const csvPath = join(workspaceDir, 'flat-export.csv')
+  writeFileSync(csvPath, csv, 'utf8')
+
+  await openContextMenuAction(appPage, 'AutoCreate Lab', 'Import rows here…')
+  await setDialogPath(electronApp, csvPath)
+  await appPage.getByTestId('import-choose-file').click()
+
+  // parent_path → path mode by default; without auto-create the rows can't resolve.
+  await expect(appPage.getByTestId('import-placement-path')).toBeChecked()
+  await appPage.getByTestId('import-validate').click()
+  await expect(appPage.getByTestId('import-summary')).toContainText('0 will import')
+
+  // Turn on auto-create and re-validate.
+  await appPage.getByTestId('import-auto-create').check()
+  await appPage.getByTestId('import-validate').click()
+  await expect(appPage.getByTestId('import-summary')).toContainText('2 will import')
+  await expect(appPage.getByTestId('import-summary')).toContainText('2 parents created')
+
+  await appPage.getByTestId('import-apply').click()
+  await expect(appPage.getByTestId('import-dialog')).toHaveCount(0)
+  await expect(appPage.getByTestId('import-summary-banner')).toContainText('2 parents created')
+
+  // The Room X → Rack 1 → Server chain now exists.
+  await treeRow(appPage, 'Room X').dblclick()
+  await treeRow(appPage, 'Rack 1').dblclick()
+  await expect(treeRow(appPage, 'Server A')).toBeVisible()
+})
+
+test('canceled file picker leaves the dialog on the choose step', async ({
+  appPage,
+  electronApp,
+  workspaceDir,
+}) => {
+  await createProjectThroughUi(appPage, electronApp, workspaceDir, 'Cancel Lab')
+  await appPage.getByTestId('open-import-btn').click()
+  await setDialogCanceled(electronApp)
+  await appPage.getByTestId('import-choose-file').click()
+  // Still on the choose step (no mapping controls), no crash.
+  await expect(appPage.getByTestId('import-choose-file')).toBeVisible()
+  await expect(appPage.getByTestId('import-name-column')).toHaveCount(0)
+})
+
+test('a malformed CSV shows an error and stays on the choose step', async ({
+  appPage,
+  electronApp,
+  workspaceDir,
+}) => {
+  await createProjectThroughUi(appPage, electronApp, workspaceDir, 'Bad CSV Lab')
+  const csvPath = join(workspaceDir, 'bad.csv')
+  writeFileSync(csvPath, 'name\n"oops', 'utf8')   // unterminated quote
+  await appPage.getByTestId('open-import-btn').click()
+  await setDialogPath(electronApp, csvPath)
+  await appPage.getByTestId('import-choose-file').click()
+  // Inspect failed → error shown, no mapping controls, Choose still available.
+  await expect(appPage.getByTestId('import-error')).toBeVisible()
+  await expect(appPage.getByTestId('import-name-column')).toHaveCount(0)
+  await expect(appPage.getByTestId('import-choose-file')).toBeEnabled()
+})
+
+test('duplicate keys block Validate, and editing after a plan re-disables Import', async ({
+  appPage,
+  electronApp,
+  workspaceDir,
+}) => {
+  await createProjectThroughUi(appPage, electronApp, workspaceDir, 'Gating Lab')
+  const csvPath = join(workspaceDir, 'g.csv')
+  writeFileSync(csvPath, 'name,a,b\nN1,1,2\n', 'utf8')
+  await appPage.getByTestId('open-import-btn').click()
+  await setDialogPath(electronApp, csvPath)
+  await appPage.getByTestId('import-choose-file').click()
+
+  // Collide the two property keys → Validate disabled, duplicate hint shown.
+  await appPage.getByTestId('import-col-key-a').fill('dup')
+  await appPage.getByTestId('import-col-key-b').fill('dup')
+  await expect(appPage.getByTestId('import-validate')).toBeDisabled()
+
+  // Fix it → Validate enabled → a plan appears → Import enabled.
+  await appPage.getByTestId('import-col-key-b').fill('bee')
+  await expect(appPage.getByTestId('import-validate')).toBeEnabled()
+  await appPage.getByTestId('import-validate').click()
+  await expect(appPage.getByTestId('import-summary')).toContainText('1 will import')
+  await expect(appPage.getByTestId('import-apply')).toBeEnabled()
+
+  // Editing any mapping control invalidates the plan → Import disabled again.
+  // (Testid is keyed by the CSV header 'b', not the property key.)
+  await appPage.getByTestId('import-col-key-b').fill('beee')
+  await expect(appPage.getByTestId('import-summary')).toHaveCount(0)
+  await expect(appPage.getByTestId('import-apply')).toBeDisabled()
+})

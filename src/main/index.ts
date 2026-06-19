@@ -1,11 +1,14 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron'
 import { existsSync } from 'fs'
+import { writeFile } from 'fs/promises'
 import { join } from 'path'
 import { createLogger } from './logger'
 import { ProjectManager } from './project-manager'
 import { GitService } from './git-service'
 import { IPC } from '../shared/ipc'
 import { ok, err, ErrorCode } from '../shared/errors'
+import type { NodeTemplate, ImportMapping } from '../shared/types'
+import type { ReportFormat } from '../shared/report'
 
 // ─── Logging ────────────────────────────────────────────────────────────────
 
@@ -82,15 +85,20 @@ function registerIpcHandlers(): void {
 
   // ── Node CRUD ────────────────────────────────────────────────────────────
 
-  ipcMain.handle(IPC.NODE_CREATE, (_, { parentId, name }: { parentId: string; name: string }) =>
-    projectManager.nodeCreate(parentId, name)
-  )
+  ipcMain.handle(IPC.NODE_CREATE, (
+    _,
+    { parentId, name, templateId }: { parentId: string; name: string; templateId?: string | null }
+  ) => projectManager.nodeCreate(parentId, name, templateId))
 
   ipcMain.handle(IPC.NODE_UPDATE, (
     _,
     { id, changes }: {
       id: string
-      changes: { name?: string; properties?: Record<string, string | number | boolean | null> }
+      changes: {
+        name?: string
+        properties?: Record<string, string | number | boolean | null>
+        templateId?: string | null
+      }
     }
   ) => projectManager.nodeUpdate(id, changes))
 
@@ -111,6 +119,36 @@ function registerIpcHandlers(): void {
     ok(projectManager.getHistoryBackfillStatus())
   )
 
+  // ── Templates ──────────────────────────────────────────────────────────────
+
+  ipcMain.handle(IPC.TEMPLATE_CREATE, (
+    _,
+    { id, template }: { id: string; template: NodeTemplate }
+  ) => projectManager.templateCreate(id, template))
+
+  ipcMain.handle(IPC.TEMPLATE_UPDATE, (
+    _,
+    { id, changes }: { id: string; changes: Partial<NodeTemplate> }
+  ) => projectManager.templateUpdate(id, changes))
+
+  ipcMain.handle(IPC.TEMPLATE_DELETE, (_, { id }: { id: string }) =>
+    projectManager.templateDelete(id)
+  )
+
+  // ── CSV import ─────────────────────────────────────────────────────────────
+
+  ipcMain.handle(IPC.IMPORT_INSPECT, (_, { path }: { path: string }) =>
+    projectManager.inspectImport(path)
+  )
+
+  ipcMain.handle(IPC.IMPORT_PLAN, (_, { path, mapping }: { path: string; mapping: ImportMapping }) =>
+    projectManager.planImportCsv(path, mapping)
+  )
+
+  ipcMain.handle(IPC.IMPORT_APPLY, (_, { path, mapping }: { path: string; mapping: ImportMapping }) =>
+    projectManager.applyImportCsv(path, mapping)
+  )
+
   // ── Search ───────────────────────────────────────────────────────────────
 
   ipcMain.handle(IPC.SEARCH_QUERY, (_, { query }: { query: string }) =>
@@ -124,12 +162,49 @@ function registerIpcHandlers(): void {
     return ok(status)
   })
 
+  // ── Report export ──────────────────────────────────────────────────────────
+  // Main builds the content authoritatively (ProjectManager.buildReport) and owns
+  // the save dialog + file write — the renderer never touches the filesystem.
+
+  ipcMain.handle(IPC.REPORT_EXPORT, async (_, { from, to, format }: { from: string; to: string; format: ReportFormat }) => {
+    const built = await projectManager.buildReport(from, to, format)
+    if (!built.ok) return built
+    // showSaveDialog AND writeFile are both inside the try so a dialog or write
+    // rejection resolves to a Result, never throwing across the IPC boundary.
+    try {
+      const result = await dialog.showSaveDialog({
+        title: 'Export change report',
+        defaultPath: built.data.suggestedName,
+        filters: [format === 'csv' ? { name: 'CSV', extensions: ['csv'] } : { name: 'Markdown', extensions: ['md'] }],
+      })
+      if (result.canceled || !result.filePath) return ok({ savedPath: null })
+      await writeFile(result.filePath, built.data.content, 'utf8')
+      return ok({ savedPath: result.filePath })
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      return err(ErrorCode.REPORT_WRITE_FAILED, `Failed to write report: ${msg}`)
+    }
+  })
+
+  ipcMain.handle(IPC.REPORT_BUILD, (_, { from, to, format }: { from: string; to: string; format: ReportFormat }) =>
+    projectManager.buildReport(from, to, format)
+  )
+
   // ── Dialog helpers ───────────────────────────────────────────────────────
 
   ipcMain.handle(IPC.DIALOG_OPEN_FOLDER, async (_, { title }: { title: string }) => {
     const result = await dialog.showOpenDialog({
       title,
       properties: ['openDirectory', 'createDirectory'],
+    })
+    return result.canceled ? null : result.filePaths[0]
+  })
+
+  ipcMain.handle(IPC.DIALOG_OPEN_FILE, async (_, { title }: { title: string }) => {
+    const result = await dialog.showOpenDialog({
+      title,
+      properties: ['openFile'],
+      filters: [{ name: 'CSV', extensions: ['csv'] }],
     })
     return result.canceled ? null : result.filePaths[0]
   })

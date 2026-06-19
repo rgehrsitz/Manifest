@@ -1,20 +1,18 @@
-// Pure formatting helpers for diff display.
-// Extracted from SnapshotDialog.svelte so SnapshotsPanel.svelte and any future
-// diff-related components share one implementation.
+// Diff-display helpers for the renderer. The pure, consumer-agnostic helpers
+// (formatChangeType / formatTemplateRef / formatPath / describeTemplateChange)
+// live in src/shared/diff-format.ts so the main-process report exporter can reuse
+// them; they are re-exported here so existing component imports keep working.
+// Only the renderer-specific pieces (Tailwind class maps, the UI's value/property
+// rendering) are defined locally.
 
 import type { DiffEntry } from '../../../shared/types'
 
-export function formatChangeType(changeType: DiffEntry['changeType']): string {
-  switch (changeType) {
-    case 'property-changed': return 'Property Changed'
-    case 'order-changed':    return 'Order Changed'
-    default: return changeType.charAt(0).toUpperCase() + changeType.slice(1)
-  }
-}
-
-export function formatPath(path: string[], nodeName: string): string {
-  return [...path, nodeName].join(' / ')
-}
+export {
+  formatChangeType,
+  formatTemplateRef,
+  formatPath,
+  describeTemplateChange,
+} from '../../../shared/diff-format'
 
 export function severityClass(severity: DiffEntry['severity']): string {
   switch (severity) {

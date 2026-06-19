@@ -89,6 +89,9 @@
     if (curr.nodeOrder !== prev.nodeOrder) {
       changes.push('Reordered among siblings')
     }
+    if ((curr.templateId ?? null) !== (prev.templateId ?? null)) {
+      changes.push(`Template ${formatTemplate(prev.templateId)} → ${formatTemplate(curr.templateId)}`)
+    }
     const propChanges = diffProperties(prev.properties, curr.properties)
     changes.push(...propChanges)
     if (changes.length === 0) changes.push('Recorded (no field changes)')
@@ -116,6 +119,10 @@
     if (v === null || v === undefined) return '∅'
     if (typeof v === 'string') return `"${v}"`
     return String(v)
+  }
+
+  function formatTemplate(id: string | null | undefined): string {
+    return id ? `"${id}"` : '(none)'
   }
 
   function entryTitle(entry: NodeHistoryEntry): string {

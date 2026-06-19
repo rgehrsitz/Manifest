@@ -46,9 +46,16 @@ export interface DecoratedRow {
 
 /**
  * A ghost placeholder in compare mode representing a removed node or the origin
- * position of a moved node. Ghosts are not selectable and not keyboard-navigable.
+ * position of a moved node.
  *
- * ID is always `ghost:${originalId}` to keep Svelte keyed {#each} sane.
+ * Ghosts ARE selectable and keyboard-navigable (issue #3): clicking or arrowing
+ * onto a ghost loads it into the DetailPane in read-only "tombstone" mode so
+ * the user can inspect what the removed/moved node contained. Ghosts are NOT
+ * editable — DetailPane forces readOnly and the context menu refuses to open
+ * on ghost rows (TreeRow guards this).
+ *
+ * ID is always `ghost:${originalId}` to keep Svelte keyed {#each} sane and to
+ * distinguish a ghost selection from a live-node selection in selectedId.
  */
 export interface GhostRow {
   kind: 'ghost'
@@ -70,6 +77,7 @@ export type RowStatus =
   | 'moved-from'     // ghost row at the origin
   | 'renamed'
   | 'property-changed'
+  | 'template-changed'
   | 'order-changed'
   | 'mixed'          // multiple non-Low-severity changes on the same node
 
@@ -199,6 +207,7 @@ function mergedStatusToRowStatus(status: MergedStatus): RowStatus {
     case 'moved':            return 'moved-to'
     case 'renamed':          return 'renamed'
     case 'property-changed': return 'property-changed'
+    case 'template-changed': return 'template-changed'
     case 'order-changed':    return 'order-changed'
     case 'mixed':            return 'mixed'
     default:                 return 'unchanged'
@@ -210,6 +219,7 @@ const BADGE_LABELS: Partial<Record<RowStatus, string>> = {
   'moved-to':       'Moved',
   renamed:          'Renamed',
   'property-changed': 'Changed',
+  'template-changed': 'Template',
   'order-changed':  'Reordered',
   mixed:            'Modified',
 }
@@ -219,6 +229,7 @@ const BADGE_SEVERITY: Partial<Record<RowStatus, 'High' | 'Medium' | 'Low'>> = {
   'moved-to':         'High',
   renamed:            'Medium',
   'property-changed': 'Medium',
+  'template-changed': 'Medium',
   'order-changed':    'Low',
   mixed:              'High',
 }

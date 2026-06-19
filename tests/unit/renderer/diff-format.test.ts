@@ -3,11 +3,13 @@ import {
   formatChangeType,
   formatPath,
   formatValue,
+  formatTemplateRef,
   severityClass,
   severityBadgeClass,
   describePropertyChange,
+  describeTemplateChange,
 } from '../../../src/renderer/src/lib/diff-format'
-import type { DiffEntry } from '../../../src/shared/types'
+import type { DiffEntry, TemplateDiffEntry } from '../../../src/shared/types'
 
 // ─── formatChangeType ─────────────────────────────────────────────────────────
 
@@ -157,5 +159,58 @@ describe('describePropertyChange', () => {
     )
     // 'a: ...' comes before 'z: ...'
     expect(lines[0]).toMatch(/^a:/)
+  })
+})
+
+// ─── template diffs ──────────────────────────────────────────────────────────
+
+describe('formatChangeType — template-changed', () => {
+  it('formats template-changed', () => {
+    expect(formatChangeType('template-changed')).toBe('Template Changed')
+  })
+})
+
+describe('formatTemplateRef', () => {
+  it('renders null/empty as (none) and ids verbatim', () => {
+    expect(formatTemplateRef(null)).toBe('(none)')
+    expect(formatTemplateRef(undefined)).toBe('(none)')
+    expect(formatTemplateRef('')).toBe('(none)')
+    expect(formatTemplateRef('software-item')).toBe('software-item')
+  })
+})
+
+describe('describeTemplateChange', () => {
+  const base = { templateId: 'rack', templateLabel: 'Rack' }
+  it('describes template add/remove/relabel', () => {
+    expect(describeTemplateChange({ ...base, changeType: 'template-added' } as TemplateDiffEntry))
+      .toBe('Added template "Rack"')
+    expect(describeTemplateChange({ ...base, changeType: 'template-removed' } as TemplateDiffEntry))
+      .toBe('Removed template "Rack"')
+    expect(describeTemplateChange({
+      ...base, changeType: 'template-relabeled', oldValue: 'Rack', newValue: 'Equipment Rack',
+    } as TemplateDiffEntry)).toBe('Renamed template rack: "Rack" → "Equipment Rack"')
+  })
+
+  it('describes field add/remove/change', () => {
+    expect(describeTemplateChange({
+      ...base, changeType: 'field-added', fieldKey: 'firmware', newValue: { type: 'version' },
+    } as TemplateDiffEntry)).toBe('Rack: added field "firmware" (version)')
+    expect(describeTemplateChange({
+      ...base, changeType: 'field-removed', fieldKey: 'capacity',
+    } as TemplateDiffEntry)).toBe('Rack: removed field "capacity"')
+    expect(describeTemplateChange({
+      ...base, changeType: 'field-changed', fieldKey: 'location',
+      oldValue: { type: 'string' }, newValue: { type: 'version' },
+    } as TemplateDiffEntry)).toBe('Rack: field "location" changed (string → version)')
+  })
+
+  it('notes enum option and required changes when type is unchanged', () => {
+    const txt = describeTemplateChange({
+      ...base, changeType: 'field-changed', fieldKey: 'status',
+      oldValue: { type: 'enum', options: ['a'] },
+      newValue: { type: 'enum', options: ['a', 'b'], required: true },
+    } as TemplateDiffEntry)
+    expect(txt).toContain('options changed')
+    expect(txt).toContain('now required')
   })
 })

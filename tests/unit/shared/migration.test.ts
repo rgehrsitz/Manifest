@@ -48,7 +48,7 @@ describe('migrate — v1 to v2', () => {
       ],
     }
     const result = migrate(v1)
-    expect(result.version).toBe(2)
+    expect(result.version).toBe(CURRENT)
     const roots = result.nodes.filter((n: any) => n.parentId === null)
     expect(roots.length).toBe(1)
     expect(roots[0].name).toBe('My Lab')
@@ -70,7 +70,7 @@ describe('migrate — v1 to v2', () => {
       ],
     }
     const result = migrate(v1)
-    expect(result.version).toBe(2)
+    expect(result.version).toBe(CURRENT)
     expect(result.nodes.length).toBe(1)
     expect(result.nodes[0].parentId).toBeNull()
   })
@@ -85,11 +85,56 @@ describe('migrate — v1 to v2', () => {
       nodes: [],
     }
     const result = migrate(v1)
-    expect(result.version).toBe(2)
+    expect(result.version).toBe(CURRENT)
     // Empty manifest: migration adds a root node named after the project.
     const roots = result.nodes.filter((n: any) => n.parentId === null)
     expect(roots.length).toBe(1)
     expect(roots[0].name).toBe('Empty')
+  })
+})
+
+// ─── v2 → v3 migration (templates) ──────────────────────────────────────────────
+
+describe('migrate — v2 to v3', () => {
+  const v2Manifest = () => ({
+    version: 2,
+    id: 'proj',
+    name: 'Lab',
+    created: '2026-01-01T00:00:00Z',
+    modified: '2026-01-01T00:00:00Z',
+    nodes: [
+      { id: 'root', parentId: null, name: 'Lab', order: 0, properties: {},
+        created: '2026-01-01T00:00:00Z', modified: '2026-01-01T00:00:00Z' },
+      { id: 'a', parentId: 'root', name: 'Rack A', order: 0,
+        properties: { location: 'Room 1', capacity: 42 },
+        created: '2026-01-01T00:00:00Z', modified: '2026-01-01T00:00:00Z' },
+    ],
+  })
+
+  it('adds an empty templates map and bumps version to 3', () => {
+    const result = migrate(v2Manifest())
+    expect(result.version).toBe(3)
+    expect(result.templates).toEqual({})
+  })
+
+  it('is lossless: node property values are untouched', () => {
+    const result = migrate(v2Manifest())
+    const rackA = result.nodes.find((n: any) => n.id === 'a')
+    expect(rackA.properties).toEqual({ location: 'Room 1', capacity: 42 })
+    expect(rackA.templateId).toBeUndefined()
+  })
+
+  it('preserves an existing templates map (idempotent re-run)', () => {
+    const withTemplates: any = {
+      ...v2Manifest(),
+      version: 3,
+      templates: { rack: { label: 'Rack', fields: { location: { type: 'string' } } } },
+    }
+    const result = migrate(withTemplates)
+    expect(result.version).toBe(3)
+    expect(result.templates).toEqual({
+      rack: { label: 'Rack', fields: { location: { type: 'string' } } },
+    })
   })
 })
 

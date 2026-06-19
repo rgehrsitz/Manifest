@@ -7,8 +7,48 @@ export interface ManifestNode {
   name: string
   order: number
   properties: Record<string, string | number | boolean | null>
+  // Optional reference to a NodeTemplate (by template id) that types this
+  // node's properties. Absent/null means the node is freeform (ad-hoc,
+  // untyped properties).
+  templateId?: string | null
   created: string   // ISO 8601
   modified: string  // ISO 8601
+}
+
+// ─── Templates & typed properties ──────────────────────────────────────────────
+//
+// Type information lives ONCE here, in the project-level templates map. Node
+// property VALUES stay clean JSON primitives on disk — no per-value wrappers.
+// A node points to a template via templateId; properties whose key matches a
+// template field are typed/validated against that field. Keys not in the
+// template are ad-hoc and untyped (treated as strings) until promoted.
+
+export type PropertyType = 'string' | 'number' | 'boolean' | 'date' | 'version' | 'enum'
+
+export interface TemplateField {
+  type: PropertyType
+  label?: string
+  required?: boolean
+  default?: string | number | boolean | null
+  // Required (non-empty) when type === 'enum'. The set of allowed values.
+  options?: string[]
+}
+
+export interface NodeTemplate {
+  label: string
+  description?: string
+  // Keyed by property key (the key used in ManifestNode.properties).
+  fields: Record<string, TemplateField>
+}
+
+// Structured, path-qualified problem found while loading a manifest. Surfaced
+// to the user rather than silently coerced/downgraded. Non-fatal: the project
+// still loads with values left exactly as written on disk.
+export interface ManifestWarning {
+  // Dotted path to the offending value, e.g. "nodes[12].properties.firmware".
+  path: string
+  code: string
+  message: string
 }
 
 export interface Project {
@@ -18,8 +58,76 @@ export interface Project {
   created: string   // ISO 8601
   modified: string  // ISO 8601
   nodes: ManifestNode[]
+  // Keyed by template id (slug). Persisted to disk.
+  templates?: Record<string, NodeTemplate>
   // Runtime-only: not persisted to disk
   path?: string
+  // Runtime-only: structured warnings collected at load time. Stripped on write.
+  loadWarnings?: ManifestWarning[]
+}
+
+// ─── CSV import ─────────────────────────────────────────────────────────────────
+
+export type ImportPlacement = 'flat' | 'path'
+
+// One CSV column mapped to a node property. `key` is the (editable) property
+// key; `include: false` drops the column.
+export interface ImportColumnMapping {
+  header: string
+  key: string
+  include: boolean
+}
+
+export interface ImportMapping {
+  placement: ImportPlacement
+  // flat: every row becomes a child here. path: the base for resolving the
+  // breadcrumb column (paths walk down from this node).
+  baseParentId: string
+  nameColumn: string
+  pathColumn?: string
+  pathSeparator?: string          // default ' / '
+  // path placement only: create any missing breadcrumb ancestors (as plain
+  // untyped nodes) instead of skipping the row. Ignored when placement is flat.
+  autoCreateParents?: boolean
+  templateId?: string | null
+  columns: ImportColumnMapping[]   // property columns only (excludes name/path)
+}
+
+// Cheap first look at a file, before any mapping: headers, a sample, total count.
+export interface ImportInspect {
+  headers: string[]
+  sampleRows: string[][]
+  rowCount: number
+}
+
+// A single per-row problem. `row` is the 1-based file row (header = row 1).
+export interface ImportIssue {
+  row: number
+  column?: string
+  reason: string
+}
+
+// Full-file validation result (issue arrays capped for transport/display).
+export interface ImportPlan {
+  acceptedCount: number
+  skippedCount: number
+  warningCount: number
+  createdParents: number          // ancestors auto-created to satisfy paths
+  skipped: ImportIssue[]
+  warnings: ImportIssue[]
+  capped: boolean
+}
+
+// Outcome of an applied import. Issue arrays are capped for transport (same as
+// ImportPlan); the *Count fields carry the true totals.
+export interface ImportResult {
+  created: number
+  createdParents: number          // ancestors auto-created to satisfy paths
+  skippedCount: number
+  warningCount: number
+  skipped: ImportIssue[]
+  warnings: ImportIssue[]
+  capped: boolean
 }
 
 export type ChangeType =
@@ -28,6 +136,7 @@ export type ChangeType =
   | 'moved'
   | 'renamed'
   | 'property-changed'
+  | 'template-changed'
   | 'order-changed'
 
 export type Severity = 'High' | 'Medium' | 'Low'
@@ -43,6 +152,28 @@ export interface DiffEntry {
     parentName: string | null
     path: string[]
   }
+}
+
+// Project-level template/schema change between two snapshots. Computed by
+// diffTemplates(); surfaced through MergedTree.templateChanges so the compare
+// view can show "Schema changes" separately from per-node diffs.
+export type TemplateChangeType =
+  | 'template-added'
+  | 'template-removed'
+  | 'template-relabeled'
+  | 'template-redescribed'
+  | 'field-added'
+  | 'field-removed'
+  | 'field-changed'
+
+export interface TemplateDiffEntry {
+  templateId: string
+  templateLabel: string
+  changeType: TemplateChangeType
+  // Set for field-* changes: the property key whose field definition changed.
+  fieldKey?: string
+  oldValue?: unknown
+  newValue?: unknown
 }
 
 export interface Snapshot {
@@ -121,6 +252,8 @@ export interface NodeHistoryEntry {
   parentId: string | null
   nodeOrder: number | null
   properties: Record<string, string | number | boolean | null> | null
+  // Template bound to this node at this point in time (null = freeform).
+  templateId?: string | null
   // For revert entries: the snapshot the project was reverted to.
   revertTargetSnapshotId?: string | null
   // For recover entries: the recovery point that was applied.

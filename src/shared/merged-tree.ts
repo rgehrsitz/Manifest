@@ -10,7 +10,8 @@
 // parsed snapshots are already available) and the result is serialised across
 // the IPC boundary as a single payload.
 
-import type { ManifestNode, DiffEntry, Project } from './types'
+import type { ManifestNode, DiffEntry, Project, TemplateDiffEntry } from './types'
+import { diffTemplates } from './diff-engine'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -22,6 +23,7 @@ export type MergedStatus =
   | 'moved-from'     // ghost: origin position of a moved node
   | 'renamed'
   | 'property-changed'
+  | 'template-changed'
   | 'order-changed'
   | 'mixed'          // two or more non-Low-severity changes
 
@@ -39,6 +41,7 @@ export interface MergedTreeNode extends ManifestNode {
     name?: string
     parentId?: string | null
     properties?: Record<string, string | number | boolean | null>
+    templateId?: string | null
   }
   /** All DiffEntry records touching this node. Removed ghosts carry their removal diff. */
   diffs: DiffEntry[]
@@ -55,8 +58,11 @@ export interface MergedTree {
     moved: number
     renamed: number
     propertyChanged: number
+    templateChanged: number
     orderChanged: number
   }
+  /** Project-level template/schema changes (not tied to a single node). */
+  templateChanges: TemplateDiffEntry[]
 }
 
 // ─── Builder ─────────────────────────────────────────────────────────────────
@@ -80,7 +86,15 @@ export function buildMergedTree(
   }
 
   const merged: MergedTreeNode[] = []
-  const summary = { added: 0, removed: 0, moved: 0, renamed: 0, propertyChanged: 0, orderChanged: 0 }
+  const summary = {
+    added: 0,
+    removed: 0,
+    moved: 0,
+    renamed: 0,
+    propertyChanged: 0,
+    templateChanged: 0,
+    orderChanged: 0,
+  }
 
   // ── Step 1: Emit live nodes (everything in B) ─────────────────────────────
 
@@ -100,6 +114,7 @@ export function buildMergedTree(
         case 'moved':            summary.moved++;            break
         case 'renamed':          summary.renamed++;          break
         case 'property-changed': summary.propertyChanged++;  break
+        case 'template-changed': summary.templateChanged++;  break
         case 'order-changed':    summary.orderChanged++;     break
       }
     }
@@ -119,7 +134,9 @@ export function buildMergedTree(
     summary.removed++
   }
 
-  return { nodes: merged, fromSnapshot, toSnapshot, summary }
+  const templateChanges = diffTemplates(from, to)
+
+  return { nodes: merged, fromSnapshot, toSnapshot, summary, templateChanges }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -140,6 +157,7 @@ function deriveLiveStatus(diffs: DiffEntry[]): MergedStatus {
 
   if (types.has('moved'))            return 'moved'
   if (types.has('renamed'))          return 'renamed'
+  if (types.has('template-changed')) return 'template-changed'
   if (types.has('property-changed')) return 'property-changed'
   if (types.has('order-changed'))    return 'order-changed'
 
@@ -165,6 +183,10 @@ function buildPrevious(
   }
   if (types.has('property-changed')) {
     prev.properties = nodeA.properties as Record<string, string | number | boolean | null>
+    hasAny = true
+  }
+  if (types.has('template-changed')) {
+    prev.templateId = nodeA.templateId ?? null
     hasAny = true
   }
 
@@ -227,6 +249,7 @@ export interface SubtreeSummary {
   renamed: number
   moved: number
   propertyChanged: number
+  templateChanged: number
   orderChanged: number
 }
 
@@ -236,6 +259,7 @@ const ZERO_SUBTREE_SUMMARY: SubtreeSummary = {
   renamed: 0,
   moved: 0,
   propertyChanged: 0,
+  templateChanged: 0,
   orderChanged: 0,
 }
 
@@ -273,6 +297,7 @@ export function computeSubtreeSummaries(
         case 'moved':            summary.moved++;            break
         case 'renamed':          summary.renamed++;          break
         case 'property-changed': summary.propertyChanged++;  break
+        case 'template-changed': summary.templateChanged++;  break
         case 'order-changed':    summary.orderChanged++;     break
       }
     }
@@ -285,6 +310,7 @@ export function computeSubtreeSummaries(
       summary.moved            += childSummary.moved
       summary.renamed          += childSummary.renamed
       summary.propertyChanged  += childSummary.propertyChanged
+      summary.templateChanged  += childSummary.templateChanged
       summary.orderChanged     += childSummary.orderChanged
     }
 

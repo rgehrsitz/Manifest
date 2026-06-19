@@ -261,6 +261,23 @@ describe('flattenTree (compare mode)', () => {
     }
   })
 
+  it('template-changed node emits kind: decorated with a Template badge', () => {
+    const nodes = [
+      mergedNode('root', null, 0, 'unchanged'),
+      mergedNode('app', 'root', 0, 'template-changed'),
+    ]
+    const tree = makeCompareTree(nodes)
+    const rows = flattenTree(tree, new Set(['root']), { compareMode: true })
+    const decorated = rows.find(r => r.id === 'app')
+    expect(decorated!.kind).toBe('decorated')
+    if (decorated!.kind === 'decorated') {
+      expect(decorated!.status).toBe('template-changed')
+      expect(decorated!.badges).toHaveLength(1)
+      expect(decorated!.badges[0].label).toBe('Template')
+      expect(decorated!.badges[0].severity).toBe('Medium')
+    }
+  })
+
   it('renamed node emits kind: decorated with status renamed', () => {
     const nodes = [
       mergedNode('root', null, 0, 'unchanged'),
