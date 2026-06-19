@@ -125,6 +125,17 @@ describe('formatDiffReportMarkdown', () => {
     expect(md).toContain('- "Widget" → Lab / Rack A-01 / Widget')
   })
 
+  it('escapes Markdown so a value cannot inject structure or markup', () => {
+    const out = formatDiffReportMarkdown([
+      entry({ changeType: 'added', context: { nodeName: 'Evil\n## Removed', parentName: null, path: ['Lab'] } }),
+      entry({ changeType: 'renamed', oldValue: 'a*b', newValue: '[link](x)' }),
+    ], [], ctx)
+    expect(out).not.toMatch(/\n## Removed/)   // newline collapsed → no injected heading
+    expect(out).toContain('Lab / Evil ## Removed')
+    expect(out).toContain('a\\*b')             // emphasis escaped
+    expect(out).toContain('\\[link\\](x)')     // link brackets escaped
+  })
+
   it('renders all template/schema change kinds via the shared helper', () => {
     const tpl: TemplateDiffEntry[] = [
       { templateId: 't1', templateLabel: 'Board', changeType: 'template-added' },

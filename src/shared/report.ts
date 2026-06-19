@@ -83,6 +83,20 @@ function fullPath(entry: DiffEntry): string {
   return formatPath(entry.context.path, entry.context.nodeName)
 }
 
+// Neutralize Markdown-significant content in an interpolated value so a node name
+// or property value (which may contain newlines or markup — validateNodeName only
+// rejects slashes, and property values are free-form) can't corrupt the report
+// structure. CR/LF/tab collapse to a space (no injected headings or list items);
+// inline emphasis / code / link / HTML characters are backslash-escaped. The CSV
+// path is handled separately by serializeCsv (quoting + formula escaping).
+function md(value: unknown): string {
+  return String(value ?? '')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/ {2,}/g, ' ')
+    .trim()
+    .replace(/[\\`*_[\]<>]/g, '\\$&')
+}
+
 // ─── Markdown ───────────────────────────────────────────────────────────────
 
 export function formatDiffReportMarkdown(
@@ -99,15 +113,15 @@ export function formatDiffReportMarkdown(
   const orderChanged = byType(diffs, 'order-changed')
 
   const lines: string[] = []
-  lines.push(`# Change Report: ${ctx.projectName}`)
+  lines.push(`# Change Report: ${md(ctx.projectName)}`)
   lines.push('')
-  lines.push(`**From:** ${ctx.from.name} (${ctx.from.date} · ${ctx.from.hash})  `)
-  lines.push(`**To:** ${ctx.to.name} (${ctx.to.date} · ${ctx.to.hash})  `)
-  lines.push(`**Generated:** ${ctx.generatedAt}`)
+  lines.push(`**From:** ${md(ctx.from.name)} (${md(ctx.from.date)} · ${md(ctx.from.hash)})  `)
+  lines.push(`**To:** ${md(ctx.to.name)} (${md(ctx.to.date)} · ${md(ctx.to.hash)})  `)
+  lines.push(`**Generated:** ${md(ctx.generatedAt)}`)
   lines.push('')
 
   if (diffs.length === 0 && templateDiffs.length === 0) {
-    lines.push(`No changes between ${ctx.from.name} and ${ctx.to.name}.`)
+    lines.push(`No changes between ${md(ctx.from.name)} and ${md(ctx.to.name)}.`)
     lines.push('')
     return lines.join('\n')
   }
@@ -125,39 +139,40 @@ export function formatDiffReportMarkdown(
 
   if (added.length > 0) {
     lines.push(`## Added (${added.length})`)
-    for (const e of added) lines.push(`- ${fullPath(e)}`)
+    for (const e of added) lines.push(`- ${md(fullPath(e))}`)
     lines.push('')
   }
   if (removed.length > 0) {
     lines.push(`## Removed (${removed.length})`)
-    for (const e of removed) lines.push(`- ${fullPath(e)}`)
+    for (const e of removed) lines.push(`- ${md(fullPath(e))}`)
     lines.push('')
   }
   if (renamed.length > 0) {
     lines.push(`## Renamed (${renamed.length})`)
     for (const e of renamed) {
-      const where = ancestorPath(e)
+      const where = md(ancestorPath(e))
       const prefix = where ? `${where} / ` : ''
-      lines.push(`- ${prefix}"${String(e.oldValue)}" → "${String(e.newValue)}"`)
+      lines.push(`- ${prefix}"${md(e.oldValue)}" → "${md(e.newValue)}"`)
     }
     lines.push('')
   }
   if (moved.length > 0) {
     lines.push(`## Moved (${moved.length})`)
     for (const e of moved) {
-      const oldP = ctx.oldPathById(e.nodeId) ?? `"${e.context.nodeName}"`
-      lines.push(`- ${oldP} → ${fullPath(e)}`)
+      const resolved = ctx.oldPathById(e.nodeId)
+      const oldP = resolved !== null ? md(resolved) : `"${md(e.context.nodeName)}"`
+      lines.push(`- ${oldP} → ${md(fullPath(e))}`)
     }
     lines.push('')
   }
   if (propChanged.length > 0) {
     lines.push(`## Property changes (${propChanged.length} node(s))`)
     for (const e of propChanged) {
-      lines.push(`- ${fullPath(e)}`)
+      lines.push(`- ${md(fullPath(e))}`)
       for (const pc of diffPropertyMaps(propsOf(e.oldValue), propsOf(e.newValue))) {
-        if (pc.kind === 'added') lines.push(`  - + ${pc.key}: ${pc.new}`)
-        else if (pc.kind === 'removed') lines.push(`  - − ${pc.key} (was ${pc.old})`)
-        else lines.push(`  - ${pc.key}: ${pc.old} → ${pc.new}`)
+        if (pc.kind === 'added') lines.push(`  - + ${md(pc.key)}: ${md(pc.new)}`)
+        else if (pc.kind === 'removed') lines.push(`  - − ${md(pc.key)} (was ${md(pc.old)})`)
+        else lines.push(`  - ${md(pc.key)}: ${md(pc.old)} → ${md(pc.new)}`)
       }
     }
     lines.push('')
@@ -165,20 +180,20 @@ export function formatDiffReportMarkdown(
   if (tplChanged.length > 0) {
     lines.push(`## Template changes (${tplChanged.length})`)
     for (const e of tplChanged) {
-      lines.push(`- ${fullPath(e)}: ${ctx.templateLabelOld(e.oldValue)} → ${ctx.templateLabelNew(e.newValue)}`)
+      lines.push(`- ${md(fullPath(e))}: ${md(ctx.templateLabelOld(e.oldValue))} → ${md(ctx.templateLabelNew(e.newValue))}`)
     }
     lines.push('')
   }
   if (orderChanged.length > 0) {
     lines.push(`## Order changes (${orderChanged.length})`)
     for (const e of orderChanged) {
-      lines.push(`- ${fullPath(e)}: ${String(e.oldValue)} → ${String(e.newValue)}`)
+      lines.push(`- ${md(fullPath(e))}: ${md(e.oldValue)} → ${md(e.newValue)}`)
     }
     lines.push('')
   }
   if (templateDiffs.length > 0) {
     lines.push(`## Schema changes (${templateDiffs.length})`)
-    for (const t of templateDiffs) lines.push(`- ${describeTemplateChange(t)}`)
+    for (const t of templateDiffs) lines.push(`- ${md(describeTemplateChange(t))}`)
     lines.push('')
   }
 
