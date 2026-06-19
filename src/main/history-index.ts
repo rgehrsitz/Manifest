@@ -47,6 +47,12 @@ export interface RecordSnapshotOptions {
   previousProject: Project | null
 }
 
+export interface IncompleteSnapshotIndex {
+  snapshotId: string
+  expectedCount: number
+  actualCount: number
+}
+
 interface RawHistoryRow {
   snapshot_id: string
   snapshot_order: number
@@ -201,13 +207,24 @@ export class HistoryIndexService {
   // Snapshot ids that exist in the index but were not marked complete.
   // Backfill should re-process these.
   incompleteSnapshotIds(): string[] {
+    return this.getIncompleteSnapshots().map(snapshot => snapshot.snapshotId)
+  }
+
+  getIncompleteSnapshots(): IncompleteSnapshotIndex[] {
     const db = this.requireDb()
     const rows = db
       .prepare(
-        `SELECT snapshot_id FROM snapshot_index_state WHERE complete = 0`
+        `SELECT snapshot_id, expected_count, actual_count
+         FROM snapshot_index_state
+         WHERE complete = 0
+         ORDER BY snapshot_id ASC`
       )
-      .all() as Array<{ snapshot_id: string }>
-    return rows.map(r => r.snapshot_id)
+      .all() as Array<{ snapshot_id: string; expected_count: number; actual_count: number }>
+    return rows.map(r => ({
+      snapshotId: r.snapshot_id,
+      expectedCount: r.expected_count,
+      actualCount: r.actual_count,
+    }))
   }
 
   private requireDb(): Database.Database {

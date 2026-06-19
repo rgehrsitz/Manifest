@@ -33,6 +33,8 @@ const api: ManifestAPI = {
       ipcRenderer.invoke(IPC.NODE_HISTORY, { nodeId }),
     historyBackfillStatus: () =>
       ipcRenderer.invoke(IPC.NODE_HISTORY_BACKFILL_STATUS, {}),
+    historyReindex: () =>
+      ipcRenderer.invoke(IPC.NODE_HISTORY_REINDEX, {}),
   },
 
   template: {

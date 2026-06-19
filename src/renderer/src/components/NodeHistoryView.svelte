@@ -1,7 +1,7 @@
 <svelte:options runes />
 
 <script lang="ts">
-  import type { NodeHistoryEntry } from '../../../shared/types'
+  import type { NodeHistoryEntry, NodeHistoryIndexStatus } from '../../../shared/types'
   import { onDestroy } from 'svelte'
 
   interface Props {
@@ -14,7 +14,8 @@
   let entries: NodeHistoryEntry[] = $state([])
   let loading = $state(false)
   let error: string | null = $state(null)
-  let backfillStatus: { inProgress: boolean; completed: number; total: number } | null = $state(null)
+  let backfillStatus: NodeHistoryIndexStatus | null = $state(null)
+  let reindexing = $state(false)
   let pollTimer: ReturnType<typeof setTimeout> | null = null
 
   // (Re)load whenever the inspected node changes.
@@ -52,9 +53,25 @@
       } else {
         // Backfill finished — re-fetch entries to pick up any rows added.
         const historyResult = await window.api.node.history(id)
-        if (historyResult.ok) entries = historyResult.data.entries
+        if (historyResult.ok) {
+          entries = historyResult.data.entries
+          backfillStatus = historyResult.data.backfillStatus
+        }
       }
     }, 800)
+  }
+
+  async function reindexHistory(): Promise<void> {
+    reindexing = true
+    error = null
+    const result = await window.api.node.historyReindex()
+    reindexing = false
+    if (!result.ok) {
+      error = result.error.message
+      return
+    }
+    backfillStatus = result.data
+    if (result.data.inProgress) schedulePoll(nodeId)
   }
 
   // Compute a short "what changed" summary for each entry by comparing it to
@@ -156,16 +173,40 @@
           Indexing snapshots…
         {/if}
       </div>
+    {:else if backfillStatus && backfillStatus.incompleteCount > 0}
+      <div class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"
+           data-testid="node-history-incomplete">
+        <div class="flex items-center justify-between gap-3">
+          <p>
+            {backfillStatus.incompleteCount}
+            {backfillStatus.incompleteCount === 1 ? 'snapshot was' : 'snapshots were'}
+            not fully indexed. History may be incomplete.
+          </p>
+          <button
+            type="button"
+            class="shrink-0 rounded border border-amber-300 bg-white px-2 py-1 text-[11px] font-medium text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+            onclick={reindexHistory}
+            disabled={reindexing}
+            data-testid="node-history-reindex"
+          >
+            {reindexing ? 'Re-indexing…' : 'Re-index now'}
+          </button>
+        </div>
+      </div>
     {/if}
 
-    {#if entries.length === 0 && !backfillStatus?.inProgress}
+    {#if entries.length === 0 && backfillStatus?.inProgress}
+      <p class="text-xs text-stone-400" data-testid="node-history-pending">Waiting for the index to populate…</p>
+    {:else if entries.length === 0 && backfillStatus && backfillStatus.incompleteCount > 0}
+      <p class="text-xs text-amber-700" data-testid="node-history-incomplete-empty">
+        Re-index to check whether "{nodeName}" has snapshot history.
+      </p>
+    {:else if entries.length === 0}
       <div class="rounded-lg border border-dashed border-stone-200 bg-stone-50 px-3 py-4
                   text-xs text-stone-400 text-center"
            data-testid="node-history-empty">
         "{nodeName}" has not been snapshotted yet.
       </div>
-    {:else if entries.length === 0}
-      <p class="text-xs text-stone-400" data-testid="node-history-pending">Waiting for the index to populate…</p>
     {:else}
       <ol class="space-y-2">
         {#each entries as entry, idx (entry.entryId + ':' + idx)}

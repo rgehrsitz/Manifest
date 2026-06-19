@@ -30,6 +30,7 @@ import type {
   ManifestNode,
   NodeHistory,
   NodeHistoryEntry,
+  NodeHistoryIndexStatus,
   SearchResult,
   Result,
   Snapshot,
@@ -251,6 +252,39 @@ export class ProjectManager {
 
   getHistoryBackfillStatus(): HistoryBackfillStatus {
     return { ...this.backfillStatus }
+  }
+
+  getHistoryIndexStatus(): NodeHistoryIndexStatus {
+    let incompleteSnapshotIds: string[] = []
+    if (this.currentProject?.path) {
+      try {
+        incompleteSnapshotIds = this.history.getIncompleteSnapshots().map(snapshot => snapshot.snapshotId)
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e)
+        if (/history index is not open/i.test(msg)) {
+          return {
+            ...this.backfillStatus,
+            incompleteCount: 0,
+            incompleteSnapshotIds: [],
+          }
+        }
+        this.logger.warn('history index status failed', { error: msg })
+      }
+    }
+
+    return {
+      ...this.backfillStatus,
+      incompleteCount: incompleteSnapshotIds.length,
+      incompleteSnapshotIds,
+    }
+  }
+
+  reindexHistory(): Result<NodeHistoryIndexStatus> {
+    if (!this.currentProject?.path) {
+      return err(ErrorCode.PROJECT_NOT_FOUND, 'No project is currently open')
+    }
+    this.scheduleHistoryBackfill()
+    return ok(this.getHistoryIndexStatus())
   }
 
   // Awaitable handle for the most recently scheduled backfill. Tests use this
@@ -1148,7 +1182,7 @@ export class ProjectManager {
       }
     }
 
-    return ok({ entries, backfillStatus: this.getHistoryBackfillStatus() })
+    return ok({ entries, backfillStatus: this.getHistoryIndexStatus() })
   }
 
   async snapshotCompare(a: string, b: string): Promise<Result<DiffEntry[]>> {

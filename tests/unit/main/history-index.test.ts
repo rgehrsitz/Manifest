@@ -268,6 +268,9 @@ describe('HistoryIndexService', () => {
 
       expect(svc.recordedSnapshotIds()).toEqual(new Set(['good']))
       expect(svc.incompleteSnapshotIds()).toEqual(['partial'])
+      expect(svc.getIncompleteSnapshots()).toEqual([
+        { snapshotId: 'partial', expectedCount: 5, actualCount: 2 },
+      ])
     })
   })
 

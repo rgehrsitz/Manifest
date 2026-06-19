@@ -16,6 +16,7 @@ import type {
   GitStatus,
   Result,
   NodeHistory,
+  NodeHistoryIndexStatus,
   RecoveryPointApplyRequest,
   RecoveryPointApplyResult,
   SnapshotRevertRequest,
@@ -42,6 +43,7 @@ export const IPC = {
   NODE_MOVE:           'node:move',
   NODE_HISTORY:        'node:history',
   NODE_HISTORY_BACKFILL_STATUS: 'node:historyBackfillStatus',
+  NODE_HISTORY_REINDEX: 'node:history:reindex',
   TEMPLATE_CREATE:     'template:create',
   TEMPLATE_UPDATE:     'template:update',
   TEMPLATE_DELETE:     'template:delete',
@@ -97,7 +99,9 @@ export interface ManifestAPI {
     /** Chronological history of one node across all snapshots, plus revert/recover events that changed it. */
     history(nodeId: string): Promise<Result<NodeHistory>>
     /** Status of the background per-node history backfill (populated on project open). */
-    historyBackfillStatus(): Promise<Result<{ inProgress: boolean; completed: number; total: number }>>
+    historyBackfillStatus(): Promise<Result<NodeHistoryIndexStatus>>
+    /** Re-run per-node history indexing for any incomplete snapshots. */
+    historyReindex(): Promise<Result<NodeHistoryIndexStatus>>
   }
   template: {
     /** Create a new node template (id must be a unique slug). Returns full updated Project. */
