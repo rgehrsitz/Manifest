@@ -269,3 +269,58 @@ function pushSection(sections: LensSection[], section: LensSection): void {
   }
   sections.push(section)
 }
+
+// ─── Selection / navigation helpers ────────────────────────────────────────────
+// Pure logic lifted out of ManifestView so the lens selection-highlight and the
+// ArrowLeft-escapes-a-fold behaviors can be unit-tested without mounting the
+// component (which is virtualized + animated).
+
+/**
+ * The foldIds of summarized sections that contain the selected node — drives the
+ * "your selection is folded in here" highlight on a FoldMarker. Only summarized
+ * (folded) sections are considered; a selection in a 'full' section returns no
+ * foldId. Empty when nothing is selected.
+ */
+export function computeSelectionFoldIds(
+  sections: readonly LensSection[],
+  rows: readonly VisibleRow[],
+  selectedId: string | null | undefined,
+): Set<string> {
+  const found = new Set<string>()
+  if (!selectedId) return found
+  for (const s of sections) {
+    if (s.density !== 'summarized' || !s.foldId) continue
+    for (let i = s.startIndex; i <= s.endIndex; i++) {
+      if (rows[i]?.node.id === selectedId) {
+        found.add(s.foldId)
+        break
+      }
+    }
+  }
+  return found
+}
+
+/** Minimal view of a render-stream item for parent lookup (rows vs fold markers). */
+export interface LensNavItem {
+  exiting: boolean
+  isRow: boolean
+  depth: number
+}
+
+/**
+ * Index of the nearest preceding non-exiting row at `childDepth - 1` — the parent
+ * row ArrowLeft lands on when it escapes a row (nothing to collapse) or a fold
+ * marker. Returns -1 when there is no such parent (e.g. the item is at the root).
+ * Shared by both the row and fold ArrowLeft paths so they behave identically.
+ */
+export function findParentRowIndex(
+  items: readonly LensNavItem[],
+  fromIndex: number,
+  childDepth: number,
+): number {
+  for (let i = fromIndex - 1; i >= 0; i--) {
+    const it = items[i]
+    if (it && !it.exiting && it.isRow && it.depth === childDepth - 1) return i
+  }
+  return -1
+}

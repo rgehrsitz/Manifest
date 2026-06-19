@@ -8,8 +8,11 @@
   import {
     computeBrowseSections,
     computeCompareSections,
+    computeSelectionFoldIds,
+    findParentRowIndex,
     type CompareSectionContext,
     type LensSection,
+    type LensNavItem,
   } from '../lib/density-layer'
   import {
     mergeDisplay,
@@ -373,20 +376,9 @@
   // currently-selected node? Used to paint a "your selection is in here"
   // highlight on the marker. O(total fold-content rows) per render but
   // sections is small and rows[].node.id is a fast comparison.
-  const selectionFoldIds = $derived.by((): Set<string> => {
-    const found = new Set<string>()
-    if (!selectedId) return found
-    for (const s of sections) {
-      if (s.density !== 'summarized' || !s.foldId) continue
-      for (let i = s.startIndex; i <= s.endIndex; i++) {
-        if (rows[i]?.node.id === selectedId) {
-          found.add(s.foldId)
-          break
-        }
-      }
-    }
-    return found
-  })
+  const selectionFoldIds = $derived.by((): Set<string> =>
+    computeSelectionFoldIds(sections, rows, selectedId)
+  )
 
   function findDisplayedIndexForNode(nodeId: string): number {
     for (let i = 0; i < displayedItems.length; i++) {
@@ -453,18 +445,14 @@
   function findParentDisplayedIndex(idx: number, depth: number): number {
     // Ghost ancestors are valid landing spots (issue #3) — a removed subtree
     // nests its ghosts under ghost:parentId, so a nested ghost's parent is
-    // itself a ghost that the user can inspect.
-    for (let i = idx - 1; i >= 0; i--) {
-      const item = displayedItems[i]
-      if (
-        item.phase !== 'exiting' &&
-        item.payload.kind === 'row' &&
-        item.payload.row.depth === depth - 1
-      ) {
-        return i
-      }
-    }
-    return -1
+    // itself a ghost that the user can inspect. Scan logic lives in
+    // findParentRowIndex (density-layer) so it's unit-tested.
+    const nav: LensNavItem[] = displayedItems.map(item => ({
+      exiting: item.phase === 'exiting',
+      isRow: item.payload.kind === 'row',
+      depth: item.payload.kind === 'row' ? item.payload.row.depth : -1,
+    }))
+    return findParentRowIndex(nav, idx, depth)
   }
 
   function handleKeyDown(e: KeyboardEvent) {
