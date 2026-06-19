@@ -468,6 +468,24 @@ describe('planImport — update-on-key', () => {
     expect(out.create[0]).toMatchObject({ name: 'Board 99', parentId: 'rack' })
   })
 
+  it('skips with a key-aware reason when the key matches nothing but the name is taken', () => {
+    // Property-key update where serial SN-99 matches no existing node, yet a node
+    // named "Board 1" already exists → must explain BOTH (key miss + name taken),
+    // not the bare "name already exists" (which hides that the key failed to match).
+    const out = planImport(
+      [['Board 1', 'SN-99']],
+      ['name', 'serial'],
+      umap({ keyColumn: 'serial', columns: [{ header: 'serial', key: 'serial', include: true }] }),
+      TEMPLATES, [UROOT, RACK, child('b1', 'Board 1', { serial: 'SN-1' })],
+    )
+    expect(out.update).toHaveLength(0)
+    expect(out.create).toHaveLength(0)
+    expect(out.skipped).toHaveLength(1)
+    expect(out.skipped[0].column).toBe('serial')
+    expect(out.skipped[0].reason).toMatch(/no existing node matched serial "SN-99"/)
+    expect(out.skipped[0].reason).toMatch(/already exists/)
+  })
+
   it('leaves an existing value when the cell is blank (no wipe)', () => {
     const out = planImport(
       [['Board 1', '', 'spare']],
