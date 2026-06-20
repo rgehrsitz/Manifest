@@ -91,7 +91,9 @@ Responsible for:
 
 ### IPC channel contract (v1)
 
-All channels are renderer-to-main. All responses use the `Result<T>` envelope.
+All channels are renderer-to-main. Domain operations respond with the `Result<T>`
+envelope; the `dialog:*` UI utility channels are the exception and return a bare
+value (see the note below the table).
 
 Node/template mutations return the **full updated `Project`** (not just the
 changed entity) so the renderer re-derives from one authoritative snapshot
