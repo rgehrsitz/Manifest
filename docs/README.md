@@ -40,7 +40,7 @@ data, then use those notes to scope the CSV/JSON import MVP.
 - **Stack:** Electron + TypeScript + Svelte 5 + Tailwind + electron-vite
 - **Storage:** Single `manifest.json` per project, Git-backed snapshots
 - **Snapshots:** System `git` CLI only, hidden behind product UX
-- **IPC:** Typed `contextBridge` with 13 defined channels, `Result<T>` envelope
+- **IPC:** Typed `contextBridge` whitelist (~31 channels), domain calls use the `Result<T>` envelope
 - **Search:** SQLite FTS5 via `better-sqlite3`, rebuildable, non-authoritative
-- **Diff:** Semantic, node-level, 6 change types, multi-change per node
+- **Diff:** Semantic, node-level, 7 change types (added, removed, moved, renamed, property-changed, template-changed, order-changed), multi-change per node
 - **Distribution:** `electron-builder` (macOS DMG, Windows NSIS, Linux AppImage)
