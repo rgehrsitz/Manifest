@@ -1,5 +1,6 @@
 import { execFileSync } from 'child_process'
 import { expect, test } from './fixtures'
+import { CURRENT_PROJECT_REF } from '../../src/shared/snapshot-ref'
 
 import type { ElectronApplication, Page } from '@playwright/test'
 
@@ -370,4 +371,38 @@ test('selecting a ghost row shows the tombstone DetailPane (read-only)', async (
   // No edit controls: Add Property form is suppressed.
   await expect(appPage.getByTestId('add-prop-btn')).toHaveCount(0)
   await expect(appPage.getByTestId('new-prop-key')).toHaveCount(0)
+})
+
+test('compares the current project against a snapshot without a throwaway snapshot', async ({ appPage, electronApp, workspaceDir }) => {
+  const projectName = 'Current Compare Lab'
+
+  await createProjectThroughUi(appPage, electronApp, workspaceDir, projectName)
+  await addChildNode(appPage, projectName, 'Rack A')
+
+  await openSnapshotsPanel(appPage)
+  await createSnapshot(appPage, 'baseline')
+
+  // Make an unsnapshotted edit, then compare it against the snapshot directly.
+  await addChildNode(appPage, projectName, 'Rack B')
+  await expect(appPage.getByTestId('project-mode-badge')).toHaveText('Unsnapshotted changes')
+
+  // With a single snapshot present the compare picker is reachable (gate is >=1),
+  // and "Current project" is offered on BOTH sides.
+  await expect(appPage.getByTestId('compare-from-select')).toBeVisible()
+  await expect(
+    appPage.getByTestId('compare-from-select').locator('option', { hasText: 'Current project' }),
+  ).toHaveCount(1)
+  await expect(
+    appPage.getByTestId('compare-to-select').locator('option', { hasText: 'Current project' }),
+  ).toHaveCount(1)
+
+  await compareSnapshots(appPage, 'baseline', CURRENT_PROJECT_REF)
+  await expect(appPage.getByTestId('project-mode-badge')).toHaveText('Comparing baseline -> Current project')
+
+  const addedRow = appPage.getByTestId('snapshot-diff-row').filter({ hasText: 'Added' })
+  await expect(addedRow).toBeVisible()
+  await expect(addedRow).toContainText('Rack B')
+
+  await appPage.getByRole('button', { name: 'Exit compare' }).click()
+  await expect(appPage.getByTestId('project-mode-badge')).toHaveText('Unsnapshotted changes')
 })

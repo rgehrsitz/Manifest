@@ -3,6 +3,7 @@
 <script lang="ts">
   import type { RecoveryPoint, Snapshot, SnapshotTimelineEvent } from '../../../shared/types'
   import type { MergedTree } from '../../../shared/merged-tree'
+  import { CURRENT_PROJECT_REF, snapshotRefLabel } from '../../../shared/snapshot-ref'
   import {
     severityBadgeClass,
     severityClass,
@@ -139,13 +140,17 @@
       return
     }
     if (!comparePickerInitialized) {
-      compareTo = snapshots[0].name
-      compareFrom = snapshots[1]?.name ?? snapshots[0].name
+      // Default to the highest-value comparison: latest snapshot → current
+      // project ("what have I changed since my last snapshot?").
+      compareTo = CURRENT_PROJECT_REF
+      compareFrom = snapshots[0].name
       comparePickerInitialized = true
       return
     }
-    if (compareTo && !names.includes(compareTo)) compareTo = ''
-    if (compareFrom && !names.includes(compareFrom)) compareFrom = ''
+    // Correct values that no longer exist (snapshot deleted). The current-project
+    // sentinel is always valid, so never wipe it.
+    if (compareTo && compareTo !== CURRENT_PROJECT_REF && !names.includes(compareTo)) compareTo = ''
+    if (compareFrom && compareFrom !== CURRENT_PROJECT_REF && !names.includes(compareFrom)) compareFrom = ''
   })
 
   async function submitCreate() {
@@ -278,7 +283,7 @@
     {#if compareLoaded && mergedTree}
       <div class="min-w-0">
         <h2 class="truncate text-sm font-semibold text-stone-900">
-          Comparing {mergedTree.fromSnapshot} → {mergedTree.toSnapshot}
+          Comparing {snapshotRefLabel(mergedTree.fromSnapshot)} → {snapshotRefLabel(mergedTree.toSnapshot)}
         </h2>
         <p class="text-xs text-stone-400">{totalChanges} {totalChanges === 1 ? 'change' : 'changes'}</p>
       </div>
@@ -654,7 +659,7 @@
       </section>
     </div>
 
-    {#if snapshots.length >= 2}
+    {#if snapshots.length >= 1}
       <section class="shrink-0 border-t border-stone-200 bg-white px-4 py-3 space-y-2">
         <h3 class="text-[10px] font-semibold uppercase tracking-wide text-stone-500">Compare</h3>
         <div class="flex gap-2">
@@ -667,6 +672,7 @@
               data-testid="compare-from-select"
             >
               <option value="">— pick a From —</option>
+              <option value={CURRENT_PROJECT_REF}>Current project</option>
               {#each snapshots as snapshot (snapshot.name)}
                 <option value={snapshot.name}>{snapshot.name}</option>
               {/each}
@@ -681,6 +687,7 @@
               data-testid="compare-to-select"
             >
               <option value="">— pick a To —</option>
+              <option value={CURRENT_PROJECT_REF}>Current project</option>
               {#each snapshots as snapshot (snapshot.name)}
                 <option value={snapshot.name}>{snapshot.name}</option>
               {/each}
@@ -689,7 +696,7 @@
         </div>
         <button
           onclick={submitCompare}
-          disabled={snapshots.length < 2 || !compareFrom || !compareTo || compareFrom === compareTo || comparing}
+          disabled={snapshots.length < 1 || !compareFrom || !compareTo || compareFrom === compareTo || comparing}
           class="w-full rounded-lg bg-stone-800 px-3 py-1.5 text-xs font-medium text-white
                  transition-colors hover:bg-stone-700 disabled:bg-stone-300 cursor-default
                  disabled:cursor-not-allowed"

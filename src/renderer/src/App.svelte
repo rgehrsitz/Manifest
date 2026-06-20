@@ -4,6 +4,7 @@
   import { onMount, onDestroy, tick } from 'svelte'
   import type { Project, ManifestNode, ManifestWarning, ProjectWarning, NodeTemplate, PropertyType, RecoveryPoint, ReferenceBlocker, SearchResult, Snapshot, SnapshotTimelineEvent, ImportResult } from '../../shared/types'
   import { isUsableTemplate, templateLabel } from '../../shared/validation'
+  import { snapshotRefLabel } from '../../shared/snapshot-ref'
   import type { MergedTree } from '../../shared/merged-tree'
   import { computeSubtreeSummaries } from '../../shared/merged-tree'
   import { buildTree, getSiblingIndex, getAncestorIds } from './lib/tree'
@@ -169,7 +170,7 @@
 
   const projectModeLabel = $derived.by(() => {
     if (compareMode && mergedTree) {
-      return `Comparing ${mergedTree.fromSnapshot} -> ${mergedTree.toSnapshot}`
+      return `Comparing ${snapshotRefLabel(mergedTree.fromSnapshot)} -> ${snapshotRefLabel(mergedTree.toSnapshot)}`
     }
     if (workingCopyBaseSnapshot) {
       return workingCopyDirty ? 'Unsnapshotted changes' : `Current project matches ${workingCopyBaseSnapshot}`
@@ -1499,7 +1500,7 @@
           {renameRequestId}
           readOnly={editingLocked}
           readOnlyReason={compareMode && mergedTree
-            ? `Viewing ${mergedTree.fromSnapshot} -> ${mergedTree.toSnapshot}. Snapshots are read-only; exit compare to edit the current project.`
+            ? `Viewing ${snapshotRefLabel(mergedTree.fromSnapshot)} -> ${snapshotRefLabel(mergedTree.toSnapshot)}. Snapshots are read-only; exit compare to edit the current project.`
             : snapshotRestoringName
               ? 'Reverting current project — editing will resume when revert finishes.'
               : recoveryApplyingId

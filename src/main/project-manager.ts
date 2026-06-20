@@ -71,6 +71,7 @@ import {
   templateLabel,
 } from '../shared/validation'
 import { diffProjects, diffTemplates } from '../shared/diff-engine'
+import { isCurrentRef, CURRENT_PROJECT_LABEL } from '../shared/snapshot-ref'
 import { buildMergedTree } from '../shared/merged-tree'
 import { parseCsv, CsvParseError } from '../shared/csv'
 import { detectCloudSyncPath } from '../shared/cloud-sync'
@@ -1332,16 +1333,33 @@ export class ProjectManager {
     }
   }
 
-  /** Shared inner logic: read both snapshots from git and diff them. */
+  // Resolve a compare ref to a Project: the CURRENT_PROJECT_REF sentinel yields
+  // the live in-memory current project (so the user can diff unsnapshotted work
+  // against a snapshot); any other ref is read from git as a saved snapshot.
+  private async resolveCompareProject(ref: string): Promise<Result<Project>> {
+    if (isCurrentRef(ref)) {
+      if (!this.currentProject) return err(ErrorCode.PROJECT_NOT_FOUND, 'No project is currently open')
+      return ok(this.currentProject)
+    }
+    const raw = await this.git.readSnapshotManifest(this.currentProject!.path!, ref)
+    return this.parseManifestJson(raw)
+  }
+
+  /** Shared inner logic: resolve both refs (snapshot or current project) and diff them. */
   private async loadAndDiff(a: string, b: string): Promise<Result<{ projectA: Project; projectB: Project; diffs: DiffEntry[] }>> {
-    const path = this.currentProject!.path!
-    const [rawA, rawB] = await Promise.all([
-      this.git.readSnapshotManifest(path, a),
-      this.git.readSnapshotManifest(path, b),
+    // Comparing a ref against itself is an empty diff by definition. The renderer
+    // already blocks it, but guard here too (defense-in-depth for direct callers)
+    // and skip the redundant resolve/git-read.
+    if (a === b) {
+      const only = await this.resolveCompareProject(a)
+      if (!only.ok) return only as Result<{ projectA: Project; projectB: Project; diffs: DiffEntry[] }>
+      return ok({ projectA: only.data, projectB: only.data, diffs: [] })
+    }
+    const [projectA, projectB] = await Promise.all([
+      this.resolveCompareProject(a),
+      this.resolveCompareProject(b),
     ])
-    const projectA = this.parseManifestJson(rawA)
     if (!projectA.ok) return projectA as Result<{ projectA: Project; projectB: Project; diffs: DiffEntry[] }>
-    const projectB = this.parseManifestJson(rawB)
     if (!projectB.ok) return projectB as Result<{ projectA: Project; projectB: Project; diffs: DiffEntry[] }>
     const diffs = diffProjects(projectA.data, projectB.data)
     return ok({ projectA: projectA.data, projectB: projectB.data, diffs })
@@ -1390,6 +1408,11 @@ export class ProjectManager {
       const listed = await this.snapshotList()
       const snaps = listed.ok ? listed.data : []
       const meta = (name: string) => {
+        // The current-project side has no Snapshot record; label it and leave
+        // date/hash blank (it's the live working copy, not a committed snapshot).
+        if (isCurrentRef(name)) {
+          return { name: CURRENT_PROJECT_LABEL, date: '', hash: '' }
+        }
         const s = snaps.find(x => x.name === name)
         return {
           name,
@@ -1413,8 +1436,14 @@ export class ProjectManager {
         : formatDiffReportMarkdown(diffs, templateDiffs, ctx)
 
       const safe = (s: string) => s.replace(/[^a-zA-Z0-9._-]+/g, '_').replace(/^_+|_+$/g, '') || 'snapshot'
+      // The current-project side gets a clearer filename token than safe('@current')
+      // ('current'), which would otherwise read like an ordinary snapshot called
+      // "current". This is a save-dialog default the user can rename, so a
+      // residual clash with a snapshot literally named "current-project" is
+      // tolerable, not a correctness concern.
+      const fileToken = (ref: string) => (isCurrentRef(ref) ? 'current-project' : safe(ref))
       const ext = format === 'csv' ? 'csv' : 'md'
-      const suggestedName = `${safe(ctx.projectName)}-changes-${safe(from)}-to-${safe(to)}.${ext}`
+      const suggestedName = `${safe(ctx.projectName)}-changes-${fileToken(from)}-to-${fileToken(to)}.${ext}`
       return ok({ content, suggestedName })
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)

@@ -388,13 +388,13 @@ These are the decisions implied by the current model:
 | Should revert require a note? | Required when reverting past existing later snapshots; optional when reverting only unsnapshotted current work. |
 | Should the product use "snapshot," "checkpoint," or "version"? | Use "snapshot." Avoid "version" because it implies editable or branching versions. |
 | Should compare mode allow edits? | No. Compare is read-only. |
+| Should Manifest support comparing the current project to a snapshot in v1? | Yes. Shipped: a `Current project` compare option lets the user diff their live, unsnapshotted work against any saved snapshot ("what changed since my last snapshot?") without creating a throwaway snapshot. |
 | Should Manifest expose Git branches? | Not in v1. The product can record lineage without making users manage branches. |
 
 ## Open Product Questions
 
 These should be decided before adding heavier history features:
 
-- Should Manifest support `Compare current project to snapshot` in v1?
 - Should users be able to duplicate a snapshot into a separate project later?
 - Should snapshot creation require a note/description beyond the name?
 - Should Manifest expose content lineage as a separate view, or only as metadata
@@ -413,6 +413,8 @@ Use:
 - `Snapshot Timeline`
 - `Revert Event`
 - `Compare snapshots`
+- `Current project` (as a compare source/target)
+- `Compare current project to snapshot`
 
 Avoid:
 
