@@ -1468,8 +1468,10 @@
         <!-- Tree -->
         {:else}
           <div class="flex-1 flex flex-col overflow-hidden" data-testid="tree">
-            <!-- Inline typeahead bar — appears while type-to-jump is active (browse mode) -->
-            {#if !compareMode && typeaheadActive}
+            <!-- Inline typeahead bar — only while editing is unlocked (browse mode);
+                 compare/revert/recovery disable the key handler, so the bar must
+                 not linger as a stale, non-interactive UI. -->
+            {#if !editingLocked && typeaheadActive}
               <div
                 class="shrink-0 flex items-center gap-2 border-b border-stone-200 bg-amber-50 px-3 py-1.5"
                 data-testid="tree-typeahead-bar"
@@ -1514,9 +1516,9 @@
                 onDelete={handleDelete}
                 onMoveTo={handleMoveTo}
                 editingDisabled={editingLocked}
-                matchedIds={compareMode ? new Set() : typeaheadMatchSet}
-                matchQuery={compareMode ? '' : typeaheadQuery}
-                typeaheadActive={!compareMode && typeaheadActive}
+                matchedIds={typeaheadMatchSet}
+                matchQuery={typeaheadQuery}
+                typeaheadActive={typeaheadActive}
                 onTypeaheadInput={handleTypeaheadInput}
                 onTypeaheadBackspace={handleTypeaheadBackspace}
                 onTypeaheadCycle={handleTypeaheadCycle}
