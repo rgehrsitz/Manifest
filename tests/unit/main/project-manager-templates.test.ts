@@ -59,6 +59,13 @@ const softwareItem: NodeTemplate = {
   },
 }
 
+const controllerLink: NodeTemplate = {
+  label: 'Controlled Asset',
+  fields: {
+    controller: { type: 'reference' },
+  },
+}
+
 beforeEach(() => {
   tmpDir = join(tmpdir(), `manifest-tpl-${Date.now()}-${Math.random().toString(36).slice(2)}`)
   mkdirSync(tmpDir, { recursive: true })
@@ -98,6 +105,14 @@ describe('templateCreate', () => {
     await openWith(makeManifest())
     const bad: NodeTemplate = { label: 'X', fields: { s: { type: 'enum' } } }
     expect(manager.templateCreate('x', bad).ok).toBe(false)
+  })
+  it('rejects a reference default that points at a missing node', async () => {
+    await openWith(makeManifest())
+    const badDefault: NodeTemplate = {
+      label: 'Link',
+      fields: { controller: { type: 'reference', default: 'missing-node' } },
+    }
+    expect(manager.templateCreate('link', badDefault).ok).toBe(false)
   })
 })
 
@@ -156,6 +171,29 @@ describe('nodeUpdate — coercion and validation', () => {
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.data.nodes.find(n => n.id === id)!.properties.note).toBe('free text 123')
   })
+
+  it('accepts reference values that point at existing nodes', async () => {
+    await openWith(makeManifest())
+    manager.templateCreate('controlled-asset', controllerLink)
+    const target = manager.nodeCreate('root-id', 'Power Supply')
+    expect(target.ok).toBe(true)
+    const targetId = target.ok ? target.data.nodes.find(n => n.name === 'Power Supply')!.id : ''
+    const created = manager.nodeCreate('root-id', 'Chamber', 'controlled-asset')
+    const id = (created as any).data.nodes.find((n: any) => n.name === 'Chamber').id
+
+    const r = manager.nodeUpdate(id, { properties: { controller: targetId } })
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.data.nodes.find(n => n.id === id)!.properties.controller).toBe(targetId)
+  })
+
+  it('rejects reference values that point at missing nodes', async () => {
+    await openWith(makeManifest())
+    manager.templateCreate('controlled-asset', controllerLink)
+    const created = manager.nodeCreate('root-id', 'Chamber', 'controlled-asset')
+    const id = (created as any).data.nodes.find((n: any) => n.name === 'Chamber').id
+
+    expect(manager.nodeUpdate(id, { properties: { controller: 'missing-node' } }).ok).toBe(false)
+  })
 })
 
 describe('templateUpdate — bound-node guard', () => {
@@ -187,6 +225,49 @@ describe('templateUpdate — bound-node guard', () => {
     })
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.data.templates?.['software-item']?.label).toBe('SW Item')
+  })
+
+  it('rejects changing a field to reference when bound values do not target nodes', async () => {
+    await openWith(makeManifest())
+    manager.templateCreate('software-item', softwareItem)
+    const created = manager.nodeCreate('root-id', 'App', 'software-item')
+    const id = (created as any).data.nodes.find((n: any) => n.name === 'App').id
+    manager.nodeUpdate(id, { properties: { version: 'not-a-node-id' } })
+
+    const r = manager.templateUpdate('software-item', {
+      fields: { ...softwareItem.fields, version: { type: 'reference' } },
+    })
+    expect(r.ok).toBe(false)
+  })
+})
+
+describe('nodeDelete — reference guard', () => {
+  it('blocks deleting a node referenced by a surviving typed property', async () => {
+    await openWith(makeManifest())
+    manager.templateCreate('controlled-asset', controllerLink)
+    const target = manager.nodeCreate('root-id', 'Power Supply')
+    const targetId = (target as any).data.nodes.find((n: any) => n.name === 'Power Supply').id
+    const created = manager.nodeCreate('root-id', 'Chamber', 'controlled-asset')
+    const chamberId = (created as any).data.nodes.find((n: any) => n.name === 'Chamber').id
+    manager.nodeUpdate(chamberId, { properties: { controller: targetId } })
+
+    const r = manager.nodeDelete(targetId)
+    expect(r.ok).toBe(false)
+  })
+
+  it('allows deleting an entire subtree that contains both reference and target', async () => {
+    await openWith(makeManifest())
+    manager.templateCreate('controlled-asset', controllerLink)
+    const rack = manager.nodeCreate('root-id', 'Rack')
+    const rackId = (rack as any).data.nodes.find((n: any) => n.name === 'Rack').id
+    const target = manager.nodeCreate(rackId, 'Power Supply')
+    const targetId = (target as any).data.nodes.find((n: any) => n.name === 'Power Supply').id
+    const chamber = manager.nodeCreate(rackId, 'Chamber', 'controlled-asset')
+    const chamberId = (chamber as any).data.nodes.find((n: any) => n.name === 'Chamber').id
+    manager.nodeUpdate(chamberId, { properties: { controller: targetId } })
+
+    const r = manager.nodeDelete(rackId)
+    expect(r.ok).toBe(true)
   })
 })
 
@@ -255,6 +336,29 @@ describe('load warnings — no silent coercion or downgrade', () => {
     const w = project.loadWarnings!.find(x => x.path === 'nodes[1].templateId')
     expect(w).toBeDefined()
     expect(w!.code).toBe('TEMPLATE_NOT_FOUND')
+  })
+
+  it('surfaces a warning for a dangling reference property', async () => {
+    const manifest = makeManifest({
+      version: 3,
+      templates: { 'controlled-asset': controllerLink },
+      nodes: [
+        {
+          id: 'root-id', parentId: null, name: 'Test Project', order: 0, properties: {},
+          created: '2026-01-01T00:00:00.000Z', modified: '2026-01-01T00:00:00.000Z',
+        },
+        {
+          id: 'n1', parentId: 'root-id', name: 'Chamber', order: 0,
+          templateId: 'controlled-asset',
+          properties: { controller: 'missing-node' },
+          created: '2026-01-01T00:00:00.000Z', modified: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    })
+    const project = await openWith(manifest)
+    const w = project.loadWarnings!.find(x => x.path === 'nodes[1].properties.controller')
+    expect(w).toBeDefined()
+    expect(w!.code).toBe('INVALID_REFERENCE')
   })
 
   it('has no warnings for a clean project', async () => {

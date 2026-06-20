@@ -26,7 +26,7 @@
 
   let { templates, onCreate, onUpdate, onDelete, onClose }: Props = $props()
 
-  const TYPES: PropertyType[] = ['string', 'number', 'boolean', 'date', 'version', 'enum']
+  const TYPES: PropertyType[] = ['string', 'number', 'boolean', 'date', 'version', 'enum', 'reference']
 
   interface DraftField {
     key: string

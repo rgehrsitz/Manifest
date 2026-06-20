@@ -24,6 +24,7 @@ const TEMPLATES: Record<string, NodeTemplate> = {
       count: { type: 'number' },
       status: { type: 'enum', options: ['active', 'spare'] },
       sku: { type: 'string', required: true },
+      controller: { type: 'reference' },
     },
   },
 }
@@ -339,6 +340,20 @@ describe('planImport — typed values', () => {
   it('leaves empty cells unset', () => {
     const out = planImport([['B1', '', 'spare']], ['name', 'count', 'status'], tmap, TEMPLATES, NODES)
     expect(out.create[0].properties).toEqual({ status: 'spare' })
+  })
+
+  it('validates reference cells against existing project nodes', () => {
+    const refMap = mapping({
+      templateId: 'board',
+      columns: [{ header: 'controller', key: 'controller', include: true }],
+    })
+    const ok = planImport([['B1', 'existing']], ['name', 'controller'], refMap, TEMPLATES, NODES)
+    expect(ok.create).toHaveLength(1)
+    expect(ok.create[0].properties.controller).toBe('existing')
+
+    const bad = planImport([['B2', 'missing-node']], ['name', 'controller'], refMap, TEMPLATES, NODES)
+    expect(bad.create).toHaveLength(0)
+    expect(bad.skipped[0].reason).toMatch(/Reference target not found/)
   })
 })
 

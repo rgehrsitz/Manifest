@@ -140,6 +140,16 @@ describe('describePropertyChange', () => {
     expect(lines[0]).toBe('serial: A-1 → A-2')
   })
 
+  it('uses reference display labels when the diff context provides them', () => {
+    const diff = makeDiff({ controller: 'supply-a' }, { controller: 'supply-b' })
+    diff.context.propertyValueLabels = {
+      controller: { old: 'Power Supply A (supply-a)', new: 'Power Supply B (supply-b)' },
+    }
+    expect(describePropertyChange(diff)).toEqual([
+      'controller: Power Supply A (supply-a) → Power Supply B (supply-b)',
+    ])
+  })
+
   it('returns empty array when nothing changed', () => {
     const lines = describePropertyChange(makeDiff({ a: 1 }, { a: 1 }))
     expect(lines).toEqual([])

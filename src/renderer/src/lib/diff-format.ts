@@ -41,11 +41,14 @@ export function describePropertyChange(diff: DiffEntry): string[] {
   const before = (diff.oldValue ?? {}) as Record<string, unknown>
   const after  = (diff.newValue ?? {}) as Record<string, unknown>
   const keys   = Array.from(new Set([...Object.keys(before), ...Object.keys(after)])).sort()
+  const labels = diff.context.propertyValueLabels ?? {}
 
   return keys.flatMap((key) => {
-    if (!(key in before)) return [`Added ${key}: ${formatValue(after[key])}`]
+    const oldValue = labels[key]?.old ?? formatValue(before[key])
+    const newValue = labels[key]?.new ?? formatValue(after[key])
+    if (!(key in before)) return [`Added ${key}: ${newValue}`]
     if (!(key in after))  return [`Removed ${key}`]
-    if (before[key] !== after[key]) return [`${key}: ${formatValue(before[key])} → ${formatValue(after[key])}`]
+    if (before[key] !== after[key]) return [`${key}: ${oldValue} → ${newValue}`]
     return []
   })
 }

@@ -14,6 +14,7 @@ import {
   validatePropertyKey,
   validatePropertyValue,
   validateTypedPropertyValue,
+  validateReferenceTarget,
   coercePropertyValue,
   templateFields,
 } from './validation'
@@ -268,6 +269,10 @@ export function planImport(
       if (field) {
         const result = coercePropertyValue(raw, field)
         if (!result.valid) { out.skipped.push({ row: fileRow, column: col.header, reason: result.message ?? 'Invalid value' }); return null }
+        const targetCheck = field.type === 'reference'
+          ? validateReferenceTarget(result.value, nodes)
+          : { valid: true }
+        if (!targetCheck.valid) { out.skipped.push({ row: fileRow, column: col.header, reason: targetCheck.message ?? 'Invalid reference' }); return null }
         properties[col.key] = result.value ?? null
       } else {
         const check = validatePropertyValue(raw)
@@ -357,6 +362,14 @@ export function planImport(
             const result = coercePropertyValue(value, field)
             if (!result.valid) {
               out.skipped.push({ row: fileRow, column: key, reason: `existing value invalid under new template: ${result.message ?? key}` })
+              bad = true
+              break
+            }
+            const targetCheck = field.type === 'reference'
+              ? validateReferenceTarget(result.value, nodes)
+              : { valid: true }
+            if (!targetCheck.valid) {
+              out.skipped.push({ row: fileRow, column: key, reason: `existing value invalid under new template: ${targetCheck.message ?? key}` })
               bad = true
               break
             }

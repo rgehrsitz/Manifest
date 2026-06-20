@@ -4,26 +4,35 @@
   // A single typed input for one template field. Presentational + controlled:
   // it reports committed values via onCommit and renders an error passed by the
   // parent. Text-like types (string/number/version) commit on blur/Enter;
-  // enum/date/boolean commit immediately on change.
+  // enum/date/boolean/reference commit immediately on change.
   //
   // The parent (PropertyEditor) keys each control by
   // `${nodeId}|${fieldKey}|${committedValue}`, so the component is recreated —
   // and the draft re-seeded from `value` — whenever the node, field, OR the
   // committed value changes (e.g. after the backend normalizes "05" → 5).
   // This avoids $effect-based prop→draft syncing and stale-draft pitfalls.
-  import type { TemplateField } from '../../../shared/types'
+  import type { ManifestNode, TemplateField } from '../../../shared/types'
   import { coercePropertyValue } from '../../../shared/validation'
 
   interface Props {
     fieldKey: string
     field: TemplateField
     value: string | number | boolean | null | undefined
+    referenceNodes?: ManifestNode[]
     disabled?: boolean
     error?: string | null
     onCommit: (raw: string | number | boolean) => void
   }
 
-  let { fieldKey, field, value, disabled = false, error = null, onCommit }: Props = $props()
+  let {
+    fieldKey,
+    field,
+    value,
+    referenceNodes = [],
+    disabled = false,
+    error = null,
+    onCommit,
+  }: Props = $props()
 
   function asString(v: unknown): string {
     return v === null || v === undefined ? '' : String(v)
@@ -95,6 +104,21 @@
         />
         <span class="text-xs text-stone-400">{value === true ? 'true' : 'false'}</span>
       </label>
+    {:else if field.type === 'reference'}
+      <select
+        class="flex-1 text-sm text-stone-700 border border-stone-300 rounded px-2 py-1
+               focus:outline-none focus:ring-1 focus:ring-stone-400 disabled:bg-stone-50
+               disabled:text-stone-400 bg-white"
+        value={asString(value)}
+        {disabled}
+        onchange={(e) => onCommit((e.currentTarget as HTMLSelectElement).value)}
+        data-testid={`tpl-input-${fieldKey}`}
+      >
+        <option value="">— select node —</option>
+        {#each referenceNodes as refNode (refNode.id)}
+          <option value={refNode.id}>{refNode.name} ({refNode.id.slice(0, 8)})</option>
+        {/each}
+      </select>
     {:else if field.type === 'date'}
       <input
         type="date"

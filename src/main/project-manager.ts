@@ -64,6 +64,7 @@ import {
   validateTemplate,
   validateTemplateId,
   validateTypedPropertyValue,
+  validateReferenceTarget,
   coercePropertyValue,
   templateFields,
   templateLabel,
@@ -432,6 +433,13 @@ export class ProjectManager {
               `Property "${key}": ${result.message ?? 'invalid value'}`
             )
           }
+          const targetCheck = this.validateReferenceFieldValue(result.value, field)
+          if (!targetCheck.valid) {
+            return err(
+              ErrorCode.VALIDATION_FAILED,
+              `Property "${key}": ${targetCheck.message ?? 'invalid reference'}`
+            )
+          }
           coerced[key] = result.value ?? null
         } else {
           if (value !== null) {
@@ -483,6 +491,10 @@ export class ProjectManager {
     if (!templateValidation.valid) {
       return err(ErrorCode.VALIDATION_FAILED, templateValidation.message ?? 'Invalid template')
     }
+    const referenceDefaults = this.validateTemplateReferenceDefaults(template)
+    if (!referenceDefaults.valid) {
+      return err(ErrorCode.VALIDATION_FAILED, referenceDefaults.message ?? 'Invalid reference default')
+    }
 
     const nextProject: Project = {
       ...this.currentProject,
@@ -516,6 +528,10 @@ export class ProjectManager {
     if (!templateValidation.valid) {
       return err(ErrorCode.VALIDATION_FAILED, templateValidation.message ?? 'Invalid template')
     }
+    const referenceDefaults = this.validateTemplateReferenceDefaults(proposed)
+    if (!referenceDefaults.valid) {
+      return err(ErrorCode.VALIDATION_FAILED, referenceDefaults.message ?? 'Invalid reference default')
+    }
 
     // Guard: every bound node's existing values must remain valid under the
     // proposed field definitions. A field that is removed is fine (the value
@@ -530,6 +546,13 @@ export class ProjectManager {
           return err(
             ErrorCode.VALIDATION_FAILED,
             `Cannot change field "${key}": node "${node.name}" has value ${JSON.stringify(value)} that is invalid for the new type (${check.message})`
+          )
+        }
+        const targetCheck = this.validateReferenceFieldValue(value, field)
+        if (!targetCheck.valid) {
+          return err(
+            ErrorCode.VALIDATION_FAILED,
+            `Cannot change field "${key}": node "${node.name}" has value ${JSON.stringify(value)} that is invalid for the new type (${targetCheck.message})`
           )
         }
       }
@@ -732,6 +755,14 @@ export class ProjectManager {
 
     // Collect node + all descendants.
     const toDelete = this.collectDescendants(id)
+    const blockers = this.findExternalReferencesTo(toDelete)
+    if (blockers.length > 0) {
+      const first = blockers[0]
+      return err(
+        ErrorCode.VALIDATION_FAILED,
+        `Cannot delete "${node.name}" because "${first.node.name}" field "${first.key}" references it`
+      )
+    }
 
     // Re-number siblings after deletion.
     const now = new Date().toISOString()
@@ -1899,6 +1930,49 @@ export class ProjectManager {
     return result
   }
 
+  private validateReferenceFieldValue(
+    value: unknown,
+    field: TemplateField,
+    nodes: ManifestNode[] = this.currentProject?.nodes ?? [],
+  ): { valid: boolean; message?: string } {
+    if (field.type !== 'reference') return { valid: true }
+    return validateReferenceTarget(value, nodes)
+  }
+
+  private validateTemplateReferenceDefaults(template: NodeTemplate): { valid: boolean; message?: string } {
+    for (const [key, field] of Object.entries(templateFields(template))) {
+      if (field.type !== 'reference' || field.default === undefined || field.default === null) {
+        continue
+      }
+      const check = this.validateReferenceFieldValue(field.default, field)
+      if (!check.valid) {
+        return {
+          valid: false,
+          message: `Field "${key}" default is invalid: ${check.message ?? 'invalid reference'}`,
+        }
+      }
+    }
+    return { valid: true }
+  }
+
+  private findExternalReferencesTo(toDelete: Set<string>): Array<{ node: ManifestNode; key: string; targetId: string }> {
+    if (!this.currentProject) return []
+    const references: Array<{ node: ManifestNode; key: string; targetId: string }> = []
+    for (const node of this.currentProject.nodes) {
+      if (toDelete.has(node.id)) continue
+      const templateId = node.templateId ?? null
+      const template = templateId ? this.currentProject.templates?.[templateId] : undefined
+      for (const [key, field] of Object.entries(templateFields(template))) {
+        if (field.type !== 'reference') continue
+        const value = node.properties?.[key]
+        if (typeof value === 'string' && toDelete.has(value)) {
+          references.push({ node, key, targetId: value })
+        }
+      }
+    }
+    return references
+  }
+
   // Return true if candidateId is a descendant of ancestorId.
   private isDescendant(candidateId: string, ancestorId: string): boolean {
     return this.collectDescendants(ancestorId).has(candidateId)
@@ -2009,6 +2083,7 @@ export class ProjectManager {
     const warnings: ManifestWarning[] = []
     const templates: Record<string, NodeTemplate> =
       data.templates && typeof data.templates === 'object' ? data.templates : {}
+    const nodes = (data.nodes ?? []) as ManifestNode[]
 
     // Structurally invalid template definitions.
     for (const [id, template] of Object.entries(templates)) {
@@ -2028,11 +2103,24 @@ export class ProjectManager {
           code: 'INVALID_TEMPLATE',
           message: tplCheck.message ?? 'Invalid template',
         })
+        continue
+      }
+      for (const [key, field] of Object.entries(templateFields(template as NodeTemplate))) {
+        if (field.type !== 'reference' || field.default === undefined || field.default === null) {
+          continue
+        }
+        const targetCheck = validateReferenceTarget(field.default, nodes)
+        if (!targetCheck.valid) {
+          warnings.push({
+            path: `templates.${id}.fields.${key}.default`,
+            code: 'INVALID_REFERENCE',
+            message: `${targetCheck.message} (got ${JSON.stringify(field.default)})`,
+          })
+        }
       }
     }
 
     // Per-node: dangling templateId and typed-value mismatches.
-    const nodes = (data.nodes ?? []) as ManifestNode[]
     for (let i = 0; i < nodes.length; i++) {
       const node = nodes[i]
       const templateId = node.templateId ?? null
@@ -2073,6 +2161,17 @@ export class ProjectManager {
             path: `nodes[${i}].properties.${key}`,
             code: 'INVALID_TYPED_VALUE',
             message: `${check.message} (got ${JSON.stringify(value)})`,
+          })
+          continue
+        }
+        const targetCheck = field.type === 'reference'
+          ? validateReferenceTarget(value, nodes)
+          : { valid: true }
+        if (!targetCheck.valid) {
+          warnings.push({
+            path: `nodes[${i}].properties.${key}`,
+            code: 'INVALID_REFERENCE',
+            message: `${targetCheck.message} (got ${JSON.stringify(value)})`,
           })
         }
       }
