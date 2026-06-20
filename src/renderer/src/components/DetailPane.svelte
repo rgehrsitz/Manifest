@@ -122,6 +122,11 @@
     node?.parentId ? project.nodes.find(n => n.id === node!.parentId) : null
   )
   const projectTemplates = $derived(project.templates ?? {})
+  const referenceNodes = $derived(
+    [...project.nodes]
+      .filter(n => n.id !== node?.id)
+      .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+  )
 
   // ─── Ghost (tombstone) mode (issue #3) ────────────────────────────────────
   // A ghost selection is a row in compare mode whose underlying node was
@@ -314,6 +319,7 @@
       <PropertyEditor
         {node}
         templates={projectTemplates}
+        {referenceNodes}
         readOnly={effectiveReadOnly}
         {onUpdate}
         onPromoteField={(key, type) => onPromoteField(node!.id, key, type)}

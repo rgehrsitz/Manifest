@@ -24,6 +24,7 @@ const TEMPLATES: Record<string, NodeTemplate> = {
       count: { type: 'number' },
       status: { type: 'enum', options: ['active', 'spare'] },
       sku: { type: 'string', required: true },
+      controller: { type: 'reference' },
     },
   },
 }
@@ -340,6 +341,20 @@ describe('planImport — typed values', () => {
     const out = planImport([['B1', '', 'spare']], ['name', 'count', 'status'], tmap, TEMPLATES, NODES)
     expect(out.create[0].properties).toEqual({ status: 'spare' })
   })
+
+  it('validates reference cells against existing project nodes', () => {
+    const refMap = mapping({
+      templateId: 'board',
+      columns: [{ header: 'controller', key: 'controller', include: true }],
+    })
+    const ok = planImport([['B1', 'existing']], ['name', 'controller'], refMap, TEMPLATES, NODES)
+    expect(ok.create).toHaveLength(1)
+    expect(ok.create[0].properties.controller).toBe('existing')
+
+    const bad = planImport([['B2', 'missing-node']], ['name', 'controller'], refMap, TEMPLATES, NODES)
+    expect(bad.create).toHaveLength(0)
+    expect(bad.skipped[0].reason).toMatch(/Reference target not found/)
+  })
 })
 
 describe('planImport — required is advisory (warn, not skip)', () => {
@@ -531,6 +546,17 @@ describe('planImport — update-on-key', () => {
     expect(out.update).toHaveLength(1)
     expect(out.update[0].properties.count).toBe(5)          // number, coerced via board.count
     expect(typeof out.update[0].properties.count).toBe('number')
+  })
+
+  it('skips an update that would make a reference point at the same node', () => {
+    const out = planImport(
+      [['Board 1', 'b1']],
+      ['name', 'controller'],
+      umap({ keyColumn: 'name', columns: [{ header: 'controller', key: 'controller', include: true }] }),
+      TEMPLATES, [UROOT, RACK, child('b1', 'Board 1', {}, 'board')],
+    )
+    expect(out.update).toHaveLength(0)
+    expect(out.skipped[0].reason).toMatch(/same node/)
   })
 
   it('skips a rebind when an existing property cannot be coerced under the new template', () => {

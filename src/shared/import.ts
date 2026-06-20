@@ -14,6 +14,7 @@ import {
   validatePropertyKey,
   validatePropertyValue,
   validateTypedPropertyValue,
+  validateReferenceTarget,
   coercePropertyValue,
   templateFields,
 } from './validation'
@@ -259,7 +260,13 @@ export function planImport(
   // Apply the row's included cells onto `base` ({} for a create, the existing
   // node's props for an update), coercing against `flds` (the EFFECTIVE template).
   // Blank cell ⇒ leave untouched (no wipe). Invalid cell ⇒ push skip + return null.
-  const buildProperties = (cells: string[], flds: FieldMap, fileRow: number, base: PropMap): PropMap | null => {
+  const buildProperties = (
+    cells: string[],
+    flds: FieldMap,
+    fileRow: number,
+    base: PropMap,
+    selfId?: string | null,
+  ): PropMap | null => {
     const properties: PropMap = { ...base }
     for (const col of included) {
       const raw = (cells[headerIndex.get(col.header)!] ?? '').trim()
@@ -268,6 +275,10 @@ export function planImport(
       if (field) {
         const result = coercePropertyValue(raw, field)
         if (!result.valid) { out.skipped.push({ row: fileRow, column: col.header, reason: result.message ?? 'Invalid value' }); return null }
+        const targetCheck = field.type === 'reference'
+          ? validateReferenceTarget(result.value, nodes, selfId)
+          : { valid: true }
+        if (!targetCheck.valid) { out.skipped.push({ row: fileRow, column: col.header, reason: targetCheck.message ?? 'Invalid reference' }); return null }
         properties[col.key] = result.value ?? null
       } else {
         const check = validatePropertyValue(raw)
@@ -341,7 +352,7 @@ export function planImport(
         const effTemplateId = mapping.templateId != null ? mapping.templateId : (m.templateId ?? null)
         const effFields = templateFields(effTemplateId ? templates[effTemplateId] : undefined)
 
-        const merged = buildProperties(cells, effFields, fileRow, { ...m.properties })
+        const merged = buildProperties(cells, effFields, fileRow, { ...m.properties }, m.id)
         if (merged === null) return
 
         // Rebinding to a different template ⇒ every carried-over property must be
@@ -357,6 +368,14 @@ export function planImport(
             const result = coercePropertyValue(value, field)
             if (!result.valid) {
               out.skipped.push({ row: fileRow, column: key, reason: `existing value invalid under new template: ${result.message ?? key}` })
+              bad = true
+              break
+            }
+            const targetCheck = field.type === 'reference'
+              ? validateReferenceTarget(result.value, nodes, m.id)
+              : { valid: true }
+            if (!targetCheck.valid) {
+              out.skipped.push({ row: fileRow, column: key, reason: `existing value invalid under new template: ${targetCheck.message ?? key}` })
               bad = true
               break
             }

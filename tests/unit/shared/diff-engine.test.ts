@@ -157,4 +157,54 @@ describe('diffProjects', () => {
     expect(diffs[0].context.parentName).toBe('Rack B')
     expect(diffs[0].context.path).toEqual(['Root', 'Rack B'])
   })
+
+  it('adds display labels for changed reference properties', () => {
+    const before = {
+      ...makeProject([
+        ...baseNodes(),
+        {
+          id: 'supply-alpha-id',
+          parentId: 'root',
+          name: 'Power Supply A',
+          order: 1,
+          properties: {},
+          created: '2026-01-01T00:00:00.000Z',
+          modified: '2026-01-01T00:00:00.000Z',
+        },
+        {
+          id: 'supply-bravo-id',
+          parentId: 'root',
+          name: 'Power Supply B',
+          order: 2,
+          properties: {},
+          created: '2026-01-01T00:00:00.000Z',
+          modified: '2026-01-01T00:00:00.000Z',
+        },
+        {
+          id: 'chamber',
+          parentId: 'root',
+          name: 'Chamber',
+          order: 3,
+          templateId: 'asset',
+          properties: { controller: 'supply-alpha-id' },
+          created: '2026-01-01T00:00:00.000Z',
+          modified: '2026-01-01T00:00:00.000Z',
+        },
+      ]),
+      templates: { asset: { label: 'Asset', fields: { controller: { type: 'reference' } } } },
+    }
+    const after = {
+      ...before,
+      nodes: before.nodes.map(n => n.id === 'chamber'
+        ? { ...n, properties: { controller: 'supply-bravo-id' } }
+        : n
+      ),
+    }
+
+    const diff = diffProjects(before, after).find(d => d.changeType === 'property-changed')!
+    expect(diff.context.propertyValueLabels?.controller).toEqual({
+      old: 'Power Supply A (supply-alpha-id)',
+      new: 'Power Supply B (supply-bravo-id)',
+    })
+  })
 })

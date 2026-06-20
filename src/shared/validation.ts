@@ -2,7 +2,7 @@
 // and main process (security enforcement).
 // Never duplicate these regexes. Import from here.
 
-import type { PropertyType, TemplateField, NodeTemplate } from './types'
+import type { ManifestNode, PropertyType, TemplateField, NodeTemplate } from './types'
 
 export interface ValidationResult {
   valid: boolean
@@ -45,6 +45,7 @@ const PROPERTY_TYPES: readonly PropertyType[] = [
   'date',
   'version',
   'enum',
+  'reference',
 ]
 
 export function validateSnapshotName(name: string): ValidationResult {
@@ -265,9 +266,33 @@ export function validateTypedPropertyValue(
       }
       return { valid: true }
 
+    case 'reference':
+      if (typeof value !== 'string') return { valid: false, message: 'Expected a node reference' }
+      if (value.trim().length === 0) {
+        return { valid: false, message: 'Reference cannot be empty' }
+      }
+      return { valid: true }
+
     default:
       return { valid: false, message: 'Unknown field type' }
   }
+}
+
+export function validateReferenceTarget(
+  value: unknown,
+  nodes: ManifestNode[],
+  selfId?: string | null,
+): ValidationResult {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    return { valid: false, message: 'Expected a node reference' }
+  }
+  if (selfId && value === selfId) {
+    return { valid: false, message: 'Reference cannot point to the same node' }
+  }
+  if (!nodes.some(n => n.id === value)) {
+    return { valid: false, message: `Reference target not found: ${value}` }
+  }
+  return { valid: true }
 }
 
 export interface CoercionResult {
@@ -284,7 +309,8 @@ export function coercePropertyValue(raw: unknown, field: TemplateField): Coercio
   switch (field.type) {
     case 'string':
     case 'version':
-    case 'enum': {
+    case 'enum':
+    case 'reference': {
       // Accept primitives only (string/number/boolean). Rejecting objects/arrays
       // here prevents untrusted IPC payloads from being stringified into garbage
       // like "[object Object]" and persisted.

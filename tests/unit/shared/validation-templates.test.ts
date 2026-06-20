@@ -4,6 +4,7 @@ import {
   validateTemplate,
   validateTemplateField,
   validateTypedPropertyValue,
+  validateReferenceTarget,
   coercePropertyValue,
   templateFields,
   isUsableTemplate,
@@ -110,6 +111,28 @@ describe('validateTypedPropertyValue — other types', () => {
     expect(validateTypedPropertyValue('approved', e).valid).toBe(true)
     expect(validateTypedPropertyValue('nope', e).valid).toBe(false)
   })
+  it('reference must be a non-empty node id string', () => {
+    const ref: TemplateField = { type: 'reference' }
+    expect(validateTypedPropertyValue('node-1', ref).valid).toBe(true)
+    expect(validateTypedPropertyValue('', ref).valid).toBe(false)
+    expect(validateTypedPropertyValue(123, ref).valid).toBe(false)
+  })
+})
+
+describe('validateReferenceTarget', () => {
+  const nodes = [
+    { id: 'root', parentId: null, name: 'Lab', order: 0, properties: {}, created: '', modified: '' },
+    { id: 'target', parentId: 'root', name: 'Target', order: 0, properties: {}, created: '', modified: '' },
+  ]
+
+  it('requires the referenced node to exist', () => {
+    expect(validateReferenceTarget('target', nodes).valid).toBe(true)
+    expect(validateReferenceTarget('missing', nodes).valid).toBe(false)
+  })
+
+  it('rejects self-references when a current node id is provided', () => {
+    expect(validateReferenceTarget('target', nodes, 'target').valid).toBe(false)
+  })
 })
 
 describe('templateFields (null-safe accessor)', () => {
@@ -157,6 +180,7 @@ describe('coercePropertyValue', () => {
   it('passes through valid version/enum and trims dates', () => {
     expect(coercePropertyValue('v2.1.0', { type: 'version' }).value).toBe('v2.1.0')
     expect(coercePropertyValue(' 2026-06-14 ', { type: 'date' }).value).toBe('2026-06-14')
+    expect(coercePropertyValue('node-1', { type: 'reference' }).value).toBe('node-1')
     const e = coercePropertyValue('bad', { type: 'enum', options: ['ok'] })
     expect(e.valid).toBe(false)
   })

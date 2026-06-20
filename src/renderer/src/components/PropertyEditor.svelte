@@ -24,6 +24,7 @@
   interface Props {
     node: ManifestNode | MergedTreeNode
     templates: Record<string, NodeTemplate>
+    referenceNodes: ManifestNode[]
     readOnly?: boolean
     onUpdate: (id: string, changes: {
       name?: string
@@ -34,7 +35,15 @@
     onError: (msg: string) => void
   }
 
-  let { node, templates, readOnly = false, onUpdate, onPromoteField, onError }: Props = $props()
+  let {
+    node,
+    templates,
+    referenceNodes,
+    readOnly = false,
+    onUpdate,
+    onPromoteField,
+    onError,
+  }: Props = $props()
 
   const PROMOTABLE_TYPES: PropertyType[] = ['string', 'number', 'boolean', 'date', 'version']
 
@@ -213,6 +222,7 @@
         fieldKey={key}
         {field}
         value={node.properties?.[key]}
+        {referenceNodes}
         disabled={readOnly}
         error={fieldErrors[key] || null}
         onCommit={(raw) => commitField(key, raw)}

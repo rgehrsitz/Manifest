@@ -47,6 +47,22 @@ describe('diffPropertyMaps', () => {
       { key: 'n', kind: 'changed', old: '(null)', new: 'now' },
     ])
   })
+
+  it('uses display labels when provided for reference values', () => {
+    const out = diffPropertyMaps(
+      { controller: 'supply-a' },
+      { controller: 'supply-b' },
+      { controller: { old: 'Power Supply A (supply-a)', new: 'Power Supply B (supply-b)' } },
+    )
+    expect(out).toEqual([
+      {
+        key: 'controller',
+        kind: 'changed',
+        old: 'Power Supply A (supply-a)',
+        new: 'Power Supply B (supply-b)',
+      },
+    ])
+  })
 })
 
 describe('formatDiffReportMarkdown', () => {

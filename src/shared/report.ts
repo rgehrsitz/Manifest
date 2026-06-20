@@ -48,21 +48,26 @@ export interface PropertyChange {
   new: string
 }
 
+type PropertyValueLabels = NonNullable<DiffEntry['context']['propertyValueLabels']>
+
 // Expand the whole-map oldValue/newValue of a property-changed DiffEntry into the
 // per-key delta. diffProjects emits one entry per node with both full maps, so the
 // report must compute which keys actually changed.
 export function diffPropertyMaps(
   before: Record<string, unknown>,
   after: Record<string, unknown>,
+  labels: PropertyValueLabels = {},
 ): PropertyChange[] {
   const keys = Array.from(new Set([...Object.keys(before), ...Object.keys(after)])).sort()
   const out: PropertyChange[] = []
   for (const key of keys) {
     const inBefore = key in before
     const inAfter = key in after
-    if (inBefore && !inAfter) out.push({ key, kind: 'removed', old: renderValue(before[key]), new: '' })
-    else if (!inBefore && inAfter) out.push({ key, kind: 'added', old: '', new: renderValue(after[key]) })
-    else if (before[key] !== after[key]) out.push({ key, kind: 'changed', old: renderValue(before[key]), new: renderValue(after[key]) })
+    const oldValue = labels[key]?.old ?? renderValue(before[key])
+    const newValue = labels[key]?.new ?? renderValue(after[key])
+    if (inBefore && !inAfter) out.push({ key, kind: 'removed', old: oldValue, new: '' })
+    else if (!inBefore && inAfter) out.push({ key, kind: 'added', old: '', new: newValue })
+    else if (before[key] !== after[key]) out.push({ key, kind: 'changed', old: oldValue, new: newValue })
   }
   return out
 }
@@ -175,7 +180,7 @@ export function formatDiffReportMarkdown(
     lines.push(`## Property changes (${propChanged.length} node(s))`)
     for (const e of propChanged) {
       lines.push(`- ${md(fullPath(e))}`)
-      for (const pc of diffPropertyMaps(propsOf(e.oldValue), propsOf(e.newValue))) {
+      for (const pc of diffPropertyMaps(propsOf(e.oldValue), propsOf(e.newValue), e.context.propertyValueLabels)) {
         if (pc.kind === 'added') lines.push(`  - + ${md(pc.key)}: ${md(pc.new)}`)
         else if (pc.kind === 'removed') lines.push(`  - − ${md(pc.key)} (was ${md(pc.old)})`)
         else lines.push(`  - ${md(pc.key)}: ${md(pc.old)} → ${md(pc.new)}`)
@@ -249,7 +254,7 @@ export function formatDiffReportCsv(
         rows.push(base('order-changed', '', String(e.oldValue ?? ''), String(e.newValue ?? '')))
         break
       case 'property-changed':
-        for (const pc of diffPropertyMaps(propsOf(e.oldValue), propsOf(e.newValue))) {
+        for (const pc of diffPropertyMaps(propsOf(e.oldValue), propsOf(e.newValue), e.context.propertyValueLabels)) {
           rows.push(base(`property-${pc.kind}`, pc.key, pc.old, pc.new))
         }
         break

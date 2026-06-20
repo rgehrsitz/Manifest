@@ -23,7 +23,14 @@ export interface ManifestNode {
 // template field are typed/validated against that field. Keys not in the
 // template are ad-hoc and untyped (treated as strings) until promoted.
 
-export type PropertyType = 'string' | 'number' | 'boolean' | 'date' | 'version' | 'enum'
+export type PropertyType =
+  | 'string'
+  | 'number'
+  | 'boolean'
+  | 'date'
+  | 'version'
+  | 'enum'
+  | 'reference'
 
 export interface TemplateField {
   type: PropertyType
@@ -169,6 +176,7 @@ export interface DiffEntry {
     nodeName: string
     parentName: string | null
     path: string[]
+    propertyValueLabels?: Record<string, { old?: string; new?: string }>
   }
 }
 

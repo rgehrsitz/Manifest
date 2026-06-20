@@ -68,6 +68,41 @@ function propertiesEqual(a: ManifestNode['properties'], b: ManifestNode['propert
   return true
 }
 
+function referenceLabel(value: unknown, nodeMap: NodeMap): string | undefined {
+  if (typeof value !== 'string' || value.length === 0) return undefined
+  const target = nodeMap.get(value)
+  if (!target) return `${value} (missing)`
+  return `${target.name} (${value})`
+}
+
+function propertyValueLabels(
+  nodeA: ManifestNode,
+  nodeB: ManifestNode,
+  projectA: Project,
+  projectB: Project,
+  nodesA: NodeMap,
+  nodesB: NodeMap,
+): Record<string, { old?: string; new?: string }> | undefined {
+  const fieldsA = templateFields(nodeA.templateId ? projectA.templates?.[nodeA.templateId] : undefined)
+  const fieldsB = templateFields(nodeB.templateId ? projectB.templates?.[nodeB.templateId] : undefined)
+  const keys = new Set([...Object.keys(nodeA.properties), ...Object.keys(nodeB.properties)])
+  const labels: Record<string, { old?: string; new?: string }> = {}
+
+  for (const key of keys) {
+    const oldIsReference = fieldsA[key]?.type === 'reference'
+    const newIsReference = fieldsB[key]?.type === 'reference'
+    if (!oldIsReference && !newIsReference) continue
+
+    const oldLabel = oldIsReference ? referenceLabel(nodeA.properties[key], nodesA) : undefined
+    const newLabel = newIsReference ? referenceLabel(nodeB.properties[key], nodesB) : undefined
+    if (oldLabel !== undefined || newLabel !== undefined) {
+      labels[key] = { ...(oldLabel !== undefined ? { old: oldLabel } : {}), ...(newLabel !== undefined ? { new: newLabel } : {}) }
+    }
+  }
+
+  return Object.keys(labels).length > 0 ? labels : undefined
+}
+
 function compareEntries(a: DiffEntry, b: DiffEntry): number {
   const severityDiff = SEVERITY_WEIGHT[a.severity] - SEVERITY_WEIGHT[b.severity]
   if (severityDiff !== 0) return severityDiff
@@ -148,13 +183,17 @@ export function diffProjects(projectA: Project, projectB: Project): DiffEntry[] 
     }
 
     if (!propertiesEqual(nodeA.properties, nodeB.properties)) {
+      const labels = propertyValueLabels(nodeA, nodeB, projectA, projectB, nodesA, nodesB)
       diffs.push({
         nodeId: id,
         changeType: 'property-changed',
         severity: 'Medium',
         oldValue: nodeA.properties,
         newValue: nodeB.properties,
-        context: makeContext(nodeB, nodesB),
+        context: {
+          ...makeContext(nodeB, nodesB),
+          ...(labels ? { propertyValueLabels: labels } : {}),
+        },
       })
     }
 
