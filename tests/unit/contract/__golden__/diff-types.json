@@ -1,0 +1,215 @@
+[
+  {
+    "step": "snapshotCompare(before,@current)",
+    "result": {
+      "ok": true,
+      "data": [
+        {
+          "nodeId": "<id:1>",
+          "changeType": "added",
+          "severity": "High",
+          "newValue": {
+            "id": "<id:1>",
+            "parentId": "<id:2>",
+            "name": "Added",
+            "order": 5,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>"
+          },
+          "context": {
+            "nodeName": "Added",
+            "parentName": "Diff Lab",
+            "path": [
+              "Diff Lab"
+            ]
+          }
+        },
+        {
+          "nodeId": "<id:3>",
+          "changeType": "moved",
+          "severity": "High",
+          "oldValue": "<id:4>",
+          "newValue": "<id:2>",
+          "context": {
+            "nodeName": "ToMove",
+            "parentName": "Diff Lab",
+            "path": [
+              "Diff Lab"
+            ]
+          }
+        },
+        {
+          "nodeId": "<id:5>",
+          "changeType": "removed",
+          "severity": "High",
+          "oldValue": {
+            "id": "<id:5>",
+            "parentId": "<id:2>",
+            "name": "ToRemove",
+            "order": 1,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>"
+          },
+          "context": {
+            "nodeName": "ToRemove",
+            "parentName": "Diff Lab",
+            "path": [
+              "Diff Lab"
+            ]
+          }
+        },
+        {
+          "nodeId": "<id:6>",
+          "changeType": "renamed",
+          "severity": "Medium",
+          "oldValue": "ToRename",
+          "newValue": "Renamed",
+          "context": {
+            "nodeName": "Renamed",
+            "parentName": "Diff Lab",
+            "path": [
+              "Diff Lab"
+            ]
+          }
+        },
+        {
+          "nodeId": "<id:7>",
+          "changeType": "property-changed",
+          "severity": "Medium",
+          "oldValue": {},
+          "newValue": {
+            "note": "changed"
+          },
+          "context": {
+            "nodeName": "ToProp",
+            "parentName": "Diff Lab",
+            "path": [
+              "Diff Lab"
+            ]
+          }
+        },
+        {
+          "nodeId": "<id:8>",
+          "changeType": "template-changed",
+          "severity": "Medium",
+          "oldValue": "alpha",
+          "newValue": "beta",
+          "context": {
+            "nodeName": "ToRebind",
+            "parentName": "Diff Lab",
+            "path": [
+              "Diff Lab"
+            ]
+          }
+        },
+        {
+          "nodeId": "<id:4>",
+          "changeType": "order-changed",
+          "severity": "Low",
+          "oldValue": 0,
+          "newValue": 1,
+          "context": {
+            "nodeName": "Keep",
+            "parentName": "Diff Lab",
+            "path": [
+              "Diff Lab"
+            ]
+          }
+        },
+        {
+          "nodeId": "<id:8>",
+          "changeType": "order-changed",
+          "severity": "Low",
+          "oldValue": 5,
+          "newValue": 4,
+          "context": {
+            "nodeName": "ToRebind",
+            "parentName": "Diff Lab",
+            "path": [
+              "Diff Lab"
+            ]
+          }
+        },
+        {
+          "nodeId": "<id:9>",
+          "changeType": "order-changed",
+          "severity": "Low",
+          "oldValue": 4,
+          "newValue": 0,
+          "context": {
+            "nodeName": "ToReorder",
+            "parentName": "Diff Lab",
+            "path": [
+              "Diff Lab"
+            ]
+          }
+        }
+      ]
+    }
+  },
+  {
+    "step": "loadCompare summary",
+    "result": {
+      "ok": true,
+      "summary": {
+        "added": 1,
+        "removed": 1,
+        "moved": 1,
+        "renamed": 1,
+        "propertyChanged": 1,
+        "templateChanged": 1,
+        "orderChanged": 3
+      }
+    }
+  },
+  {
+    "step": "loadCompare node statuses",
+    "result": {
+      "ok": true,
+      "nodes": [
+        {
+          "name": "Diff Lab",
+          "status": "unchanged"
+        },
+        {
+          "name": "ToReorder",
+          "status": "order-changed"
+        },
+        {
+          "name": "Keep",
+          "status": "order-changed"
+        },
+        {
+          "name": "Renamed",
+          "status": "renamed"
+        },
+        {
+          "name": "ToProp",
+          "status": "property-changed"
+        },
+        {
+          "name": "ToRebind",
+          "status": "template-changed"
+        },
+        {
+          "name": "Added",
+          "status": "added"
+        },
+        {
+          "name": "ToMove",
+          "status": "moved"
+        },
+        {
+          "name": "ToMove",
+          "status": "moved-from"
+        },
+        {
+          "name": "ToRemove",
+          "status": "removed"
+        }
+      ]
+    }
+  }
+]

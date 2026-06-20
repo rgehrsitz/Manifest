@@ -1,0 +1,171 @@
+[
+  {
+    "step": "reopen openProject",
+    "result": {
+      "ok": true,
+      "data": {
+        "version": 3,
+        "id": "<id:1>",
+        "name": "Persist Lab",
+        "created": "<ts>",
+        "modified": "<ts>",
+        "nodes": [
+          {
+            "id": "<id:2>",
+            "parentId": null,
+            "name": "Persist Lab",
+            "order": 0,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>"
+          },
+          {
+            "id": "<id:3>",
+            "parentId": "<id:2>",
+            "name": "Probe",
+            "order": 0,
+            "properties": {
+              "firmware": "v3.0.0",
+              "status": "active"
+            },
+            "templateId": "instrument",
+            "created": "<ts>",
+            "modified": "<ts>"
+          },
+          {
+            "id": "<id:4>",
+            "parentId": "<id:2>",
+            "name": "Unsnapshotted Rack",
+            "order": 1,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>"
+          }
+        ],
+        "templates": {
+          "instrument": {
+            "label": "Instrument",
+            "fields": {
+              "firmware": {
+                "type": "version"
+              },
+              "status": {
+                "type": "enum",
+                "options": [
+                  "active",
+                  "maintenance",
+                  "retired"
+                ]
+              },
+              "controller": {
+                "type": "reference"
+              }
+            }
+          }
+        },
+        "path": "<path>"
+      }
+    }
+  },
+  {
+    "step": "reopen getCurrent",
+    "result": {
+      "ok": true,
+      "data": {
+        "version": 3,
+        "id": "<id:1>",
+        "name": "Persist Lab",
+        "created": "<ts>",
+        "modified": "<ts>",
+        "nodes": [
+          {
+            "id": "<id:2>",
+            "parentId": null,
+            "name": "Persist Lab",
+            "order": 0,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>"
+          },
+          {
+            "id": "<id:3>",
+            "parentId": "<id:2>",
+            "name": "Probe",
+            "order": 0,
+            "properties": {
+              "firmware": "v3.0.0",
+              "status": "active"
+            },
+            "templateId": "instrument",
+            "created": "<ts>",
+            "modified": "<ts>"
+          },
+          {
+            "id": "<id:4>",
+            "parentId": "<id:2>",
+            "name": "Unsnapshotted Rack",
+            "order": 1,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>"
+          }
+        ],
+        "templates": {
+          "instrument": {
+            "label": "Instrument",
+            "fields": {
+              "firmware": {
+                "type": "version"
+              },
+              "status": {
+                "type": "enum",
+                "options": [
+                  "active",
+                  "maintenance",
+                  "retired"
+                ]
+              },
+              "controller": {
+                "type": "reference"
+              }
+            }
+          }
+        },
+        "path": "<path>"
+      }
+    }
+  },
+  {
+    "step": "reopen snapshotList",
+    "result": {
+      "ok": true,
+      "data": [
+        {
+          "id": "v1",
+          "name": "v1",
+          "commitHash": "<hash>",
+          "createdAt": "<ts>",
+          "message": "v1",
+          "basedOnSnapshotId": null,
+          "createdAfterRevertEventId": null,
+          "note": null
+        }
+      ]
+    }
+  },
+  {
+    "step": "reopen searchNodes(probe)",
+    "result": {
+      "ok": true,
+      "data": [
+        {
+          "nodeId": "<id:3>",
+          "nodeName": "Probe",
+          "parentName": "Persist Lab",
+          "matchField": "name",
+          "snippet": "Probe"
+        }
+      ]
+    }
+  }
+]

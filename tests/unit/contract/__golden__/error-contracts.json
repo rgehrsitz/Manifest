@@ -1,0 +1,92 @@
+[
+  {
+    "step": "nodeUpdate(nonexistent)",
+    "result": {
+      "ok": false,
+      "error": {
+        "code": "VALIDATION_FAILED",
+        "message": "Node not found: nonexistent-node-id"
+      }
+    }
+  },
+  {
+    "step": "nodeDelete(nonexistent)",
+    "result": {
+      "ok": false,
+      "error": {
+        "code": "VALIDATION_FAILED",
+        "message": "Node not found: nonexistent-node-id"
+      }
+    }
+  },
+  {
+    "step": "nodeDelete(root) invalid-hierarchy",
+    "result": {
+      "ok": false,
+      "error": {
+        "code": "INVALID_HIERARCHY",
+        "message": "Cannot delete the root node"
+      }
+    }
+  },
+  {
+    "step": "nodeUpdate(bad enum) coercion",
+    "result": {
+      "ok": false,
+      "error": {
+        "code": "VALIDATION_FAILED",
+        "message": "Property \"status\": Value must be one of: active, maintenance, retired"
+      }
+    }
+  },
+  {
+    "step": "nodeUpdate(bad version) coercion",
+    "result": {
+      "ok": false,
+      "error": {
+        "code": "VALIDATION_FAILED",
+        "message": "Property \"firmware\": Version too long (max 64 characters)"
+      }
+    }
+  },
+  {
+    "step": "nodeMove(into descendant) invalid-hierarchy",
+    "result": {
+      "ok": false,
+      "error": {
+        "code": "INVALID_HIERARCHY",
+        "message": "Cannot move a node into its own descendant"
+      }
+    }
+  },
+  {
+    "step": "nodeCreate(duplicate sibling)",
+    "result": {
+      "ok": false,
+      "error": {
+        "code": "VALIDATION_FAILED",
+        "message": "A node named \"Parent\" already exists under this parent"
+      }
+    }
+  },
+  {
+    "step": "templateCreate(bad slug)",
+    "result": {
+      "ok": false,
+      "error": {
+        "code": "VALIDATION_FAILED",
+        "message": "Template ids: lowercase letters, numbers, hyphens; start alphanumeric. Max 64 chars."
+      }
+    }
+  },
+  {
+    "step": "nodeCreate(unknown template)",
+    "result": {
+      "ok": false,
+      "error": {
+        "code": "TEMPLATE_NOT_FOUND",
+        "message": "Template not found: ghost-template"
+      }
+    }
+  }
+]

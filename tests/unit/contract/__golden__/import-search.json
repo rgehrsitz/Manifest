@@ -1,0 +1,120 @@
+[
+  {
+    "step": "inspectImport",
+    "result": {
+      "ok": true,
+      "data": {
+        "headers": [
+          "name",
+          "serial",
+          "firmware"
+        ],
+        "sampleRows": [
+          [
+            "Probe X",
+            "SN-100",
+            "v1.0.0"
+          ],
+          [
+            "Probe Y",
+            "SN-200",
+            "v2.0.0"
+          ]
+        ],
+        "rowCount": 2
+      }
+    }
+  },
+  {
+    "step": "planImportCsv",
+    "result": {
+      "ok": true,
+      "data": {
+        "acceptedCount": 2,
+        "updatedCount": 0,
+        "skippedCount": 0,
+        "warningCount": 0,
+        "createdParents": 0,
+        "skipped": [],
+        "warnings": [],
+        "capped": false
+      }
+    }
+  },
+  {
+    "step": "applyImportCsv",
+    "result": {
+      "ok": true,
+      "data": {
+        "project": {
+          "version": 3,
+          "id": "<id:1>",
+          "name": "Import Lab",
+          "created": "<ts>",
+          "modified": "<ts>",
+          "nodes": [
+            {
+              "id": "<id:2>",
+              "parentId": null,
+              "name": "Import Lab",
+              "order": 0,
+              "properties": {},
+              "created": "<ts>",
+              "modified": "<ts>"
+            },
+            {
+              "id": "<id:3>",
+              "parentId": "<id:2>",
+              "name": "Probe X",
+              "order": 0,
+              "properties": {
+                "serial": "SN-100",
+                "firmware": "v1.0.0"
+              },
+              "created": "<ts>",
+              "modified": "<ts>"
+            },
+            {
+              "id": "<id:4>",
+              "parentId": "<id:2>",
+              "name": "Probe Y",
+              "order": 1,
+              "properties": {
+                "serial": "SN-200",
+                "firmware": "v2.0.0"
+              },
+              "created": "<ts>",
+              "modified": "<ts>"
+            }
+          ],
+          "path": "<path>"
+        },
+        "summary": {
+          "created": 2,
+          "updated": 0,
+          "createdParents": 0,
+          "skippedCount": 0,
+          "warningCount": 0,
+          "skipped": [],
+          "warnings": [],
+          "capped": false
+        }
+      }
+    }
+  },
+  {
+    "step": "searchNodes(SN-200)",
+    "result": {
+      "ok": true,
+      "data": [
+        {
+          "nodeId": "<id:4>",
+          "nodeName": "Probe Y",
+          "parentName": "Import Lab",
+          "matchField": "property",
+          "snippet": "serial: SN-200\nfirmware: v2.0.0"
+        }
+      ]
+    }
+  }
+]
