@@ -25,8 +25,8 @@ const api: ManifestAPI = {
       ipcRenderer.invoke(IPC.NODE_CREATE, { parentId, name, templateId }),
     update: (id, changes) =>
       ipcRenderer.invoke(IPC.NODE_UPDATE, { id, changes }),
-    delete: (id) =>
-      ipcRenderer.invoke(IPC.NODE_DELETE, { id }),
+    delete: (id, options) =>
+      ipcRenderer.invoke(IPC.NODE_DELETE, { id, options }),
     move: (id, newParentId, newOrder) =>
       ipcRenderer.invoke(IPC.NODE_MOVE, { id, newParentId, newOrder }),
     history: (nodeId) =>

@@ -102,9 +102,10 @@ function registerIpcHandlers(): void {
     }
   ) => projectManager.nodeUpdate(id, changes))
 
-  ipcMain.handle(IPC.NODE_DELETE, (_, { id }: { id: string }) =>
-    projectManager.nodeDelete(id)
-  )
+  ipcMain.handle(IPC.NODE_DELETE, (
+    _,
+    { id, options }: { id: string; options?: { unlinkReferences?: boolean } }
+  ) => projectManager.nodeDelete(id, options))
 
   ipcMain.handle(IPC.NODE_MOVE, (
     _,

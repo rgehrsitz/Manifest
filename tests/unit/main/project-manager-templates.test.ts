@@ -262,6 +262,9 @@ describe('nodeDelete — reference guard', () => {
 
     const r = manager.nodeDelete(targetId)
     expect(r.ok).toBe(false)
+    if (r.ok) return
+    // Single blocker → names the referencing node and field in the message.
+    expect(r.error.message).toContain('"Chamber" field "controller" references it')
   })
 
   it('allows deleting an entire subtree that contains both reference and target', async () => {
@@ -277,6 +280,255 @@ describe('nodeDelete — reference guard', () => {
 
     const r = manager.nodeDelete(rackId)
     expect(r.ok).toBe(true)
+  })
+
+  it('returns every blocker in the error context, not just the first', async () => {
+    await openWith(makeManifest())
+    manager.templateCreate('controlled-asset', controllerLink)
+    const target = manager.nodeCreate('root-id', 'Power Supply')
+    const targetId = (target as any).data.nodes.find((n: any) => n.name === 'Power Supply').id
+    const a = manager.nodeCreate('root-id', 'Chamber A', 'controlled-asset')
+    const aId = (a as any).data.nodes.find((n: any) => n.name === 'Chamber A').id
+    const b = manager.nodeCreate('root-id', 'Chamber B', 'controlled-asset')
+    const bId = (b as any).data.nodes.find((n: any) => n.name === 'Chamber B').id
+    manager.nodeUpdate(aId, { properties: { controller: targetId } })
+    manager.nodeUpdate(bId, { properties: { controller: targetId } })
+
+    const r = manager.nodeDelete(targetId)
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    const blockers = r.error.context?.blockers as any[]
+    expect(blockers).toHaveLength(2)
+    expect(blockers.map(x => x.nodeId).sort()).toEqual([aId, bId].sort())
+    expect(blockers.every(x => x.key === 'controller' && x.targetId === targetId)).toBe(true)
+    expect(blockers.every(x => x.targetName === 'Power Supply')).toBe(true)
+    // Multiple blockers → message reports the count, not a single field.
+    expect(r.error.message).toContain('2 references point into it')
+  })
+
+  it('force-deletes by unlinking a mutual reference across subtrees', async () => {
+    await openWith(makeManifest())
+    manager.templateCreate('controlled-asset', controllerLink)
+    // A references B and B references A — neither can be deleted by the guard.
+    const a = manager.nodeCreate('root-id', 'Asset A', 'controlled-asset')
+    const aId = (a as any).data.nodes.find((n: any) => n.name === 'Asset A').id
+    const b = manager.nodeCreate('root-id', 'Asset B', 'controlled-asset')
+    const bId = (b as any).data.nodes.find((n: any) => n.name === 'Asset B').id
+    manager.nodeUpdate(aId, { properties: { controller: bId } })
+    manager.nodeUpdate(bId, { properties: { controller: aId } })
+
+    // Safe-by-default still blocks.
+    expect(manager.nodeDelete(aId).ok).toBe(false)
+
+    // Force path clears B's reference to A, then removes A.
+    const r = manager.nodeDelete(aId, { unlinkReferences: true })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.data.nodes.find(n => n.id === aId)).toBeUndefined()
+    const survivor = r.data.nodes.find(n => n.id === bId)!
+    expect(survivor.properties.controller).toBeNull()
+  })
+
+  it('force-delete unlinks references from a node outside the deleted subtree', async () => {
+    await openWith(makeManifest())
+    manager.templateCreate('controlled-asset', controllerLink)
+    const rack = manager.nodeCreate('root-id', 'Rack')
+    const rackId = (rack as any).data.nodes.find((n: any) => n.name === 'Rack').id
+    const target = manager.nodeCreate(rackId, 'Power Supply')
+    const targetId = (target as any).data.nodes.find((n: any) => n.name === 'Power Supply').id
+    // External node (different subtree) references a descendant of the target.
+    const chamber = manager.nodeCreate('root-id', 'Chamber', 'controlled-asset')
+    const chamberId = (chamber as any).data.nodes.find((n: any) => n.name === 'Chamber').id
+    manager.nodeUpdate(chamberId, { properties: { controller: targetId } })
+
+    const r = manager.nodeDelete(rackId, { unlinkReferences: true })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.data.nodes.find(n => n.id === rackId)).toBeUndefined()
+    expect(r.data.nodes.find(n => n.id === targetId)).toBeUndefined()
+    expect(r.data.nodes.find(n => n.id === chamberId)!.properties.controller).toBeNull()
+  })
+
+  it('force-delete nulls every blocking reference key on a single survivor', async () => {
+    await openWith(makeManifest())
+    // Template with two reference fields so one survivor can hold two blockers.
+    manager.templateCreate('dual-link', {
+      label: 'Dual Link',
+      fields: {
+        controller: { type: 'reference' },
+        backup: { type: 'reference' },
+      },
+    })
+    const ps1 = manager.nodeCreate('root-id', 'Power Supply 1')
+    const ps1Id = (ps1 as any).data.nodes.find((n: any) => n.name === 'Power Supply 1').id
+    const ps2 = manager.nodeCreate('root-id', 'Power Supply 2')
+    const ps2Id = (ps2 as any).data.nodes.find((n: any) => n.name === 'Power Supply 2').id
+    const rack = manager.nodeCreate('root-id', 'Rack')
+    const rackId = (rack as any).data.nodes.find((n: any) => n.name === 'Rack').id
+    const ctrl = manager.nodeCreate(rackId, 'Controller', 'dual-link')
+    const ctrlId = (ctrl as any).data.nodes.find((n: any) => n.name === 'Controller').id
+    // Single survivor (Controller) references BOTH deletion targets via two keys.
+    manager.nodeUpdate(ctrlId, { properties: { controller: ps1Id, backup: ps2Id } })
+
+    // Deleting either target alone is blocked; the survivor would be left dangling.
+    const blocked = manager.nodeDelete(ps1Id)
+    expect(blocked.ok).toBe(false)
+    if (blocked.ok) return
+    expect((blocked.error.context?.blockers as any[]).every(b => b.nodeId === ctrlId)).toBe(true)
+
+    // Delete Power Supply 1 with force — only the `controller` key should clear,
+    // `backup` (pointing at the surviving PS2) must be left intact.
+    const r1 = manager.nodeDelete(ps1Id, { unlinkReferences: true })
+    expect(r1.ok).toBe(true)
+    if (!r1.ok) return
+    const afterFirst = r1.data.nodes.find(n => n.id === ctrlId)!
+    expect(afterFirst.properties.controller).toBeNull()
+    expect(afterFirst.properties.backup).toBe(ps2Id)
+
+    // Now delete Power Supply 2 with force — `backup` clears too.
+    const r2 = manager.nodeDelete(ps2Id, { unlinkReferences: true })
+    expect(r2.ok).toBe(true)
+    if (!r2.ok) return
+    const afterSecond = r2.data.nodes.find(n => n.id === ctrlId)!
+    expect(afterSecond.properties.controller).toBeNull()
+    expect(afterSecond.properties.backup).toBeNull()
+  })
+
+  it('force-delete groups two keys from one survivor in a single pass', async () => {
+    await openWith(makeManifest())
+    manager.templateCreate('dual-link', {
+      label: 'Dual Link',
+      fields: {
+        controller: { type: 'reference' },
+        backup: { type: 'reference' },
+      },
+    })
+    // Both deletion targets live under one subtree so a single force-delete
+    // removes both and the survivor's two blocking keys are grouped in one pass.
+    const bay = manager.nodeCreate('root-id', 'Bay')
+    const bayId = (bay as any).data.nodes.find((n: any) => n.name === 'Bay').id
+    const primary = manager.nodeCreate(bayId, 'Primary')
+    const primaryId = (primary as any).data.nodes.find((n: any) => n.name === 'Primary').id
+    const spare = manager.nodeCreate(bayId, 'Spare')
+    const spareId = (spare as any).data.nodes.find((n: any) => n.name === 'Spare').id
+    const ctrl = manager.nodeCreate('root-id', 'Controller', 'dual-link')
+    const ctrlId = (ctrl as any).data.nodes.find((n: any) => n.name === 'Controller').id
+    manager.nodeUpdate(ctrlId, { properties: { controller: primaryId, backup: spareId } })
+
+    // Two blockers, same survivor node, two distinct keys.
+    const blocked = manager.nodeDelete(bayId)
+    expect(blocked.ok).toBe(false)
+    if (blocked.ok) return
+    const blockers = blocked.error.context?.blockers as any[]
+    expect(blockers).toHaveLength(2)
+    expect(blockers.every(b => b.nodeId === ctrlId)).toBe(true)
+    expect(blockers.map(b => b.key).sort()).toEqual(['backup', 'controller'])
+
+    const r = manager.nodeDelete(bayId, { unlinkReferences: true })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.data.nodes.find(n => n.id === bayId)).toBeUndefined()
+    const survivor = r.data.nodes.find(n => n.id === ctrlId)!
+    expect(survivor.properties.controller).toBeNull()
+    expect(survivor.properties.backup).toBeNull()
+  })
+
+  it('bumps modified on an unlinked survivor', async () => {
+    await openWith(makeManifest())
+    manager.templateCreate('controlled-asset', controllerLink)
+    const target = manager.nodeCreate('root-id', 'Power Supply')
+    const targetId = (target as any).data.nodes.find((n: any) => n.name === 'Power Supply').id
+    const chamber = manager.nodeCreate('root-id', 'Chamber', 'controlled-asset')
+    const chamberId = (chamber as any).data.nodes.find((n: any) => n.name === 'Chamber').id
+    const bound = manager.nodeUpdate(chamberId, { properties: { controller: targetId } })
+    const beforeModified = (bound as any).data.nodes.find((n: any) => n.id === chamberId).modified
+
+    // ISO timestamps are ms-resolution; ensure the delete lands in a later ms.
+    await new Promise(resolve => setTimeout(resolve, 2))
+    // Force-delete clears the survivor's reference, so its audit timestamp must move.
+    const r = manager.nodeDelete(targetId, { unlinkReferences: true })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    const survivor = r.data.nodes.find(n => n.id === chamberId)!
+    expect(survivor.properties.controller).toBeNull()
+    expect(survivor.modified).not.toBe(beforeModified)
+  })
+
+  it('ignores a value left under a key rebound away from reference (no free-text corruption)', async () => {
+    await openWith(makeManifest())
+    manager.templateCreate('controlled-asset', controllerLink)
+    const target = manager.nodeCreate('root-id', 'Power Supply')
+    const targetId = (target as any).data.nodes.find((n: any) => n.name === 'Power Supply').id
+    const chamber = manager.nodeCreate('root-id', 'Chamber', 'controlled-asset')
+    const chamberId = (chamber as any).data.nodes.find((n: any) => n.name === 'Chamber').id
+    manager.nodeUpdate(chamberId, { properties: { controller: targetId } })
+    // Unbind the template — the controller value survives as ad-hoc plain text,
+    // no longer a reference. Detection is gated on the live field type, so this
+    // is NOT a blocker and force-delete must not clear the now-free-text value.
+    manager.templateDelete('controlled-asset')
+
+    const r = manager.nodeDelete(targetId)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.data.nodes.find(n => n.id === targetId)).toBeUndefined()
+    // The orphaned text value is left intact — not silently nulled.
+    expect(r.data.nodes.find(n => n.id === chamberId)!.properties.controller).toBe(targetId)
+  })
+
+  it('blocks deletion of a node used as a template reference default, and clears it on force', async () => {
+    await openWith(makeManifest())
+    const target = manager.nodeCreate('root-id', 'Default Controller')
+    const targetId = (target as any).data.nodes.find((n: any) => n.name === 'Default Controller').id
+    // A template whose reference field defaults to the target node.
+    manager.templateCreate('defaulted', {
+      label: 'Defaulted Asset',
+      fields: { controller: { type: 'reference', default: targetId } },
+    })
+
+    // Safe-by-default delete is blocked by the template-default blocker.
+    const blocked = manager.nodeDelete(targetId)
+    expect(blocked.ok).toBe(false)
+    if (blocked.ok) return
+    const blockers = blocked.error.context?.blockers as any[]
+    expect(blockers).toHaveLength(1)
+    expect(blockers[0].kind).toBe('template-default')
+    expect(blockers[0].templateId).toBe('defaulted')
+    expect(blockers[0].key).toBe('controller')
+    expect(blockers[0].nodeName).toBe('Defaulted Asset')
+
+    // Force-delete removes the stale default so new nodes aren't seeded with it.
+    const r = manager.nodeDelete(targetId, { unlinkReferences: true })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.data.nodes.find(n => n.id === targetId)).toBeUndefined()
+    expect(r.data.templates?.['defaulted']?.fields.controller.default).toBeUndefined()
+
+    // And a node created afterward is not born with the dangling default.
+    const created = manager.nodeCreate('root-id', 'New Asset', 'defaulted')
+    expect(created.ok).toBe(true)
+    if (!created.ok) return
+    const fresh = created.data.nodes.find(n => n.name === 'New Asset')!
+    expect(fresh.properties.controller).toBeUndefined()
+  })
+
+  it('force flag is a safe no-op when nothing references the target', async () => {
+    await openWith(makeManifest())
+    manager.templateCreate('controlled-asset', controllerLink)
+    const target = manager.nodeCreate('root-id', 'Power Supply')
+    const targetId = (target as any).data.nodes.find((n: any) => n.name === 'Power Supply').id
+    // An unrelated survivor that references nothing — must be left byte-identical.
+    const other = manager.nodeCreate('root-id', 'Chamber', 'controlled-asset')
+    const otherId = (other as any).data.nodes.find((n: any) => n.name === 'Chamber').id
+    const snapshot = manager.nodeUpdate(otherId, { properties: { note: 'untouched' } })
+    const otherBefore = (snapshot as any).data.nodes.find((n: any) => n.id === otherId)
+
+    const r = manager.nodeDelete(targetId, { unlinkReferences: true })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.data.nodes.find(n => n.id === targetId)).toBeUndefined()
+    const otherAfter = r.data.nodes.find(n => n.id === otherId)!
+    expect(otherAfter.modified).toBe(otherBefore.modified)
+    expect(otherAfter.properties).toEqual({ note: 'untouched' })
   })
 })
 
