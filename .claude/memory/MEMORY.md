@@ -12,3 +12,4 @@ Project-scoped memory for Manifest. User-scoped preferences and Svelte 5 gotchas
 - [Scan for NUL before commit](feedback-scan-nul-before-commit.md) — Write/Edit can embed a literal NUL where a separator was meant, making the file binary in git; scan before committing
 - [Diff/report export](project_report_export.md) — Markdown/CSV export of the snapshot diff; pure formatter over diffProjects/diffTemplates; on branch feat/report-export
 - [Native ABI rebuild order](feedback-native-abi-rebuild-order.md) — better-sqlite3: rebuild:native:node for unit, rebuild:native:electron for E2E/dev; never leave it node-built
+- [Reference force-delete/unlink](project_reference_force_delete.md) — PR #19: force-delete clears blocking references; detection gated on live reference fields + template defaults, NOT a blanket string scan (ids aren't loader-enforced uuidv7)
