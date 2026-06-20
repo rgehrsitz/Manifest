@@ -267,7 +267,7 @@ function resolveGhostParent(
   // If the parent still exists in B as a live node, point to it directly.
   if (nodesB.has(originalParentId)) return originalParentId
   // Parent was also removed → point to its ghost.
-  return `ghost:${originalParentId}`
+  return `${GHOST_ID_PREFIX}${originalParentId}`
 }
 
 // ─── Subtree summaries ────────────────────────────────────────────────────────

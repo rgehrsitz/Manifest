@@ -28,7 +28,8 @@ broken. It looked like a code regression; it was just the wrong ABI.
 E2E in a single shell command.** The trap:
 `rebuild:native:node && vitest … && playwright test` leaves better-sqlite3
 NODE-built when Playwright launches Electron → every E2E project-open fails on
-the ABI mismatch. The `&&` chain runs the node rebuild last before BOTH suites.
+the ABI mismatch. The chain rebuilds for node up front but NEVER rebuilds for
+electron, so Playwright starts against node-built native modules.
 - Prefer the package.json scripts, which self-rebuild: `bun run test` (node) and
   `bun run test:e2e` (electron rebuild + build + playwright). Run them as
   SEPARATE invocations, never `&&`-joined.
