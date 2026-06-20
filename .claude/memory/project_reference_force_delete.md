@@ -44,7 +44,8 @@ under rebound keys," do NOT reach for the blanket scan; that path is rejected.
 decision (`MISSING_REQUIRED` load warning, not a hard block) — see
 [[project_typed_properties]].
 
-Next per work queue: compare current project to snapshot → typeahead search-in-tree
-→ refresh docs (the `reference` type + this workflow lack narrative docs in
-README/ARCHITECTURE; ARCHITECTURE IPC table is stale) → Tauri planning → NetBox import.
+Next per work queue: typeahead search-in-tree → refresh docs (the `reference`
+type lacks narrative docs in README/ARCHITECTURE; ARCHITECTURE IPC table is stale)
+→ Tauri planning → NetBox import. (Compare current project to snapshot shipped via
+PR #20.)
 Related: [[project_csv_import]], [[project_report_export]], [[project_target_domain]].
