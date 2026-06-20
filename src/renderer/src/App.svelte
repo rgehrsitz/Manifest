@@ -517,10 +517,14 @@
           return `• ${holder} → ${b.key} (→ ${b.targetName})`
         })
         .join('\n')
+      // Count distinct holders for accurate copy: a holder may contribute more
+      // than one blocker (multiple reference keys), and template defaults aren't
+      // nodes — so blockers.length is not a node count.
       const n = blockers.length
+      const ref = `reference${n === 1 ? '' : 's'}`
       const confirmed = window.confirm(
-        `"${node.name}" is referenced by ${n} other node${n === 1 ? '' : 's'}:\n\n${list}\n\n` +
-        `Delete "${node.name}" and clear ${n} reference${n === 1 ? '' : 's'}?`
+        `"${node.name}" has ${n} incoming ${ref}:\n\n${list}\n\n` +
+        `Delete "${node.name}" and clear ${n === 1 ? 'it' : `all ${n}`}?`
       )
       if (!confirmed) return
       const forced = await window.api.node.delete(id, { unlinkReferences: true })

@@ -1,7 +1,7 @@
 // Unit tests for template-driven typed properties in ProjectManager.
 // Uses real filesystem via tmp directories, never mocks.
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdirSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
@@ -440,18 +440,27 @@ describe('nodeDelete — reference guard', () => {
     const targetId = (target as any).data.nodes.find((n: any) => n.name === 'Power Supply').id
     const chamber = manager.nodeCreate('root-id', 'Chamber', 'controlled-asset')
     const chamberId = (chamber as any).data.nodes.find((n: any) => n.name === 'Chamber').id
-    const bound = manager.nodeUpdate(chamberId, { properties: { controller: targetId } })
-    const beforeModified = (bound as any).data.nodes.find((n: any) => n.id === chamberId).modified
+    // Drive `new Date()` deterministically so the assertion can't flake on a
+    // coarse clock. nodeUpdate/nodeDelete are synchronous, so faking time only
+    // around them is safe (openWith already finished its async work above).
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-03-01T00:00:00.000Z'))
+      const bound = manager.nodeUpdate(chamberId, { properties: { controller: targetId } })
+      const beforeModified = (bound as any).data.nodes.find((n: any) => n.id === chamberId).modified
+      expect(beforeModified).toBe('2026-03-01T00:00:00.000Z')
 
-    // ISO timestamps are ms-resolution; ensure the delete lands in a later ms.
-    await new Promise(resolve => setTimeout(resolve, 2))
-    // Force-delete clears the survivor's reference, so its audit timestamp must move.
-    const r = manager.nodeDelete(targetId, { unlinkReferences: true })
-    expect(r.ok).toBe(true)
-    if (!r.ok) return
-    const survivor = r.data.nodes.find(n => n.id === chamberId)!
-    expect(survivor.properties.controller).toBeNull()
-    expect(survivor.modified).not.toBe(beforeModified)
+      // Force-delete clears the survivor's reference, so its audit timestamp must move.
+      vi.setSystemTime(new Date('2026-03-01T00:00:05.000Z'))
+      const r = manager.nodeDelete(targetId, { unlinkReferences: true })
+      expect(r.ok).toBe(true)
+      if (!r.ok) return
+      const survivor = r.data.nodes.find(n => n.id === chamberId)!
+      expect(survivor.properties.controller).toBeNull()
+      expect(survivor.modified).toBe('2026-03-01T00:00:05.000Z')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('ignores a value left under a key rebound away from reference (no free-text corruption)', async () => {

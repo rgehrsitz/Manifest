@@ -745,14 +745,14 @@ export class ProjectManager {
   // Delete a node and all its descendants.
   // Root node (parentId === null) cannot be deleted.
   //
-  // By default, deletion is blocked when a surviving node has a property
-  // pointing into the deletion set — including mutual or cyclic references
-  // across subtrees that the user can't easily clear by hand, and dangling
-  // pointers left under rebound/unbound keys (see findExternalReferencesTo).
-  // `options.unlinkReferences` is the explicit force path: it nulls those
-  // pointing properties on the survivors, then deletes. Safe-by-default
-  // otherwise — the blocker list is returned in the error context so the
-  // renderer can show it and confirm before forcing.
+  // By default, deletion is blocked when a surviving node's live `reference`
+  // property — or a template `reference` field default — points into the
+  // deletion set, including mutual or cyclic references across subtrees the user
+  // can't easily clear by hand. `options.unlinkReferences` is the explicit force
+  // path: it nulls those reference properties on the survivors and clears the
+  // stale template defaults, then deletes. Safe-by-default otherwise — the
+  // blocker list rides in the error context so the renderer can show it and
+  // confirm before forcing.
   nodeDelete(id: string, options?: { unlinkReferences?: boolean }): Result<Project> {
     if (!this.currentProject) return err(ErrorCode.PROJECT_NOT_FOUND, 'No project open')
 
@@ -767,10 +767,11 @@ export class ProjectManager {
     const toDelete = this.collectDescendants(id)
     const blockers = this.findExternalReferencesTo(toDelete)
     if (blockers.length > 0 && !options?.unlinkReferences) {
+      const n = blockers.length
       const message =
-        blockers.length === 1 && blockers[0].kind === 'node'
+        n === 1 && blockers[0].kind === 'node'
           ? `Cannot delete "${node.name}" because "${blockers[0].nodeName}" field "${blockers[0].key}" references it`
-          : `Cannot delete "${node.name}" because ${blockers.length} reference${blockers.length === 1 ? '' : 's'} point into it`
+          : `Cannot delete "${node.name}" because ${n} reference${n === 1 ? '' : 's'} ${n === 1 ? 'points' : 'point'} into it`
       return err(ErrorCode.VALIDATION_FAILED, message, { blockers })
     }
 
