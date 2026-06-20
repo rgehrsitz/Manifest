@@ -163,7 +163,7 @@ describe('diffProjects', () => {
       ...makeProject([
         ...baseNodes(),
         {
-          id: 'supply-a',
+          id: 'supply-alpha-id',
           parentId: 'root',
           name: 'Power Supply A',
           order: 1,
@@ -172,7 +172,7 @@ describe('diffProjects', () => {
           modified: '2026-01-01T00:00:00.000Z',
         },
         {
-          id: 'supply-b',
+          id: 'supply-bravo-id',
           parentId: 'root',
           name: 'Power Supply B',
           order: 2,
@@ -186,7 +186,7 @@ describe('diffProjects', () => {
           name: 'Chamber',
           order: 3,
           templateId: 'asset',
-          properties: { controller: 'supply-a' },
+          properties: { controller: 'supply-alpha-id' },
           created: '2026-01-01T00:00:00.000Z',
           modified: '2026-01-01T00:00:00.000Z',
         },
@@ -196,15 +196,15 @@ describe('diffProjects', () => {
     const after = {
       ...before,
       nodes: before.nodes.map(n => n.id === 'chamber'
-        ? { ...n, properties: { controller: 'supply-b' } }
+        ? { ...n, properties: { controller: 'supply-bravo-id' } }
         : n
       ),
     }
 
     const diff = diffProjects(before, after).find(d => d.changeType === 'property-changed')!
     expect(diff.context.propertyValueLabels?.controller).toEqual({
-      old: 'Power Supply A (supply-a)',
-      new: 'Power Supply B (supply-b)',
+      old: 'Power Supply A (supply-alpha-id)',
+      new: 'Power Supply B (supply-bravo-id)',
     })
   })
 })

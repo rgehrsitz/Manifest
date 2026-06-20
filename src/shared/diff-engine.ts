@@ -72,7 +72,7 @@ function referenceLabel(value: unknown, nodeMap: NodeMap): string | undefined {
   if (typeof value !== 'string' || value.length === 0) return undefined
   const target = nodeMap.get(value)
   if (!target) return `${value} (missing)`
-  return `${target.name} (${value.slice(0, 8)})`
+  return `${target.name} (${value})`
 }
 
 function propertyValueLabels(

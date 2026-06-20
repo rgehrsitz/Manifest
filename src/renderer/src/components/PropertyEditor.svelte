@@ -45,7 +45,7 @@
     onError,
   }: Props = $props()
 
-  const PROMOTABLE_TYPES: PropertyType[] = ['string', 'number', 'boolean', 'date', 'version', 'reference']
+  const PROMOTABLE_TYPES: PropertyType[] = ['string', 'number', 'boolean', 'date', 'version']
 
   // ─── Derived shape ──────────────────────────────────────────────────────────
 

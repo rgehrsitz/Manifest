@@ -548,6 +548,17 @@ describe('planImport — update-on-key', () => {
     expect(typeof out.update[0].properties.count).toBe('number')
   })
 
+  it('skips an update that would make a reference point at the same node', () => {
+    const out = planImport(
+      [['Board 1', 'b1']],
+      ['name', 'controller'],
+      umap({ keyColumn: 'name', columns: [{ header: 'controller', key: 'controller', include: true }] }),
+      TEMPLATES, [UROOT, RACK, child('b1', 'Board 1', {}, 'board')],
+    )
+    expect(out.update).toHaveLength(0)
+    expect(out.skipped[0].reason).toMatch(/same node/)
+  })
+
   it('skips a rebind when an existing property cannot be coerced under the new template', () => {
     const out = planImport(
       [['Board 1']],

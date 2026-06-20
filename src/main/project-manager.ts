@@ -433,7 +433,7 @@ export class ProjectManager {
               `Property "${key}": ${result.message ?? 'invalid value'}`
             )
           }
-          const targetCheck = this.validateReferenceFieldValue(result.value, field)
+          const targetCheck = this.validateReferenceFieldValue(result.value, field, node.id)
           if (!targetCheck.valid) {
             return err(
               ErrorCode.VALIDATION_FAILED,
@@ -548,7 +548,7 @@ export class ProjectManager {
             `Cannot change field "${key}": node "${node.name}" has value ${JSON.stringify(value)} that is invalid for the new type (${check.message})`
           )
         }
-        const targetCheck = this.validateReferenceFieldValue(value, field)
+        const targetCheck = this.validateReferenceFieldValue(value, field, node.id)
         if (!targetCheck.valid) {
           return err(
             ErrorCode.VALIDATION_FAILED,
@@ -1933,10 +1933,11 @@ export class ProjectManager {
   private validateReferenceFieldValue(
     value: unknown,
     field: TemplateField,
+    selfId?: string | null,
     nodes: ManifestNode[] = this.currentProject?.nodes ?? [],
   ): { valid: boolean; message?: string } {
     if (field.type !== 'reference') return { valid: true }
-    return validateReferenceTarget(value, nodes)
+    return validateReferenceTarget(value, nodes, selfId)
   }
 
   private validateTemplateReferenceDefaults(template: NodeTemplate): { valid: boolean; message?: string } {
@@ -2165,7 +2166,7 @@ export class ProjectManager {
           continue
         }
         const targetCheck = field.type === 'reference'
-          ? validateReferenceTarget(value, nodes)
+          ? validateReferenceTarget(value, nodes, node.id)
           : { valid: true }
         if (!targetCheck.valid) {
           warnings.push({

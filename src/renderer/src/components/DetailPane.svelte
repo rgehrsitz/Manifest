@@ -123,7 +123,9 @@
   )
   const projectTemplates = $derived(project.templates ?? {})
   const referenceNodes = $derived(
-    [...project.nodes].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+    [...project.nodes]
+      .filter(n => n.id !== node?.id)
+      .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
   )
 
   // ─── Ghost (tombstone) mode (issue #3) ────────────────────────────────────

@@ -194,6 +194,15 @@ describe('nodeUpdate — coercion and validation', () => {
 
     expect(manager.nodeUpdate(id, { properties: { controller: 'missing-node' } }).ok).toBe(false)
   })
+
+  it('rejects reference values that point at the same node', async () => {
+    await openWith(makeManifest())
+    manager.templateCreate('controlled-asset', controllerLink)
+    const created = manager.nodeCreate('root-id', 'Chamber', 'controlled-asset')
+    const id = (created as any).data.nodes.find((n: any) => n.name === 'Chamber').id
+
+    expect(manager.nodeUpdate(id, { properties: { controller: id } }).ok).toBe(false)
+  })
 })
 
 describe('templateUpdate — bound-node guard', () => {
@@ -351,6 +360,29 @@ describe('load warnings — no silent coercion or downgrade', () => {
           id: 'n1', parentId: 'root-id', name: 'Chamber', order: 0,
           templateId: 'controlled-asset',
           properties: { controller: 'missing-node' },
+          created: '2026-01-01T00:00:00.000Z', modified: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    })
+    const project = await openWith(manifest)
+    const w = project.loadWarnings!.find(x => x.path === 'nodes[1].properties.controller')
+    expect(w).toBeDefined()
+    expect(w!.code).toBe('INVALID_REFERENCE')
+  })
+
+  it('surfaces a warning for a self-reference property', async () => {
+    const manifest = makeManifest({
+      version: 3,
+      templates: { 'controlled-asset': controllerLink },
+      nodes: [
+        {
+          id: 'root-id', parentId: null, name: 'Test Project', order: 0, properties: {},
+          created: '2026-01-01T00:00:00.000Z', modified: '2026-01-01T00:00:00.000Z',
+        },
+        {
+          id: 'n1', parentId: 'root-id', name: 'Chamber', order: 0,
+          templateId: 'controlled-asset',
+          properties: { controller: 'n1' },
           created: '2026-01-01T00:00:00.000Z', modified: '2026-01-01T00:00:00.000Z',
         },
       ],

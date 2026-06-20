@@ -278,9 +278,16 @@ export function validateTypedPropertyValue(
   }
 }
 
-export function validateReferenceTarget(value: unknown, nodes: ManifestNode[]): ValidationResult {
+export function validateReferenceTarget(
+  value: unknown,
+  nodes: ManifestNode[],
+  selfId?: string | null,
+): ValidationResult {
   if (typeof value !== 'string' || value.trim().length === 0) {
     return { valid: false, message: 'Expected a node reference' }
+  }
+  if (selfId && value === selfId) {
+    return { valid: false, message: 'Reference cannot point to the same node' }
   }
   if (!nodes.some(n => n.id === value)) {
     return { valid: false, message: `Reference target not found: ${value}` }

@@ -129,6 +129,10 @@ describe('validateReferenceTarget', () => {
     expect(validateReferenceTarget('target', nodes).valid).toBe(true)
     expect(validateReferenceTarget('missing', nodes).valid).toBe(false)
   })
+
+  it('rejects self-references when a current node id is provided', () => {
+    expect(validateReferenceTarget('target', nodes, 'target').valid).toBe(false)
+  })
 })
 
 describe('templateFields (null-safe accessor)', () => {
