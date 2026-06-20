@@ -43,6 +43,7 @@ import type {
   NodeTemplate,
   TemplateField,
   ManifestWarning,
+  ProjectWarning,
   ImportMapping,
   ImportInspect,
   ImportPlan,
@@ -70,6 +71,7 @@ import {
 import { diffProjects, diffTemplates } from '../shared/diff-engine'
 import { buildMergedTree } from '../shared/merged-tree'
 import { parseCsv, CsvParseError } from '../shared/csv'
+import { detectCloudSyncPath } from '../shared/cloud-sync'
 import { planImport } from '../shared/import'
 import {
   formatDiffReportMarkdown,
@@ -152,9 +154,10 @@ export class ProjectManager {
       if (!searchResult.ok) return searchResult as Result<Project>
       this.openHistoryIndex(projectPath)
 
+      const projectWarnings = this.collectProjectWarnings(projectPath)
       this.currentProject = project
       this.logger.info('project created', { name, path: projectPath })
-      return ok(project)
+      return ok(projectWarnings.length > 0 ? { ...project, projectWarnings } : project)
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
       this.logger.error('project create failed', { name, path: projectPath, error: msg })
@@ -200,9 +203,16 @@ export class ProjectManager {
       // response but are NOT stored on currentProject, so they don't propagate
       // through subsequent mutation results.
       const warnings = this.collectLoadWarnings(data)
+      const projectWarnings = this.collectProjectWarnings(projectPath)
       const project: Project = { ...data, path: projectPath }
       if (warnings.length > 0) {
         this.logger.warn('project loaded with warnings', { path: projectPath, count: warnings.length })
+      }
+      if (projectWarnings.length > 0) {
+        this.logger.warn('project opened from cloud-synced folder', {
+          path: projectPath,
+          provider: projectWarnings[0].provider,
+        })
       }
 
       // If migration bumped the version, write the migrated file back immediately.
@@ -220,7 +230,7 @@ export class ProjectManager {
       this.currentProject = project
       this.logger.info('project opened', { name: project.name, path: projectPath, nodes: project.nodes.length })
       this.scheduleHistoryBackfill()
-      return ok(warnings.length > 0 ? { ...project, loadWarnings: warnings } : project)
+      return ok(this.withRuntimeWarnings(project, warnings, projectWarnings))
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
       this.logger.error('project open failed', { path: projectPath, error: msg })
@@ -1863,7 +1873,7 @@ export class ProjectManager {
   }
 
   private serializeProjectForPersistence(project: Project): string {
-    const { path: _path, ...persistable } = project
+    const { path: _path, loadWarnings: _loadWarnings, projectWarnings: _projectWarnings, ...persistable } = project
     return JSON.stringify(persistable, null, 2)
   }
 
@@ -1935,7 +1945,7 @@ export class ProjectManager {
         ...project,
         modified: touchModified ? new Date().toISOString() : project.modified,
       }
-      const { path: _path, loadWarnings: _warnings, ...persistable } = persistedProject
+      const { path: _path, loadWarnings: _warnings, projectWarnings: _projectWarnings, ...persistable } = persistedProject
       writeFileSync(tmpPath, JSON.stringify(persistable, null, 2), 'utf8')
       renameSync(tmpPath, manifestPath)
       if (this.currentProject?.path === project.path && this.currentProject.id === project.id) {
@@ -2067,6 +2077,32 @@ export class ProjectManager {
     }
 
     return warnings
+  }
+
+  private collectProjectWarnings(projectPath: string): ProjectWarning[] {
+    const cloudPath = detectCloudSyncPath(projectPath)
+    if (!cloudPath) return []
+
+    return [{
+      code: 'CLOUD_SYNC_PROJECT',
+      title: `Project is inside ${cloudPath.provider}`,
+      message: 'Cloud sync can corrupt Manifest search/history indexes because SQLite WAL files must stay in lockstep. Keep Manifest projects in a local folder and back up/export snapshots separately.',
+      provider: cloudPath.provider,
+      path: projectPath,
+    }]
+  }
+
+  private withRuntimeWarnings(
+    project: Project,
+    loadWarnings: ManifestWarning[],
+    projectWarnings: ProjectWarning[],
+  ): Project {
+    if (loadWarnings.length === 0 && projectWarnings.length === 0) return project
+    return {
+      ...project,
+      ...(loadWarnings.length > 0 ? { loadWarnings } : {}),
+      ...(projectWarnings.length > 0 ? { projectWarnings } : {}),
+    }
   }
 
   private hasCircularRefs(nodes: ManifestNode[]): boolean {

@@ -51,6 +51,14 @@ export interface ManifestWarning {
   message: string
 }
 
+export interface ProjectWarning {
+  code: string
+  title: string
+  message: string
+  provider?: string
+  path?: string
+}
+
 export interface Project {
   version: number
   id: string
@@ -64,6 +72,8 @@ export interface Project {
   path?: string
   // Runtime-only: structured warnings collected at load time. Stripped on write.
   loadWarnings?: ManifestWarning[]
+  // Runtime-only: project-level environment/storage warnings. Stripped on write.
+  projectWarnings?: ProjectWarning[]
 }
 
 // ─── CSV import ─────────────────────────────────────────────────────────────────

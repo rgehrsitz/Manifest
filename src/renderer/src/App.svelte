@@ -2,7 +2,7 @@
 
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte'
-  import type { Project, ManifestNode, ManifestWarning, NodeTemplate, PropertyType, RecoveryPoint, SearchResult, Snapshot, SnapshotTimelineEvent, ImportResult } from '../../shared/types'
+  import type { Project, ManifestNode, ManifestWarning, ProjectWarning, NodeTemplate, PropertyType, RecoveryPoint, SearchResult, Snapshot, SnapshotTimelineEvent, ImportResult } from '../../shared/types'
   import { isUsableTemplate, templateLabel } from '../../shared/validation'
   import type { MergedTree } from '../../shared/merged-tree'
   import { computeSubtreeSummaries } from '../../shared/merged-tree'
@@ -301,6 +301,7 @@
       workingCopyBaseSnapshot = null
       workingCopyDirty = false
       loadWarningsDismissed = false
+      projectWarningsDismissed = false
       appState = 'open'
     } else {
       error = result.error.message
@@ -324,6 +325,7 @@
       selectRoot(result.data)
       workingCopyBaseSnapshot = null
       workingCopyDirty = false
+      projectWarningsDismissed = false
       appState = 'open'
     } else {
       error = result.error.message
@@ -568,6 +570,13 @@
     return p?.loadWarnings ?? []
   })
   const showLoadWarnings = $derived(loadWarnings.length > 0 && !loadWarningsDismissed)
+
+  let projectWarningsDismissed = $state(false)
+  const projectWarnings = $derived.by<ProjectWarning[]>(() => {
+    const p: Project | null = project
+    return p?.projectWarnings ?? []
+  })
+  const showProjectWarnings = $derived(projectWarnings.length > 0 && !projectWarningsDismissed)
 
   function openTemplateManager() {
     if (editingLocked) { showToast(lockReason()); return }
@@ -1174,6 +1183,32 @@
         </button>
       </div>
     </div>
+
+    <!-- Project-level warnings banner (non-blocking; environmental risk) -->
+    {#if showProjectWarnings}
+      <div
+        class="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900"
+        data-testid="project-warnings-banner"
+      >
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <p class="font-semibold">
+              {projectWarnings[0].title}
+              <span class="font-normal text-amber-700">— local indexes may corrupt under partial sync.</span>
+            </p>
+            <p class="mt-1 text-amber-800">
+              {projectWarnings[0].message}
+            </p>
+          </div>
+          <button
+            onclick={() => { projectWarningsDismissed = true }}
+            class="shrink-0 text-amber-700 hover:text-amber-900 cursor-default"
+            aria-label="Dismiss project warning"
+            data-testid="dismiss-project-warning"
+          >✕</button>
+        </div>
+      </div>
+    {/if}
 
     <!-- Load-time warnings banner (non-blocking; values left as-on-disk) -->
     {#if showLoadWarnings}
