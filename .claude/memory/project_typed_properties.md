@@ -84,5 +84,7 @@ Final on main: 332 unit + 28 E2E green.
 "Required — not set" cue + a `MISSING_REQUIRED` load warning, NOT a hard
 save-block. Revisit only if a config-control workflow demands hard enforcement.
 
-Next per roadmap: `reference` property type → CSV import → diff report export → Tauri.
-Full plan: `~/.claude/plans/fluffy-swimming-wozniak.md`.
+Roadmap status: `reference` property type (#18), CSV import, and diff report
+export have all shipped. Next per work queue is the NetBox import adapter; Tauri
+is a documented feasibility plan (see [[project_reference_force_delete]] for the
+live queue pointer). Full original plan: `~/.claude/plans/fluffy-swimming-wozniak.md`.

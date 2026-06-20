@@ -44,8 +44,10 @@ under rebound keys," do NOT reach for the blanket scan; that path is rejected.
 decision (`MISSING_REQUIRED` load warning, not a hard block) — see
 [[project_typed_properties]].
 
-Next per work queue: Tauri migration planning → NetBox import adapter. (Shipped
-since: compare current project to snapshot #20, typeahead search-in-tree #21,
-compare-mode per-side template resolution #22, docs refresh — accurate IPC table
-+ typed-properties/`reference` narrative in ARCHITECTURE/README.)
+Next per work queue: **NetBox import adapter**. (Shipped since: compare current
+project to snapshot #20, typeahead search-in-tree #21, compare-mode per-side
+template resolution #22, docs refresh #24, ManifestAPI golden conformance suite
+#25. Tauri migration is a documented feasibility plan at
+`~/.claude/plans/tauri-migration-feasibility.md` — the contract suite #25 is its
+cheap backend-parity insurance; the go/no-go spike is not yet executed.)
 Related: [[project_csv_import]], [[project_report_export]], [[project_target_domain]].
