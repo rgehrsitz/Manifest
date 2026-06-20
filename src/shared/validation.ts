@@ -24,7 +24,7 @@ const TEMPLATE_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 const MAX_STRING_LEN = 10_000
-const MAX_VERSION_LEN = 64
+export const MAX_VERSION_LEN = 64
 
 // True when a string contains any C0 control character (0x00–0x1F) or DEL
 // (0x7F). Implemented via char codes to avoid embedding control literals in

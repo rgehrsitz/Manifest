@@ -1,0 +1,909 @@
+[
+  {
+    "step": "createProject",
+    "result": {
+      "ok": true,
+      "data": {
+        "version": 3,
+        "id": "<id:1>",
+        "name": "Contract Lab",
+        "created": "<ts>",
+        "modified": "<ts>",
+        "nodes": [
+          {
+            "id": "<id:2>",
+            "parentId": null,
+            "name": "Contract Lab",
+            "order": 0,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>"
+          }
+        ],
+        "path": "<path>"
+      }
+    }
+  },
+  {
+    "step": "templateCreate",
+    "result": {
+      "ok": true,
+      "data": {
+        "version": 3,
+        "id": "<id:1>",
+        "name": "Contract Lab",
+        "created": "<ts>",
+        "modified": "<ts>",
+        "nodes": [
+          {
+            "id": "<id:2>",
+            "parentId": null,
+            "name": "Contract Lab",
+            "order": 0,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>"
+          }
+        ],
+        "path": "<path>",
+        "templates": {
+          "instrument": {
+            "label": "Instrument",
+            "fields": {
+              "firmware": {
+                "type": "version"
+              },
+              "status": {
+                "type": "enum",
+                "options": [
+                  "active",
+                  "maintenance",
+                  "retired"
+                ]
+              },
+              "controller": {
+                "type": "reference"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "step": "nodeCreate(Rack A)",
+    "result": {
+      "ok": true,
+      "data": {
+        "version": 3,
+        "id": "<id:1>",
+        "name": "Contract Lab",
+        "created": "<ts>",
+        "modified": "<ts>",
+        "nodes": [
+          {
+            "id": "<id:2>",
+            "parentId": null,
+            "name": "Contract Lab",
+            "order": 0,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>"
+          },
+          {
+            "id": "<id:3>",
+            "parentId": "<id:2>",
+            "name": "Rack A",
+            "order": 0,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>"
+          }
+        ],
+        "path": "<path>",
+        "templates": {
+          "instrument": {
+            "label": "Instrument",
+            "fields": {
+              "firmware": {
+                "type": "version"
+              },
+              "status": {
+                "type": "enum",
+                "options": [
+                  "active",
+                  "maintenance",
+                  "retired"
+                ]
+              },
+              "controller": {
+                "type": "reference"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "step": "nodeCreate(Probe, instrument)",
+    "result": {
+      "ok": true,
+      "data": {
+        "version": 3,
+        "id": "<id:1>",
+        "name": "Contract Lab",
+        "created": "<ts>",
+        "modified": "<ts>",
+        "nodes": [
+          {
+            "id": "<id:2>",
+            "parentId": null,
+            "name": "Contract Lab",
+            "order": 0,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>"
+          },
+          {
+            "id": "<id:3>",
+            "parentId": "<id:2>",
+            "name": "Rack A",
+            "order": 0,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>"
+          },
+          {
+            "id": "<id:4>",
+            "parentId": "<id:2>",
+            "name": "Probe",
+            "order": 1,
+            "properties": {},
+            "templateId": "instrument",
+            "created": "<ts>",
+            "modified": "<ts>"
+          }
+        ],
+        "path": "<path>",
+        "templates": {
+          "instrument": {
+            "label": "Instrument",
+            "fields": {
+              "firmware": {
+                "type": "version"
+              },
+              "status": {
+                "type": "enum",
+                "options": [
+                  "active",
+                  "maintenance",
+                  "retired"
+                ]
+              },
+              "controller": {
+                "type": "reference"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "step": "nodeUpdate(Probe typed+ref)",
+    "result": {
+      "ok": true,
+      "data": {
+        "version": 3,
+        "id": "<id:1>",
+        "name": "Contract Lab",
+        "created": "<ts>",
+        "modified": "<ts>",
+        "nodes": [
+          {
+            "id": "<id:2>",
+            "parentId": null,
+            "name": "Contract Lab",
+            "order": 0,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>"
+          },
+          {
+            "id": "<id:3>",
+            "parentId": "<id:2>",
+            "name": "Rack A",
+            "order": 0,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>"
+          },
+          {
+            "id": "<id:4>",
+            "parentId": "<id:2>",
+            "name": "Probe",
+            "order": 1,
+            "properties": {
+              "firmware": "v1.2.0",
+              "status": "active",
+              "controller": "<id:3>"
+            },
+            "templateId": "instrument",
+            "created": "<ts>",
+            "modified": "<ts>"
+          }
+        ],
+        "path": "<path>",
+        "templates": {
+          "instrument": {
+            "label": "Instrument",
+            "fields": {
+              "firmware": {
+                "type": "version"
+              },
+              "status": {
+                "type": "enum",
+                "options": [
+                  "active",
+                  "maintenance",
+                  "retired"
+                ]
+              },
+              "controller": {
+                "type": "reference"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "step": "nodeUpdate(rename Rack A)",
+    "result": {
+      "ok": true,
+      "data": {
+        "version": 3,
+        "id": "<id:1>",
+        "name": "Contract Lab",
+        "created": "<ts>",
+        "modified": "<ts>",
+        "nodes": [
+          {
+            "id": "<id:2>",
+            "parentId": null,
+            "name": "Contract Lab",
+            "order": 0,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>"
+          },
+          {
+            "id": "<id:3>",
+            "parentId": "<id:2>",
+            "name": "Rack Alpha",
+            "order": 0,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>"
+          },
+          {
+            "id": "<id:4>",
+            "parentId": "<id:2>",
+            "name": "Probe",
+            "order": 1,
+            "properties": {
+              "firmware": "v1.2.0",
+              "status": "active",
+              "controller": "<id:3>"
+            },
+            "templateId": "instrument",
+            "created": "<ts>",
+            "modified": "<ts>"
+          }
+        ],
+        "path": "<path>",
+        "templates": {
+          "instrument": {
+            "label": "Instrument",
+            "fields": {
+              "firmware": {
+                "type": "version"
+              },
+              "status": {
+                "type": "enum",
+                "options": [
+                  "active",
+                  "maintenance",
+                  "retired"
+                ]
+              },
+              "controller": {
+                "type": "reference"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "step": "snapshotCreate(v1)",
+    "result": {
+      "ok": true,
+      "data": {
+        "id": "v1",
+        "name": "v1",
+        "commitHash": "<hash>",
+        "createdAt": "<ts>",
+        "message": "v1",
+        "basedOnSnapshotId": null,
+        "createdAfterRevertEventId": null,
+        "note": null
+      }
+    }
+  },
+  {
+    "step": "nodeCreate(Rack B)",
+    "result": {
+      "ok": true,
+      "data": {
+        "version": 3,
+        "id": "<id:1>",
+        "name": "Contract Lab",
+        "created": "<ts>",
+        "modified": "<ts>",
+        "nodes": [
+          {
+            "id": "<id:2>",
+            "parentId": null,
+            "name": "Contract Lab",
+            "order": 0,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>"
+          },
+          {
+            "id": "<id:3>",
+            "parentId": "<id:2>",
+            "name": "Rack Alpha",
+            "order": 0,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>"
+          },
+          {
+            "id": "<id:4>",
+            "parentId": "<id:2>",
+            "name": "Probe",
+            "order": 1,
+            "properties": {
+              "firmware": "v1.2.0",
+              "status": "active",
+              "controller": "<id:3>"
+            },
+            "templateId": "instrument",
+            "created": "<ts>",
+            "modified": "<ts>"
+          },
+          {
+            "id": "<id:5>",
+            "parentId": "<id:2>",
+            "name": "Rack B",
+            "order": 2,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>"
+          }
+        ],
+        "path": "<path>",
+        "templates": {
+          "instrument": {
+            "label": "Instrument",
+            "fields": {
+              "firmware": {
+                "type": "version"
+              },
+              "status": {
+                "type": "enum",
+                "options": [
+                  "active",
+                  "maintenance",
+                  "retired"
+                ]
+              },
+              "controller": {
+                "type": "reference"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "step": "nodeMove(Probe under Rack B)",
+    "result": {
+      "ok": true,
+      "data": {
+        "version": 3,
+        "id": "<id:1>",
+        "name": "Contract Lab",
+        "created": "<ts>",
+        "modified": "<ts>",
+        "nodes": [
+          {
+            "id": "<id:2>",
+            "parentId": null,
+            "name": "Contract Lab",
+            "order": 0,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>"
+          },
+          {
+            "id": "<id:3>",
+            "parentId": "<id:2>",
+            "name": "Rack Alpha",
+            "order": 0,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>"
+          },
+          {
+            "id": "<id:5>",
+            "parentId": "<id:2>",
+            "name": "Rack B",
+            "order": 1,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>"
+          },
+          {
+            "id": "<id:4>",
+            "parentId": "<id:5>",
+            "name": "Probe",
+            "order": 0,
+            "properties": {
+              "firmware": "v1.2.0",
+              "status": "active",
+              "controller": "<id:3>"
+            },
+            "templateId": "instrument",
+            "created": "<ts>",
+            "modified": "<ts>"
+          }
+        ],
+        "path": "<path>",
+        "templates": {
+          "instrument": {
+            "label": "Instrument",
+            "fields": {
+              "firmware": {
+                "type": "version"
+              },
+              "status": {
+                "type": "enum",
+                "options": [
+                  "active",
+                  "maintenance",
+                  "retired"
+                ]
+              },
+              "controller": {
+                "type": "reference"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "step": "searchNodes(rack)",
+    "result": {
+      "ok": true,
+      "data": [
+        {
+          "nodeId": "<id:3>",
+          "nodeName": "Rack Alpha",
+          "parentName": "Contract Lab",
+          "matchField": "name",
+          "snippet": "Rack Alpha"
+        },
+        {
+          "nodeId": "<id:5>",
+          "nodeName": "Rack B",
+          "parentName": "Contract Lab",
+          "matchField": "name",
+          "snippet": "Rack B"
+        }
+      ]
+    }
+  },
+  {
+    "step": "snapshotCompare(v1,@current)",
+    "result": {
+      "ok": true,
+      "data": [
+        {
+          "nodeId": "<id:5>",
+          "changeType": "added",
+          "severity": "High",
+          "newValue": {
+            "id": "<id:5>",
+            "parentId": "<id:2>",
+            "name": "Rack B",
+            "order": 1,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>"
+          },
+          "context": {
+            "nodeName": "Rack B",
+            "parentName": "Contract Lab",
+            "path": [
+              "Contract Lab"
+            ]
+          }
+        },
+        {
+          "nodeId": "<id:4>",
+          "changeType": "moved",
+          "severity": "High",
+          "oldValue": "<id:2>",
+          "newValue": "<id:5>",
+          "context": {
+            "nodeName": "Probe",
+            "parentName": "Rack B",
+            "path": [
+              "Contract Lab",
+              "Rack B"
+            ]
+          }
+        }
+      ]
+    }
+  },
+  {
+    "step": "snapshotLoadCompare(v1,@current)",
+    "result": {
+      "ok": true,
+      "data": {
+        "nodes": [
+          {
+            "id": "<id:2>",
+            "parentId": null,
+            "name": "Contract Lab",
+            "order": 0,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>",
+            "status": "unchanged",
+            "diffs": []
+          },
+          {
+            "id": "<id:3>",
+            "parentId": "<id:2>",
+            "name": "Rack Alpha",
+            "order": 0,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>",
+            "status": "unchanged",
+            "diffs": []
+          },
+          {
+            "id": "<id:5>",
+            "parentId": "<id:2>",
+            "name": "Rack B",
+            "order": 1,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>",
+            "status": "added",
+            "diffs": [
+              {
+                "nodeId": "<id:5>",
+                "changeType": "added",
+                "severity": "High",
+                "newValue": {
+                  "id": "<id:5>",
+                  "parentId": "<id:2>",
+                  "name": "Rack B",
+                  "order": 1,
+                  "properties": {},
+                  "created": "<ts>",
+                  "modified": "<ts>"
+                },
+                "context": {
+                  "nodeName": "Rack B",
+                  "parentName": "Contract Lab",
+                  "path": [
+                    "Contract Lab"
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "id": "<id:4>",
+            "parentId": "<id:5>",
+            "name": "Probe",
+            "order": 0,
+            "properties": {
+              "firmware": "v1.2.0",
+              "status": "active",
+              "controller": "<id:3>"
+            },
+            "templateId": "instrument",
+            "created": "<ts>",
+            "modified": "<ts>",
+            "status": "moved",
+            "previous": {
+              "parentId": "<id:2>"
+            },
+            "diffs": [
+              {
+                "nodeId": "<id:4>",
+                "changeType": "moved",
+                "severity": "High",
+                "oldValue": "<id:2>",
+                "newValue": "<id:5>",
+                "context": {
+                  "nodeName": "Probe",
+                  "parentName": "Rack B",
+                  "path": [
+                    "Contract Lab",
+                    "Rack B"
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "id": "ghost:<id:4>",
+            "parentId": "<id:2>",
+            "name": "Probe",
+            "order": 1,
+            "properties": {
+              "firmware": "v1.2.0",
+              "status": "active",
+              "controller": "<id:3>"
+            },
+            "templateId": "instrument",
+            "created": "<ts>",
+            "modified": "<ts>",
+            "status": "moved-from",
+            "diffs": []
+          }
+        ],
+        "fromSnapshot": "v1",
+        "toSnapshot": "@current",
+        "fromTemplates": {
+          "instrument": {
+            "label": "Instrument",
+            "fields": {
+              "firmware": {
+                "type": "version"
+              },
+              "status": {
+                "type": "enum",
+                "options": [
+                  "active",
+                  "maintenance",
+                  "retired"
+                ]
+              },
+              "controller": {
+                "type": "reference"
+              }
+            }
+          }
+        },
+        "toTemplates": {
+          "instrument": {
+            "label": "Instrument",
+            "fields": {
+              "firmware": {
+                "type": "version"
+              },
+              "status": {
+                "type": "enum",
+                "options": [
+                  "active",
+                  "maintenance",
+                  "retired"
+                ]
+              },
+              "controller": {
+                "type": "reference"
+              }
+            }
+          }
+        },
+        "summary": {
+          "added": 1,
+          "removed": 0,
+          "moved": 1,
+          "renamed": 0,
+          "propertyChanged": 0,
+          "templateChanged": 0,
+          "orderChanged": 0
+        },
+        "templateChanges": []
+      }
+    }
+  },
+  {
+    "step": "buildReport(v1,@current,markdown)",
+    "result": {
+      "ok": true,
+      "data": {
+        "content": "# Change Report: Contract Lab\n\n**From:** v1 (<ts> · <hash>)  \n**To:** Current project ( · )  \n**Generated:** <ts>\n\n## Summary\n- Added: 1\n- Removed: 0\n- Renamed: 0\n- Moved: 1\n- Property changes: 0 node(s)\n- Template changes: 0\n- Order changes: 0\n- Schema changes: 0\n\n## Added (1)\n- Contract Lab / Rack B\n\n## Moved (1)\n- Contract Lab / Probe → Contract Lab / Rack B / Probe\n",
+        "suggestedName": "Contract_Lab-changes-v1-to-current-project.md"
+      }
+    }
+  },
+  {
+    "step": "nodeDelete(Rack Alpha) blocked",
+    "result": {
+      "ok": false,
+      "error": {
+        "code": "VALIDATION_FAILED",
+        "message": "Cannot delete \"Rack Alpha\" because \"Probe\" field \"controller\" references it",
+        "context": {
+          "blockers": [
+            {
+              "kind": "node",
+              "nodeId": "<id:4>",
+              "nodeName": "Probe",
+              "key": "controller",
+              "targetId": "<id:3>",
+              "targetName": "Rack Alpha"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "step": "nodeDelete(Rack Alpha) force",
+    "result": {
+      "ok": true,
+      "data": {
+        "version": 3,
+        "id": "<id:1>",
+        "name": "Contract Lab",
+        "created": "<ts>",
+        "modified": "<ts>",
+        "nodes": [
+          {
+            "id": "<id:2>",
+            "parentId": null,
+            "name": "Contract Lab",
+            "order": 0,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>"
+          },
+          {
+            "id": "<id:5>",
+            "parentId": "<id:2>",
+            "name": "Rack B",
+            "order": 0,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>"
+          },
+          {
+            "id": "<id:4>",
+            "parentId": "<id:5>",
+            "name": "Probe",
+            "order": 0,
+            "properties": {
+              "firmware": "v1.2.0",
+              "status": "active",
+              "controller": null
+            },
+            "templateId": "instrument",
+            "created": "<ts>",
+            "modified": "<ts>"
+          }
+        ],
+        "path": "<path>",
+        "templates": {
+          "instrument": {
+            "label": "Instrument",
+            "fields": {
+              "firmware": {
+                "type": "version"
+              },
+              "status": {
+                "type": "enum",
+                "options": [
+                  "active",
+                  "maintenance",
+                  "retired"
+                ]
+              },
+              "controller": {
+                "type": "reference"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "step": "getCurrent",
+    "result": {
+      "ok": true,
+      "data": {
+        "version": 3,
+        "id": "<id:1>",
+        "name": "Contract Lab",
+        "created": "<ts>",
+        "modified": "<ts>",
+        "nodes": [
+          {
+            "id": "<id:2>",
+            "parentId": null,
+            "name": "Contract Lab",
+            "order": 0,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>"
+          },
+          {
+            "id": "<id:5>",
+            "parentId": "<id:2>",
+            "name": "Rack B",
+            "order": 0,
+            "properties": {},
+            "created": "<ts>",
+            "modified": "<ts>"
+          },
+          {
+            "id": "<id:4>",
+            "parentId": "<id:5>",
+            "name": "Probe",
+            "order": 0,
+            "properties": {
+              "firmware": "v1.2.0",
+              "status": "active",
+              "controller": null
+            },
+            "templateId": "instrument",
+            "created": "<ts>",
+            "modified": "<ts>"
+          }
+        ],
+        "path": "<path>",
+        "templates": {
+          "instrument": {
+            "label": "Instrument",
+            "fields": {
+              "firmware": {
+                "type": "version"
+              },
+              "status": {
+                "type": "enum",
+                "options": [
+                  "active",
+                  "maintenance",
+                  "retired"
+                ]
+              },
+              "controller": {
+                "type": "reference"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+]
