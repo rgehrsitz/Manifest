@@ -44,6 +44,7 @@ import type {
   TemplateField,
   ManifestWarning,
   ProjectWarning,
+  ReferenceBlocker,
   ImportMapping,
   ImportInspect,
   ImportPlan,
@@ -743,7 +744,16 @@ export class ProjectManager {
 
   // Delete a node and all its descendants.
   // Root node (parentId === null) cannot be deleted.
-  nodeDelete(id: string): Result<Project> {
+  //
+  // By default, deletion is blocked when a surviving node's live `reference`
+  // property — or a template `reference` field default — points into the
+  // deletion set, including mutual or cyclic references across subtrees the user
+  // can't easily clear by hand. `options.unlinkReferences` is the explicit force
+  // path: it nulls those reference properties on the survivors and clears the
+  // stale template defaults, then deletes. Safe-by-default otherwise — the
+  // blocker list rides in the error context so the renderer can show it and
+  // confirm before forcing.
+  nodeDelete(id: string, options?: { unlinkReferences?: boolean }): Result<Project> {
     if (!this.currentProject) return err(ErrorCode.PROJECT_NOT_FOUND, 'No project open')
 
     const node = this.currentProject.nodes.find(n => n.id === id)
@@ -756,27 +766,77 @@ export class ProjectManager {
     // Collect node + all descendants.
     const toDelete = this.collectDescendants(id)
     const blockers = this.findExternalReferencesTo(toDelete)
-    if (blockers.length > 0) {
-      const first = blockers[0]
-      return err(
-        ErrorCode.VALIDATION_FAILED,
-        `Cannot delete "${node.name}" because "${first.node.name}" field "${first.key}" references it`
-      )
+    if (blockers.length > 0 && !options?.unlinkReferences) {
+      const n = blockers.length
+      const message =
+        n === 1 && blockers[0].kind === 'node'
+          ? `Cannot delete "${node.name}" because "${blockers[0].nodeName}" field "${blockers[0].key}" references it`
+          : `Cannot delete "${node.name}" because ${n} reference${n === 1 ? '' : 's'} ${n === 1 ? 'points' : 'point'} into it`
+      return err(ErrorCode.VALIDATION_FAILED, message, { blockers })
     }
 
-    // Re-number siblings after deletion.
+    // Force path: clear each blocking reference. A node may hold more than one
+    // blocking reference and a template may have more than one defaulting field,
+    // so group keys by holder (node id / template id).
     const now = new Date().toISOString()
-    const remaining = this.currentProject.nodes.filter(n => !toDelete.has(n.id))
+    const unlinkKeysByNode = new Map<string, Set<string>>()
+    const clearDefaultsByTemplate = new Map<string, Set<string>>()
+    for (const b of blockers) {
+      if (b.kind === 'node' && b.nodeId) {
+        let keys = unlinkKeysByNode.get(b.nodeId)
+        if (!keys) unlinkKeysByNode.set(b.nodeId, (keys = new Set()))
+        keys.add(b.key)
+      } else if (b.kind === 'template-default' && b.templateId) {
+        let keys = clearDefaultsByTemplate.get(b.templateId)
+        if (!keys) clearDefaultsByTemplate.set(b.templateId, (keys = new Set()))
+        keys.add(b.key)
+      }
+    }
+
+    // Re-number siblings after deletion; unlink survivors in the same pass.
+    const remaining = this.currentProject.nodes
+      .filter(n => !toDelete.has(n.id))
+      .map(n => {
+        const keys = unlinkKeysByNode.get(n.id)
+        if (!keys) return n
+        const properties = { ...n.properties }
+        for (const key of keys) properties[key] = null
+        return { ...n, properties, modified: now }
+      })
     const reordered = this.renumberSiblings(remaining, node.parentId)
+
+    // Drop stale reference defaults from affected templates (immutably).
+    let nextTemplates = this.currentProject.templates
+    if (clearDefaultsByTemplate.size > 0) {
+      nextTemplates = { ...this.currentProject.templates }
+      for (const [templateId, keys] of clearDefaultsByTemplate) {
+        const template = nextTemplates[templateId]
+        if (!template) continue
+        const fields = { ...template.fields }
+        for (const key of keys) {
+          if (!fields[key]) continue
+          const { default: _drop, ...rest } = fields[key]
+          fields[key] = rest
+        }
+        nextTemplates[templateId] = { ...template, fields }
+      }
+    }
 
     const nextProject: Project = {
       ...this.currentProject,
       modified: now,
       nodes: reordered,
+      ...(nextTemplates ? { templates: nextTemplates } : {}),
     }
 
     return this.commitProjectMutation(nextProject, () => {
       this.search.deleteNodes(nextProject.path!, Array.from(toDelete))
+      // Re-index unlinked survivors so search reflects the cleared references.
+      if (unlinkKeysByNode.size > 0) {
+        for (const n of reordered) {
+          if (unlinkKeysByNode.has(n.id)) this.search.upsertNode(nextProject.path!, n)
+        }
+      }
     })
   }
 
@@ -1956,9 +2016,26 @@ export class ProjectManager {
     return { valid: true }
   }
 
-  private findExternalReferencesTo(toDelete: Set<string>): Array<{ node: ManifestNode; key: string; targetId: string }> {
+  // All incoming references into the deletion set. Returns a serializable shape
+  // (no node/template objects) so the list can ride in the IPC error context.
+  // Reports every blocker, not just the first — the renderer needs the full set
+  // to show what a force-delete would clear.
+  //
+  // Detection is gated on the CURRENT `reference` field type, deliberately:
+  //   - Live node references — a surviving node whose reference-typed property
+  //     holds an id in the deletion set.
+  //   - Template defaults — a template `reference` field whose `default` points
+  //     into the deletion set (would otherwise seed a dangling pointer into
+  //     every node later created from that template).
+  // A value left under a key that was rebound away from `reference` (or whose
+  // template was unbound) is now plain text, NOT a reference, so it is not a
+  // blocker — clearing arbitrary free-text on force-delete would be silent data
+  // loss (e.g. a free-text field holding a pasted/imported id).
+  private findExternalReferencesTo(toDelete: Set<string>): ReferenceBlocker[] {
     if (!this.currentProject) return []
-    const references: Array<{ node: ManifestNode; key: string; targetId: string }> = []
+    const nameById = new Map(this.currentProject.nodes.map(n => [n.id, n.name]))
+    const blockers: ReferenceBlocker[] = []
+
     for (const node of this.currentProject.nodes) {
       if (toDelete.has(node.id)) continue
       const templateId = node.templateId ?? null
@@ -1967,11 +2044,38 @@ export class ProjectManager {
         if (field.type !== 'reference') continue
         const value = node.properties?.[key]
         if (typeof value === 'string' && toDelete.has(value)) {
-          references.push({ node, key, targetId: value })
+          blockers.push({
+            kind: 'node',
+            nodeId: node.id,
+            nodeName: node.name,
+            key,
+            targetId: value,
+            targetName: nameById.get(value) ?? value,
+          })
         }
       }
     }
-    return references
+
+    const templates = this.currentProject.templates ?? {}
+    for (const [templateId, template] of Object.entries(templates)) {
+      for (const [key, field] of Object.entries(templateFields(template))) {
+        if (field.type !== 'reference') continue
+        const def = field.default
+        if (typeof def === 'string' && toDelete.has(def)) {
+          blockers.push({
+            kind: 'template-default',
+            nodeId: null,
+            nodeName: templateLabel(template, templateId),
+            templateId,
+            key,
+            targetId: def,
+            targetName: nameById.get(def) ?? def,
+          })
+        }
+      }
+    }
+
+    return blockers
   }
 
   // Return true if candidateId is a descendant of ancestorId.

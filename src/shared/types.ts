@@ -66,6 +66,32 @@ export interface ProjectWarning {
   path?: string
 }
 
+// One incoming reference that blocks deleting a node (or its subtree). Carried
+// in the VALIDATION_FAILED error context so the renderer can list the blockers
+// and offer a force-delete-and-unlink path. Two kinds:
+//   - 'node': a surviving node whose live `reference`-typed property points into
+//     the deletion set. Detection is gated on the CURRENT field type, so a value
+//     left under a rebound/unbound key (now plain text) is intentionally NOT a
+//     blocker — clearing arbitrary free-text would be silent data loss.
+//   - 'template-default': a template `reference` field whose `default` points
+//     into the deletion set. Left unprotected, nodeCreate would seed that stale
+//     default into every node later created from the template.
+export interface ReferenceBlocker {
+  kind: 'node' | 'template-default'
+  // The surviving node that holds the reference; null for 'template-default'.
+  nodeId: string | null
+  // Display name of the holder: the node name, or the template label for
+  // 'template-default'.
+  nodeName: string
+  // The template id whose field default points in; set only for 'template-default'.
+  templateId?: string
+  // The reference property/field key.
+  key: string
+  // The node being deleted that the reference points at.
+  targetId: string
+  targetName: string
+}
+
 export interface Project {
   version: number
   id: string

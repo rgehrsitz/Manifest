@@ -92,8 +92,15 @@ export interface ManifestAPI {
         templateId?: string | null
       }
     ): Promise<Result<Project>>
-    /** Delete node and all its descendants. Returns full updated Project. */
-    delete(id: string): Promise<Result<Project>>
+    /**
+     * Delete node and all its descendants. Returns full updated Project.
+     * Blocked by default when a surviving node's `reference` property — or a
+     * template `reference` field default — points into the deletion set; the
+     * blocking `ReferenceBlocker[]` rides in the error context. Pass
+     * `{ unlinkReferences: true }` to clear those references/defaults and force
+     * the delete.
+     */
+    delete(id: string, options?: { unlinkReferences?: boolean }): Promise<Result<Project>>
     /** Move node to newParentId (appended as last child) or reorder within same parent. */
     move(id: string, newParentId: string, newOrder: number): Promise<Result<Project>>
     /** Chronological history of one node across all snapshots, plus revert/recover events that changed it. */

@@ -2,7 +2,7 @@
 
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte'
-  import type { Project, ManifestNode, ManifestWarning, ProjectWarning, NodeTemplate, PropertyType, RecoveryPoint, SearchResult, Snapshot, SnapshotTimelineEvent, ImportResult } from '../../shared/types'
+  import type { Project, ManifestNode, ManifestWarning, ProjectWarning, NodeTemplate, PropertyType, RecoveryPoint, ReferenceBlocker, SearchResult, Snapshot, SnapshotTimelineEvent, ImportResult } from '../../shared/types'
   import { isUsableTemplate, templateLabel } from '../../shared/validation'
   import type { MergedTree } from '../../shared/merged-tree'
   import { computeSubtreeSummaries } from '../../shared/merged-tree'
@@ -503,8 +503,40 @@
     if (result.ok) {
       applyProject(result.data)
       markWorkingCopyChanged()
+      return
     }
-    else showToast(result.error.message)
+
+    // Blocked by incoming references? Offer to clear them and force the delete.
+    // Validate the shape — context crosses the IPC boundary as unknown.
+    const rawBlockers = result.error.context?.blockers
+    const blockers = Array.isArray(rawBlockers) ? (rawBlockers as ReferenceBlocker[]) : []
+    if (blockers.length > 0) {
+      const list = blockers
+        .map(b => {
+          const holder = b.kind === 'template-default' ? `Template "${b.nodeName}" default` : b.nodeName
+          return `• ${holder} → ${b.key} (→ ${b.targetName})`
+        })
+        .join('\n')
+      // Count distinct holders for accurate copy: a holder may contribute more
+      // than one blocker (multiple reference keys), and template defaults aren't
+      // nodes — so blockers.length is not a node count.
+      const n = blockers.length
+      const ref = `reference${n === 1 ? '' : 's'}`
+      const confirmed = window.confirm(
+        `"${node.name}" has ${n} incoming ${ref}:\n\n${list}\n\n` +
+        `Delete "${node.name}" and clear ${n === 1 ? 'it' : `all ${n}`}?`
+      )
+      if (!confirmed) return
+      const forced = await window.api.node.delete(id, { unlinkReferences: true })
+      if (forced.ok) {
+        applyProject(forced.data)
+        markWorkingCopyChanged()
+      }
+      else showToast(forced.error.message)
+      return
+    }
+
+    showToast(result.error.message)
   }
 
   function handleRenameRequest() {
