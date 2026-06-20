@@ -44,14 +44,10 @@ These items were explicitly deferred during the 2026-04-10 eng review of the tre
 **Depends on:** Tree rewrite (PR #1) landing
 
 ### Typeahead / Search-in-Tree
+**Status:** DONE — inline type-to-jump shipped on `feat/tree-typeahead` (2026-06-20, 31a4f14). Typing while the tree is focused jumps to nodes by name (case-insensitive), reveals and selects the active match, and highlights all matches; Enter/Shift+Enter cycle, Backspace edits, Escape clears. Core logic in `src/renderer/src/lib/tree-typeahead.ts` (`collectTypeaheadMatches`, `cycleIndex`, `splitHighlight`) with unit coverage in `tests/unit/renderer/tree-typeahead.test.ts` and E2E in `tests/e2e/tree.e2e.ts`.
 **What:** Typing in the tree filters/highlights matching nodes inline without leaving the tree to the search panel.
 **Why:** Faster navigation in large hierarchies with known node names.
-**Pros:** Common UX pattern in file trees. Reduces round-trip to search panel.
-**Cons:** State management interplay with expanded set is non-trivial. Highlight rendering needs another VisibleRow decoration variant.
-**Context:** Deferred from tree rewrite plan (2026-04-10). Existing search panel works; this is an enhancement.
-**Effort:** S (human) -> S (CC+gstack)
-**Priority:** P1.5
-**Depends on:** Tree rewrite (PR #1) landing
+**Was:** P1.5, deferred from tree rewrite plan (2026-04-10). Existing search panel works; this was an enhancement.
 
 ### Inline Rename in Tree Row (F2 in-row)
 **What:** Pressing F2 on a tree row shows a name input directly inside the row, without switching to the Detail pane.
