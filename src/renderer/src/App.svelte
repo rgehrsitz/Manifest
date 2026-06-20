@@ -9,6 +9,7 @@
   import { computeSubtreeSummaries } from '../../shared/merged-tree'
   import { buildTree, getSiblingIndex, getAncestorIds } from './lib/tree'
   import { flattenTree } from './lib/tree-rows'
+  import { collectTypeaheadMatches, cycleIndex } from './lib/tree-typeahead'
   import ManifestView from './components/ManifestView.svelte'
   import DetailPane from './components/DetailPane.svelte'
   import MoveToDialog from './components/MoveToDialog.svelte'
@@ -43,6 +44,15 @@
   let searchResultsOpen: boolean = $state(false)
   let searching:   boolean       = $state(false)
   let selectedScrollAlign: 'auto' | 'center' = $state('auto')
+
+  // Inline typeahead (type-to-jump) state — browse mode only. The query is a
+  // transient buffer driven by keystrokes on the focused tree; matches are node
+  // ids in tree pre-order and the active one is revealed + selected.
+  let typeaheadQuery: string = $state('')
+  let typeaheadMatches: string[] = $state([])
+  let typeaheadIndex: number = $state(0)
+  const typeaheadActive = $derived(typeaheadQuery.length > 0)
+  const typeaheadMatchSet = $derived(new Set(typeaheadMatches))
 
   // Inline add-child state
   let addingChildTo: string | null = $state(null)
@@ -266,6 +276,11 @@
 
   function applyProject(p: Project) {
     project = p
+    // A typeahead match set is computed against the previous tree; once the
+    // project mutates (node added/deleted/moved/renamed, import, revert, or an
+    // external file reload) those ids and the match count can be stale, so end
+    // typeahead rather than let the bar lie or the index point at a deleted id.
+    if (typeaheadActive) clearTypeahead()
     // If selected node was deleted, fall back to root.
     // Ghost selections (issue #3) live in mergedTree.nodes, not project.nodes,
     // so don't clobber them just because the live project mutated.
@@ -339,6 +354,7 @@
     setSelection(null)
     expandedIds = new Set()
     clearSearch()
+    clearTypeahead()
     appState = 'welcome'
     newName = ''
     newPath = ''
@@ -376,6 +392,56 @@
     selectedScrollAlign = 'auto'
     setSelection(id)
     addingChildTo = null
+    // A deliberate click ends an in-progress typeahead so the bar doesn't linger.
+    clearTypeahead()
+  }
+
+  // ─── Inline typeahead (type-to-jump) ───────────────────────────────────────
+  function clearTypeahead(): void {
+    typeaheadQuery = ''
+    typeaheadMatches = []
+    typeaheadIndex = 0
+  }
+
+  // Recompute matches for the current query and reveal the active one.
+  function refreshTypeahead(): void {
+    if (!typeaheadQuery || !tree) {
+      typeaheadMatches = []
+      typeaheadIndex = 0
+      return
+    }
+    typeaheadMatches = collectTypeaheadMatches(tree, typeaheadQuery)
+    typeaheadIndex = 0
+    revealTypeaheadMatch()
+  }
+
+  // Expand ancestors of the active match (never collapsing other branches),
+  // select it, and scroll it to center.
+  function revealTypeaheadMatch(): void {
+    const id = typeaheadMatches[typeaheadIndex]
+    if (!id || !project) return
+    const ancestors = getAncestorIds(id, project.nodes)
+    expandedIds = new Set([...expandedIds, ...ancestors])
+    selectedScrollAlign = 'center'
+    setSelection(id)
+  }
+
+  function handleTypeaheadInput(ch: string): void {
+    if (compareMode) return
+    typeaheadQuery += ch
+    refreshTypeahead()
+  }
+
+  function handleTypeaheadBackspace(): void {
+    if (!typeaheadQuery) return
+    typeaheadQuery = typeaheadQuery.slice(0, -1)
+    refreshTypeahead()
+  }
+
+  function handleTypeaheadCycle(reverse: boolean): void {
+    if (typeaheadMatches.length === 0) return
+    typeaheadIndex = cycleIndex(typeaheadIndex, typeaheadMatches.length, reverse)
+    revealTypeaheadMatch()
   }
 
   function handleToggle(id: string) {
@@ -678,6 +744,9 @@
   let searchTimer: ReturnType<typeof setTimeout> | null = null
 
   function handleSearchInput(e: Event) {
+    // The full search panel supersedes inline typeahead — end it so a stale
+    // "Find" bar and match set don't linger behind the search results.
+    clearTypeahead()
     searchQuery = (e.target as HTMLInputElement).value
     searchResultsOpen = true
     if (searchTimer) clearTimeout(searchTimer)
@@ -830,6 +899,7 @@
       }
       compareExpanded = new Set([...expandedIds, ...ancestors])
       compareMode = true
+      clearTypeahead()  // typeahead is a browse-mode aid; don't carry it into compare
 
       // Restore a stashed ghost selection if this snapshot pair still
       // contains the same ghost id (issue #3). Otherwise drop the stash —
@@ -1398,6 +1468,24 @@
         <!-- Tree -->
         {:else}
           <div class="flex-1 flex flex-col overflow-hidden" data-testid="tree">
+            <!-- Inline typeahead bar — only while editing is unlocked (browse mode);
+                 compare/revert/recovery disable the key handler, so the bar must
+                 not linger as a stale, non-interactive UI. -->
+            {#if !editingLocked && typeaheadActive}
+              <div
+                class="shrink-0 flex items-center gap-2 border-b border-stone-200 bg-amber-50 px-3 py-1.5"
+                data-testid="tree-typeahead-bar"
+              >
+                <span class="text-[10px] font-semibold uppercase tracking-wide text-amber-700">Find</span>
+                <span class="flex-1 truncate text-sm text-stone-800" data-testid="tree-typeahead-query">{typeaheadQuery}</span>
+                <span class="text-xs tabular-nums text-stone-500" data-testid="tree-typeahead-count">
+                  {typeaheadMatches.length === 0
+                    ? 'No matches'
+                    : `${typeaheadIndex + 1}/${typeaheadMatches.length}`}
+                </span>
+                <span class="hidden sm:inline text-[10px] text-stone-400">↵ next · ⇧↵ prev · esc clear</span>
+              </div>
+            {/if}
             <div class="flex-1 overflow-hidden">
               <ManifestView
                 rows={flatRows}
@@ -1428,6 +1516,13 @@
                 onDelete={handleDelete}
                 onMoveTo={handleMoveTo}
                 editingDisabled={editingLocked}
+                matchedIds={typeaheadMatchSet}
+                matchQuery={typeaheadQuery}
+                typeaheadActive={typeaheadActive}
+                onTypeaheadInput={handleTypeaheadInput}
+                onTypeaheadBackspace={handleTypeaheadBackspace}
+                onTypeaheadCycle={handleTypeaheadCycle}
+                onTypeaheadClear={clearTypeahead}
               />
             </div>
 

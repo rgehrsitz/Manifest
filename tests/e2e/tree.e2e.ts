@@ -158,3 +158,70 @@ test('arrow key navigation moves through visible nodes', async ({
   await appPage.getByTestId('manifest-view').press('Enter')
   await expect(appPage.getByTestId('detail-pane')).toContainText('Beta')
 })
+
+test('inline typeahead jumps to and cycles matching nodes', async ({
+  appPage,
+  electronApp,
+  workspaceDir,
+}) => {
+  await appPage.getByTestId('create-project-btn').click()
+  await appPage.getByTestId('project-name-input').fill('Typeahead Lab')
+
+  await electronApp.evaluate(({ dialog }, path) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] })
+  }, workspaceDir)
+
+  await appPage.getByTestId('choose-folder-btn').click()
+  await appPage.getByTestId('create-btn').click()
+  await expect(appPage.getByTestId('project-view')).toBeVisible()
+
+  for (const name of ['Rack Alpha', 'Rack Beta', 'Shelf']) {
+    await appPage
+      .locator('[data-testid="tree-node"]', { hasText: 'Typeahead Lab' })
+      .click({ button: 'right' })
+    await appPage.getByRole('menuitem', { name: 'Add Child' }).click()
+    await appPage.getByTestId('add-child-input').fill(name)
+    await appPage.getByTestId('add-child-commit').click()
+    await expect(appPage.locator('[data-testid="tree-node"]', { hasText: name })).toBeVisible()
+  }
+
+  const view = appPage.getByTestId('manifest-view')
+  await view.focus()
+
+  // Type to jump: "rack" matches both racks; the bar appears and the first
+  // match (Rack Alpha, pre-order) is selected.
+  for (const ch of 'rack') await view.press(ch)
+  await expect(appPage.getByTestId('tree-typeahead-bar')).toBeVisible()
+  await expect(appPage.getByTestId('tree-typeahead-query')).toHaveText('rack')
+  await expect(appPage.getByTestId('tree-typeahead-count')).toHaveText('1/2')
+  await expect(appPage.getByTestId('detail-pane')).toContainText('Rack Alpha')
+
+  // Both matches are highlighted in the tree.
+  await expect(
+    appPage.locator('[data-testid="tree-node"][data-row-matched="true"]')
+  ).toHaveCount(2)
+
+  // Enter cycles to the next match.
+  await view.press('Enter')
+  await expect(appPage.getByTestId('tree-typeahead-count')).toHaveText('2/2')
+  await expect(appPage.getByTestId('detail-pane')).toContainText('Rack Beta')
+
+  // Shift+Enter cycles back to the previous match.
+  await view.press('Shift+Enter')
+  await expect(appPage.getByTestId('tree-typeahead-count')).toHaveText('1/2')
+
+  // Backspace edits the query in place (both racks still match "rac").
+  await view.press('Backspace')
+  await expect(appPage.getByTestId('tree-typeahead-query')).toHaveText('rac')
+  await expect(appPage.getByTestId('tree-typeahead-count')).toHaveText('1/2')
+
+  // An arrow key ends typeahead and resumes normal navigation.
+  await view.press('ArrowDown')
+  await expect(appPage.getByTestId('tree-typeahead-bar')).toHaveCount(0)
+
+  // Re-entering then Escape also clears.
+  await view.press('s')
+  await expect(appPage.getByTestId('tree-typeahead-bar')).toBeVisible()
+  await view.press('Escape')
+  await expect(appPage.getByTestId('tree-typeahead-bar')).toHaveCount(0)
+})
