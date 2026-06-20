@@ -383,3 +383,79 @@ test('a typed number field normalizes its visible draft after a no-op commit', a
   await units.press('Enter')           // normalizes back to 5 (stored value unchanged)
   await expect(units).toHaveValue('5') // draft must reflect the canonical form
 })
+
+test('compare mode resolves typed fields per side (ghost uses the from-snapshot template)', async ({
+  appPage,
+  electronApp,
+  workspaceDir,
+}) => {
+  const projectName = 'Per-Side Template Lab'
+  await createProjectThroughUi(appPage, electronApp, workspaceDir, projectName)
+
+  // Template "Gauge" with a single typed field, voltage.
+  await appPage.getByTestId('open-templates-btn').click()
+  await expect(appPage.getByTestId('template-manager')).toBeVisible()
+  await appPage.getByTestId('template-label').fill('Gauge')
+  await appPage.getByTestId('template-add-field').click()
+  await appPage.getByTestId('field-key').nth(0).fill('voltage')
+  await appPage.getByTestId('field-type').nth(0).selectOption('number')
+  await appPage.getByTestId('template-save').click()
+  await expect(appPage.getByTestId('template-list-item').filter({ hasText: 'Gauge' })).toBeVisible()
+  await appPage.getByTestId('template-manager-close').click()
+
+  // Two nodes bound to the template: one we'll keep, one we'll delete.
+  for (const name of ['Keeper', 'Old Gauge']) {
+    await openContextMenuAction(appPage, projectName, 'Add Child')
+    await appPage.getByTestId('add-child-template').selectOption('gauge')
+    await appPage.getByTestId('add-child-input').fill(name)
+    await appPage.getByTestId('add-child-commit').click()
+    await expect(treeRow(appPage, name)).toBeVisible()
+  }
+
+  await openSnapshotsPanel(appPage)
+  await createSnapshot(appPage, 'v1')
+
+  // After v1: delete Old Gauge (→ ghost in compare) and add a NEW field
+  // 'amperage' to the template (so the current schema differs from v1's).
+  appPage.once('dialog', (dialog) => dialog.accept())
+  await openContextMenuAction(appPage, 'Old Gauge', 'Delete…')
+  await expect(treeRow(appPage, 'Old Gauge')).toHaveCount(0)
+
+  await appPage.getByTestId('open-templates-btn').click()
+  await appPage.getByTestId('template-list-item').filter({ hasText: 'Gauge' }).click()
+  await appPage.getByTestId('template-add-field').click()
+  await appPage.getByTestId('field-key').nth(1).fill('amperage')
+  await appPage.getByTestId('field-type').nth(1).selectOption('number')
+  await appPage.getByTestId('template-save').click()
+  await expect(appPage.getByTestId('template-form-error')).toHaveCount(0)
+  await appPage.getByTestId('template-manager-close').click()
+
+  // Edit Keeper's voltage so it's a CHANGED node (property-changed) — it then
+  // stays full/visible in compare instead of being folded as unchanged, which
+  // lets us assert the live (TO) side inside compare mode below.
+  await treeRow(appPage, 'Keeper').click()
+  await expect(appPage.getByTestId('tpl-field-amperage')).toBeVisible() // current schema has both
+  const keeperVoltage = appPage.getByTestId('tpl-input-voltage')
+  await keeperVoltage.fill('42')
+  await keeperVoltage.press('Enter')
+
+  await createSnapshot(appPage, 'v2')
+  await compareSnapshots(appPage, 'v1', 'v2')
+
+  // Live "Keeper" is a TO-side node → current template (voltage + amperage).
+  // Asserts the live branch of the per-side resolution WHILE in compare mode.
+  await treeRow(appPage, 'Keeper').click()
+  await expect(appPage.getByTestId('tpl-field-voltage')).toBeVisible()
+  await expect(appPage.getByTestId('tpl-field-amperage')).toBeVisible()
+
+  // The ghost "Old Gauge" is a FROM-side node → it must render with v1's template
+  // (voltage only). Before the fix it used the current template and showed an
+  // amperage field that never existed when the node did. (Removed nodes are
+  // changed, so the ghost stays visible — not folded like unchanged nodes.)
+  const ghost = appPage.locator('[data-testid="tree-node"][data-row-ghost="true"]', { hasText: 'Old Gauge' })
+  await expect(ghost).toBeVisible()
+  await ghost.click()
+  await expect(appPage.getByTestId('detail-tombstone-banner')).toBeVisible()
+  await expect(appPage.getByTestId('tpl-field-voltage')).toBeVisible()
+  await expect(appPage.getByTestId('tpl-field-amperage')).toHaveCount(0)
+})

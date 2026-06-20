@@ -6,7 +6,7 @@
   import { isUsableTemplate, templateLabel } from '../../shared/validation'
   import { snapshotRefLabel } from '../../shared/snapshot-ref'
   import type { MergedTree } from '../../shared/merged-tree'
-  import { computeSubtreeSummaries } from '../../shared/merged-tree'
+  import { computeSubtreeSummaries, templatesForNode } from '../../shared/merged-tree'
   import { buildTree, getSiblingIndex, getAncestorIds } from './lib/tree'
   import { flattenTree } from './lib/tree-rows'
   import ManifestView from './components/ManifestView.svelte'
@@ -163,7 +163,12 @@
   const detailProject = $derived.by(() => {
     if (!project) return null
     if (compareMode && mergedTree) {
-      return { ...project, nodes: mergedTree.nodes }
+      // Resolve the inspected node's typed fields against the side it belongs
+      // to (ghost → from-snapshot templates, live → to-snapshot templates), so
+      // a node bound to a template whose schema changed between the two
+      // snapshots isn't mislabeled by the inspector. See templatesForNode.
+      const templates = templatesForNode(selectedNode, mergedTree)
+      return { ...project, nodes: mergedTree.nodes, templates }
     }
     return project
   })

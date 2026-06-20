@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildMergedTree, computeSubtreeSummaries } from '../../../src/shared/merged-tree'
+import { buildMergedTree, computeSubtreeSummaries, templatesForNode } from '../../../src/shared/merged-tree'
 import { diffProjects } from '../../../src/shared/diff-engine'
 import type { Project, ManifestNode } from '../../../src/shared/types'
 
@@ -53,6 +53,55 @@ function findGhost(merged: ReturnType<typeof merge>, originalId: string) {
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
+
+describe('buildMergedTree — per-side templates', () => {
+  it('carries each side\'s templates so a node renders with its own schema', () => {
+    const from: Project = {
+      ...makeProject([n('root', null, 0), n('gauge', 'root', 0, 'Gauge', { voltage: 5 })]),
+      templates: { device: { label: 'Device', fields: { voltage: { type: 'number' } } } },
+    }
+    const to: Project = {
+      // Same template id, different schema (voltage replaced by amperage).
+      ...makeProject([n('root', null, 0)]),
+      templates: { device: { label: 'Device', fields: { amperage: { type: 'number' } } } },
+    }
+    const merged = buildMergedTree(from, to, diffProjects(from, to), 'snap-a', 'snap-b')
+
+    // Both schemas are preserved, distinctly, on their own side.
+    expect(Object.keys(merged.fromTemplates.device.fields)).toEqual(['voltage'])
+    expect(Object.keys(merged.toTemplates.device.fields)).toEqual(['amperage'])
+  })
+
+  it('defaults to empty template maps when a side has no templates', () => {
+    const merged = merge([n('root', null, 0)], [n('root', null, 0)])
+    expect(merged.fromTemplates).toEqual({})
+    expect(merged.toTemplates).toEqual({})
+  })
+
+  it('templatesForNode resolves by status: ghost→from, live→to, null→to', () => {
+    const from: Project = {
+      ...makeProject([n('root', null, 0), n('g', 'root', 0)]),
+      templates: { device: { label: 'Device', fields: { voltage: { type: 'number' } } } },
+    }
+    const to: Project = {
+      ...makeProject([n('root', null, 0)]),
+      templates: { device: { label: 'Device', fields: { amperage: { type: 'number' } } } },
+    }
+    const merged = buildMergedTree(from, to, diffProjects(from, to), 'snap-a', 'snap-b')
+
+    const ghost = merged.nodes.find(nd => nd.id === 'ghost:g')!  // status 'removed'
+    const live = merged.nodes.find(nd => nd.id === 'root')!      // status 'unchanged'
+    expect(ghost.status).toBe('removed')
+    expect(templatesForNode(ghost, merged)).toBe(merged.fromTemplates)
+    expect(templatesForNode(live, merged)).toBe(merged.toTemplates)
+    expect(templatesForNode(null, merged)).toBe(merged.toTemplates)
+
+    // Resolution is by status, not the id string: a live node whose id happens
+    // to start with `ghost:` still resolves to the TO side.
+    expect(templatesForNode({ status: 'unchanged', id: 'ghost:fake' } as never, merged))
+      .toBe(merged.toTemplates)
+  })
+})
 
 describe('buildMergedTree', () => {
   // ── Identity ────────────────────────────────────────────────────────────────
