@@ -6,6 +6,7 @@ import { ProjectManager } from '../../../src/main/project-manager'
 import { GitService } from '../../../src/main/git-service'
 import { HistoryIndexService } from '../../../src/main/history-index'
 import { SearchIndexService } from '../../../src/main/search-index'
+import { CURRENT_PROJECT_REF } from '../../../src/shared/snapshot-ref'
 
 const noopLogger = {
   error: () => {},
@@ -87,6 +88,85 @@ describe('snapshot workflow', () => {
       'renamed',
       'property-changed',
     ])
+  })
+
+  it('compares a snapshot to the live current project (unsnapshotted changes)', async () => {
+    const rootId = manager.getCurrent()!.nodes.find((node) => node.parentId === null)!.id
+    manager.nodeCreate(rootId, 'Rack A')
+    const rackA = manager.getCurrent()!.nodes.find((node) => node.name === 'Rack A')!
+    await manager.snapshotCreate('baseline')
+
+    // Edit AFTER the snapshot — these changes exist only in the current project.
+    manager.nodeUpdate(rackA.id, { name: 'Rack Alpha' })
+    manager.nodeCreate(rootId, 'Rack B')
+
+    const compared = await manager.snapshotCompare('baseline', CURRENT_PROJECT_REF)
+    expect(compared.ok).toBe(true)
+    if (!compared.ok) return
+    expect(compared.data.map((diff) => diff.changeType).sort()).toEqual(['added', 'renamed'])
+
+    // The merged tree reflects the live edits and labels the current side.
+    const merged = await manager.snapshotLoadCompare('baseline', CURRENT_PROJECT_REF)
+    expect(merged.ok).toBe(true)
+    if (!merged.ok) return
+    expect(merged.data.fromSnapshot).toBe('baseline')
+    expect(merged.data.toSnapshot).toBe(CURRENT_PROJECT_REF)
+    expect(merged.data.summary.added).toBe(1)
+    expect(merged.data.summary.renamed).toBe(1)
+  })
+
+  it('compares the live current project as the FROM side (direction inverts)', async () => {
+    const rootId = manager.getCurrent()!.nodes.find((node) => node.parentId === null)!.id
+    manager.nodeCreate(rootId, 'Rack A')
+    await manager.snapshotCreate('baseline')
+    // Rack B exists only in the current project (added after the snapshot).
+    manager.nodeCreate(rootId, 'Rack B')
+
+    // current = FROM, snapshot = TO: a node present in current but absent in the
+    // snapshot is a removal in this direction (the inverse of the to-side case).
+    const compared = await manager.snapshotCompare(CURRENT_PROJECT_REF, 'baseline')
+    expect(compared.ok).toBe(true)
+    if (!compared.ok) return
+    expect(compared.data.map((diff) => diff.changeType)).toContain('removed')
+  })
+
+  it('builds a diff report labeling the current-project side (either direction)', async () => {
+    const rootId = manager.getCurrent()!.nodes.find((node) => node.parentId === null)!.id
+    manager.nodeCreate(rootId, 'Rack A')
+    await manager.snapshotCreate('baseline')
+    manager.nodeCreate(rootId, 'Rack B')
+
+    const toReport = await manager.buildReport('baseline', CURRENT_PROJECT_REF, 'markdown')
+    expect(toReport.ok).toBe(true)
+    if (!toReport.ok) return
+    expect(toReport.data.content).toContain('Current project')
+    expect(toReport.data.content).toContain('Rack B')
+
+    // Current as FROM: the blank date/hash must not render as "undefined"/"NaN".
+    const fromReport = await manager.buildReport(CURRENT_PROJECT_REF, 'baseline', 'markdown')
+    expect(fromReport.ok).toBe(true)
+    if (!fromReport.ok) return
+    expect(fromReport.data.content).toContain('Current project')
+    expect(fromReport.data.content).not.toMatch(/undefined|NaN/)
+    // The suggested filename uses a clear token, not bare "current" (which reads
+    // like an ordinary snapshot named "current").
+    expect(toReport.data.suggestedName).toContain('current-project')
+    expect(toReport.data.suggestedName).not.toContain('@')
+  })
+
+  it('treats comparing a ref against itself as an empty diff (no redundant read)', async () => {
+    const rootId = manager.getCurrent()!.nodes.find((node) => node.parentId === null)!.id
+    manager.nodeCreate(rootId, 'Rack A')
+    await manager.snapshotCreate('baseline')
+
+    // Self-compare is a no-op by definition; the guard short-circuits it.
+    const selfCurrent = await manager.snapshotCompare(CURRENT_PROJECT_REF, CURRENT_PROJECT_REF)
+    expect(selfCurrent.ok).toBe(true)
+    if (selfCurrent.ok) expect(selfCurrent.data).toEqual([])
+
+    const selfSnapshot = await manager.snapshotCompare('baseline', 'baseline')
+    expect(selfSnapshot.ok).toBe(true)
+    if (selfSnapshot.ok) expect(selfSnapshot.data).toEqual([])
   })
 
   it('reports snapshot read failures distinctly from commit failures', async () => {
