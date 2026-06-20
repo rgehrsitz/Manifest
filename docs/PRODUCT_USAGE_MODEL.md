@@ -413,6 +413,8 @@ Use:
 - `Snapshot Timeline`
 - `Revert Event`
 - `Compare snapshots`
+- `Current project` (as a compare source/target)
+- `Compare current project to snapshot`
 
 Avoid:
 

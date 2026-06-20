@@ -213,6 +213,9 @@ a product UX that never exposes Git directly.
 - **Snapshot listing:** `git tag --list "snapshot/*" --sort=-creatordate` to enumerate.
 - **Snapshot compare:** `git show snapshot/<name1>:manifest.json` vs
   `git show snapshot/<name2>:manifest.json`, then run the semantic diff engine.
+  Either side may be the `@current` sentinel ref, in which case that side is read
+  from the live in-memory current project instead of git, so the user can compare
+  unsnapshotted work against a snapshot without creating one first.
 - **Restore:** `git show snapshot/<name>:manifest.json > manifest.json` to restore
   a prior state (creates a new working state, does not rewrite history).
 - **Concurrency guard (UI):** Disable snapshot UI controls (create, restore) while

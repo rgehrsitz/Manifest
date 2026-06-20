@@ -31,7 +31,7 @@ The core idea is simple. Your project lives as a readable `manifest.json` file o
 - Edit node properties in the detail pane.
 - Autosave project changes back to disk.
 - Create named snapshots and restore prior states.
-- Compare snapshots with a merged diff/tree view.
+- Compare snapshots, or compare the current project against a snapshot, with a merged diff/tree view.
 - Search node names and property values.
 
 ## Stack
