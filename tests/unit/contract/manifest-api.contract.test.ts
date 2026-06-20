@@ -64,6 +64,12 @@ beforeEach(() => {
 
 afterEach(async () => {
   for (const m of managers) {
+    // Only close managers that still have a project open — a scenario may have
+    // already closed one mid-test (e.g. persistence closes session 1 before
+    // reopening). flushAndClose() nulls currentProject, so getCurrent() is the
+    // reliable "already closed" signal; double-closing would no-op into a
+    // PROJECT_NOT_FOUND Result we'd be ignoring anyway.
+    if (!m.getCurrent()) continue
     m.cancelAutosave()
     await m.flushAndClose()
   }
@@ -127,10 +133,11 @@ async function runScenario(goldenName: string, fn: (ctx: Ctx) => Promise<void>):
 
   const log = normalize(rawLog, scrub)
   const golden = join(GOLDEN_DIR, goldenName)
-  // Generate ONLY under UPDATE_GOLDENS. A missing golden is a hard failure — it
-  // must never write-and-pass, or a deleted/uncommitted golden would silently
-  // self-bless whatever the backend emits instead of catching a regression.
-  if (process.env.UPDATE_GOLDENS) {
+  // Generate ONLY under the explicit UPDATE_GOLDENS=1 (not any non-empty value,
+  // so a stray `UPDATE_GOLDENS=0` can't silently regenerate baselines). A missing
+  // golden is a hard failure — it must never write-and-pass, or a deleted/
+  // uncommitted golden would self-bless whatever the backend emits.
+  if (process.env.UPDATE_GOLDENS === '1') {
     mkdirSync(GOLDEN_DIR, { recursive: true })
     writeFileSync(golden, JSON.stringify(log, null, 2) + '\n', 'utf8')
     return
