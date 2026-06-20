@@ -155,9 +155,10 @@ export class ProjectManager {
       this.openHistoryIndex(projectPath)
 
       const projectWarnings = this.collectProjectWarnings(projectPath)
-      this.currentProject = project
+      const runtimeProject = this.withProjectWarnings(project, projectWarnings)
+      this.currentProject = runtimeProject
       this.logger.info('project created', { name, path: projectPath })
-      return ok(projectWarnings.length > 0 ? { ...project, projectWarnings } : project)
+      return ok(runtimeProject)
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
       this.logger.error('project create failed', { name, path: projectPath, error: msg })
@@ -227,10 +228,11 @@ export class ProjectManager {
       }
       this.openHistoryIndex(projectPath)
 
-      this.currentProject = project
+      const runtimeProject = this.withProjectWarnings(project, projectWarnings)
+      this.currentProject = runtimeProject
       this.logger.info('project opened', { name: project.name, path: projectPath, nodes: project.nodes.length })
       this.scheduleHistoryBackfill()
-      return ok(this.withRuntimeWarnings(project, warnings, projectWarnings))
+      return ok(this.withLoadWarnings(runtimeProject, warnings))
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
       this.logger.error('project open failed', { path: projectPath, error: msg })
@@ -2092,16 +2094,19 @@ export class ProjectManager {
     }]
   }
 
-  private withRuntimeWarnings(
-    project: Project,
-    loadWarnings: ManifestWarning[],
-    projectWarnings: ProjectWarning[],
-  ): Project {
-    if (loadWarnings.length === 0 && projectWarnings.length === 0) return project
+  private withProjectWarnings(project: Project, projectWarnings: ProjectWarning[]): Project {
+    if (projectWarnings.length === 0) return project
     return {
       ...project,
-      ...(loadWarnings.length > 0 ? { loadWarnings } : {}),
-      ...(projectWarnings.length > 0 ? { projectWarnings } : {}),
+      projectWarnings,
+    }
+  }
+
+  private withLoadWarnings(project: Project, loadWarnings: ManifestWarning[]): Project {
+    if (loadWarnings.length === 0) return project
+    return {
+      ...project,
+      loadWarnings,
     }
   }
 

@@ -57,13 +57,15 @@ describe('cloud sync project warnings', () => {
 
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.data.projectWarnings).toEqual([
+    const expectedWarnings = [
       expect.objectContaining({
         code: 'CLOUD_SYNC_PROJECT',
         provider: 'Dropbox',
         title: 'Project is inside Dropbox',
       }),
-    ])
+    ]
+    expect(result.data.projectWarnings).toEqual(expectedWarnings)
+    expect(manager.getCurrent()?.projectWarnings).toEqual(expectedWarnings)
 
     const persisted = JSON.parse(readFileSync(join(parent, 'Cloud Lab', 'manifest.json'), 'utf8'))
     expect(persisted.projectWarnings).toBeUndefined()
@@ -78,14 +80,24 @@ describe('cloud sync project warnings', () => {
 
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.data.projectWarnings).toEqual([
+    const expectedWarnings = [
       expect.objectContaining({
         code: 'CLOUD_SYNC_PROJECT',
         provider: 'OneDrive',
         title: 'Project is inside OneDrive',
       }),
-    ])
-    expect(manager.getCurrent()?.projectWarnings).toBeUndefined()
+    ]
+    expect(result.data.projectWarnings).toEqual(expectedWarnings)
+    expect(manager.getCurrent()?.projectWarnings).toEqual(expectedWarnings)
+
+    const update = manager.nodeCreate('root-id', 'Rack A')
+    expect(update.ok).toBe(true)
+    if (!update.ok) return
+    expect(update.data.projectWarnings).toEqual(expectedWarnings)
+
+    await manager.saveProject()
+    const persisted = JSON.parse(readFileSync(join(projectDir, 'manifest.json'), 'utf8'))
+    expect(persisted.projectWarnings).toBeUndefined()
   })
 
   it('does not warn for ordinary local paths', async () => {
