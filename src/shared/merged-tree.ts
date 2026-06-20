@@ -10,7 +10,7 @@
 // parsed snapshots are already available) and the result is serialised across
 // the IPC boundary as a single payload.
 
-import type { ManifestNode, DiffEntry, Project, TemplateDiffEntry } from './types'
+import type { ManifestNode, DiffEntry, Project, TemplateDiffEntry, NodeTemplate } from './types'
 import { diffTemplates } from './diff-engine'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -52,6 +52,15 @@ export interface MergedTree {
   nodes: MergedTreeNode[]
   fromSnapshot: string
   toSnapshot: string
+  /**
+   * Templates from each side of the comparison. A node's typed fields must be
+   * resolved against the side it belongs to: live (B) nodes use `toTemplates`,
+   * ghost (removed / moved-from, A) nodes use `fromTemplates`. Without both, the
+   * inspector would render a historical node with the current schema and
+   * mislabel/hide typed fields when the template changed between snapshots.
+   */
+  fromTemplates: Record<string, NodeTemplate>
+  toTemplates: Record<string, NodeTemplate>
   summary: {
     added: number
     removed: number
@@ -63,6 +72,26 @@ export interface MergedTree {
   }
   /** Project-level template/schema changes (not tied to a single node). */
   templateChanges: TemplateDiffEntry[]
+}
+
+/** Ghost merged-tree ids are minted as `ghost:${originalId}` (see makeGhost). */
+export const GHOST_ID_PREFIX = 'ghost:'
+
+/**
+ * Which side's templates an inspected merged node resolves its typed fields
+ * against. A ghost (removed / moved-from, the A-side node) uses the FROM
+ * snapshot's templates; every live (B-side) node uses the TO snapshot's.
+ *
+ * Keyed on the node's `status`, NOT an id-prefix convention — node ids are not
+ * loader-enforced, so a (pathological) real node whose id starts with `ghost:`
+ * still resolves by what it actually is, not by how its id reads.
+ */
+export function templatesForNode(
+  node: { status?: MergedStatus } | null | undefined,
+  tree: Pick<MergedTree, 'fromTemplates' | 'toTemplates'>
+): Record<string, NodeTemplate> {
+  const fromSide = node?.status === 'removed' || node?.status === 'moved-from'
+  return (fromSide ? tree.fromTemplates : tree.toTemplates) ?? {}
 }
 
 // ─── Builder ─────────────────────────────────────────────────────────────────
@@ -136,7 +165,15 @@ export function buildMergedTree(
 
   const templateChanges = diffTemplates(from, to)
 
-  return { nodes: merged, fromSnapshot, toSnapshot, summary, templateChanges }
+  return {
+    nodes: merged,
+    fromSnapshot,
+    toSnapshot,
+    fromTemplates: from.templates ?? {},
+    toTemplates: to.templates ?? {},
+    summary,
+    templateChanges,
+  }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -215,7 +252,7 @@ function makeGhost(
 
   return {
     ...nodeA,
-    id: `ghost:${nodeA.id}`,
+    id: `${GHOST_ID_PREFIX}${nodeA.id}`,
     parentId: ghostParentId,
     status,
     diffs,
@@ -230,7 +267,7 @@ function resolveGhostParent(
   // If the parent still exists in B as a live node, point to it directly.
   if (nodesB.has(originalParentId)) return originalParentId
   // Parent was also removed → point to its ghost.
-  return `ghost:${originalParentId}`
+  return `${GHOST_ID_PREFIX}${originalParentId}`
 }
 
 // ─── Subtree summaries ────────────────────────────────────────────────────────

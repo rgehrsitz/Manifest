@@ -23,4 +23,17 @@ broken. It looked like a code regression; it was just the wrong ABI.
 - When interleaving unit and E2E in one verification pass, do unit first, then
   rebuild for electron and do E2E — so you END in the electron-built state the
   dev app needs. Never leave a session node-built if the app might be launched.
+
+**RECURRING MISTAKE (flagged by Robert more than once) — do NOT chain unit then
+E2E in a single shell command.** The trap:
+`rebuild:native:node && vitest … && playwright test` leaves better-sqlite3
+NODE-built when Playwright launches Electron → every E2E project-open fails on
+the ABI mismatch. The chain rebuilds for node up front but NEVER rebuilds for
+electron, so Playwright starts against node-built native modules.
+- Prefer the package.json scripts, which self-rebuild: `bun run test` (node) and
+  `bun run test:e2e` (electron rebuild + build + playwright). Run them as
+  SEPARATE invocations, never `&&`-joined.
+- If invoking `playwright`/`vitest` directly, run `rebuild:native:electron`
+  (or `:node`) as its OWN command in the SAME invocation as that one suite only,
+  with nothing for the other runtime after it.
 Related: [[project_report_export]], [[project_csv_import]].
