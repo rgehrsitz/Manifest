@@ -143,9 +143,9 @@ export interface ManifestAPI {
     check(): Promise<Result<GitStatus>>
   }
   report: {
-    /** Build a diff report between two snapshots and write it via a save dialog. savedPath is null if canceled. */
+    /** Build a diff report between two refs (snapshot name or the `@current` sentinel) and write it via a save dialog. savedPath is null if canceled. */
     export(from: string, to: string, format: ReportFormat): Promise<Result<{ savedPath: string | null }>>
-    /** Build a diff report and return its content (for clipboard copy). */
+    /** Build a diff report between two refs (snapshot name or `@current`) and return its content (for clipboard copy). */
     build(from: string, to: string, format: ReportFormat): Promise<Result<{ content: string; suggestedName: string }>>
   }
   dialog: {

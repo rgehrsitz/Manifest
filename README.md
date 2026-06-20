@@ -29,10 +29,11 @@ The core idea is simple. Your project lives as a readable `manifest.json` file o
 - Create and open Manifest projects from the desktop app.
 - Manage hierarchical node trees with add, rename, delete, reorder, and move operations.
 - Jump to nodes by name with inline type-to-jump in the tree: type while the tree is focused to reveal and select the next match, with Enter/Shift+Enter to cycle and Escape to clear.
-- Edit node properties in the detail pane.
+- Edit node properties in the detail pane, with optional typed-property templates (string, number, boolean, date, version, enum, and node-to-node `reference` fields) — typing lives in project-level templates while values stay clean JSON primitives.
+- Import existing structured data from CSV into the hierarchy.
 - Autosave project changes back to disk.
 - Create named snapshots and restore prior states.
-- Compare snapshots, or compare the current project against a snapshot, with a merged diff/tree view.
+- Compare snapshots, or compare the current project against a snapshot, with a merged diff/tree view; export the diff as a Markdown or CSV report.
 - Search node names and property values.
 
 ## Stack

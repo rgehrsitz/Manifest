@@ -55,7 +55,7 @@ that mirrors the current project state. The flow is unidirectional:
 1. User action in renderer (e.g., rename node)
 2. Renderer sends IPC request to main (`node:update`)
 3. Main validates, persists, updates search index
-4. Main returns `Result<Node>` via IPC
+4. Main returns `Result<Project>` via IPC (the full updated project, not just the changed node)
 5. Renderer updates its store from the response
 
 No direct state mutation. The main process is always the source of truth.
@@ -93,21 +93,53 @@ Responsible for:
 
 All channels are renderer-to-main. All responses use the `Result<T>` envelope.
 
+Node/template mutations return the **full updated `Project`** (not just the
+changed entity) so the renderer re-derives from one authoritative snapshot
+rather than patching local state. `src/shared/ipc.ts` is the source of truth;
+this table mirrors it.
+
 | Channel | Request | Response |
 |---------|---------|----------|
-| `project:create` | `{ name, path }` | `Result<Project>` |
+| `project:create` | `{ name, parentPath }` | `Result<Project>` |
 | `project:open` | `{ path }` | `Result<Project>` |
-| `project:save` | `{ project }` | `Result<void>` |
-| `node:create` | `{ parentId, name, order }` | `Result<Node>` |
-| `node:update` | `{ id, changes }` | `Result<Node>` |
-| `node:delete` | `{ id }` | `Result<void>` |
-| `node:move` | `{ id, newParentId, newOrder }` | `Result<void>` |
+| `project:save` | `{}` | `Result<void>` |
+| `project:getCurrent` | `{}` | `Result<Project \| null>` |
+| `project:close` | `{}` | `Result<void>` |
+| `node:create` | `{ parentId, name, templateId? }` | `Result<Project>` |
+| `node:update` | `{ id, changes }` | `Result<Project>` |
+| `node:delete` | `{ id, options? }` | `Result<Project>` |
+| `node:move` | `{ id, newParentId, newOrder }` | `Result<Project>` |
+| `node:history` | `{ nodeId }` | `Result<NodeHistory>` |
+| `node:historyBackfillStatus` | `{}` | `Result<NodeHistoryIndexStatus>` |
+| `node:history:reindex` | `{}` | `Result<NodeHistoryIndexStatus>` |
+| `template:create` | `{ id, template }` | `Result<Project>` |
+| `template:update` | `{ id, changes }` | `Result<Project>` |
+| `template:delete` | `{ id }` | `Result<Project>` |
+| `import:inspect` | `{ path }` | `Result<ImportInspect>` |
+| `import:plan` | `{ path, mapping }` | `Result<ImportPlan>` |
+| `import:apply` | `{ path, mapping }` | `Result<{ project, summary }>` |
 | `search:query` | `{ query }` | `Result<SearchResult[]>` |
 | `snapshot:create` | `{ name }` | `Result<Snapshot>` |
 | `snapshot:list` | `{}` | `Result<Snapshot[]>` |
 | `snapshot:compare` | `{ a, b }` | `Result<DiffEntry[]>` |
-| `snapshot:restore` | `{ name }` | `Result<void>` |
+| `snapshot:loadCompare` | `{ a, b }` | `Result<MergedTree>` |
+| `snapshot:revert` | `{ request }` | `Result<SnapshotRevertResult>` |
+| `snapshot:timeline` | `{}` | `Result<SnapshotTimeline>` |
+| `recovery:apply` | `{ request }` | `Result<RecoveryPointApplyResult>` |
 | `git:check` | `{}` | `Result<GitStatus>` |
+| `report:export` | `{ from, to, format }` | `Result<{ savedPath }>` |
+| `report:build` | `{ from, to, format }` | `Result<{ content, suggestedName }>` |
+| `dialog:openFolder` | `{ title }` | `string \| null` |
+| `dialog:openFile` | `{ title }` | `string \| null` |
+
+For `snapshot:compare`, `snapshot:loadCompare`, `report:export`, and
+`report:build`, the snapshot refs (`a`/`b`/`from`/`to`) accept a saved snapshot
+name **or** the `@current` sentinel, which resolves to the live in-memory current
+project — letting the user diff unsnapshotted work without creating a snapshot
+first. The sentinel is impossible as a real snapshot name (snapshot names allow
+only `[A-Za-z0-9._-]`).
+
+`dialog:*` are UI utility channels and return a bare value, not a `Result<T>`.
 
 This table is the whitelist for `contextBridge.exposeInMainWorld`. No channel
 exists unless it's in this table. Add new channels here before implementing them.
@@ -168,17 +200,28 @@ if benchmarks demand it.
 
 ```json
 {
-  "version": 1,
+  "version": 3,
   "id": "<project-uuid>",
   "name": "My Lab Bench",
   "created": "2026-04-07T12:00:00Z",
   "modified": "2026-04-07T14:30:00Z",
+  "templates": {
+    "instrument": {
+      "label": "Instrument",
+      "fields": {
+        "firmware": { "type": "version" },
+        "status": { "type": "enum", "options": ["active", "maintenance", "retired"] },
+        "controller": { "type": "reference" }
+      }
+    }
+  },
   "nodes": [
     {
       "id": "<uuidv7>",
       "parentId": "<uuidv7 | null for root>",
       "name": "Rack A",
       "order": 0,
+      "templateId": "instrument",
       "properties": {
         "serial_number": "SN-12345",
         "firmware": "v2.1.0"
@@ -194,8 +237,31 @@ if benchmarks demand it.
 - `id` is immutable UUIDv7 (time-sortable)
 - `name` must be unique among siblings (case-insensitive)
 - `order` is an integer for sibling ordering
-- `properties` is a flat string-keyed map (values: string, number, boolean, null)
+- `properties` is a flat string-keyed map of clean JSON primitives (string,
+  number, boolean, null) — typing comes from templates, not from the values
+- `templateId` (optional) binds a node to a project-level template
+- `templates` (optional, project level) is the typed-property schema (see below)
 - `parentId: null` denotes a root node (exactly one root per project)
+
+### Typed properties & templates
+
+Type information lives once in a project-level `templates` map (keyed by slug
+id), **not** inline on each value. A node points to a template via `templateId`;
+properties whose key matches a template field are typed and validated, while
+keys outside the template stay ad-hoc untyped strings. Property values on disk
+remain clean primitives (no `{type, value}` wrappers), preserving the
+human-readable-storage promise.
+
+v1 field types (`PropertyType`): `string`, `number`, `boolean`, `date`,
+`version` (a constrained non-empty string, deliberately not semver — accepts
+`v2.1.0`, vendor/build labels), `enum` (with `options`), and `reference`
+(node → node, validated against existing node ids). `required` is advisory in
+v1: a missing required field surfaces a load warning, not a hard save-block.
+
+Templates are first-class project state, so diff and history treat template
+changes as real changes — editing a template's schema is never reported as
+"no changes." Validation/coercion runs on input paths only; file load never
+coerces, instead surfacing path-qualified warnings.
 
 ---
 
