@@ -46,6 +46,16 @@
     onImportHere?: (id: string) => void
     editingDisabled?: boolean
     selectedScrollAlign?: 'auto' | 'center'
+    /** Node ids matching the active inline typeahead (browse mode only). */
+    matchedIds?: Set<string>
+    /** The active typeahead query, for in-name substring highlighting. */
+    matchQuery?: string
+    /** Whether inline typeahead is active — gates Enter/Escape key meaning. */
+    typeaheadActive?: boolean
+    onTypeaheadInput?: (ch: string) => void
+    onTypeaheadBackspace?: () => void
+    onTypeaheadCycle?: (reverse: boolean) => void
+    onTypeaheadClear?: () => void
   }
 
   let {
@@ -66,6 +76,13 @@
     onImportHere,
     editingDisabled = false,
     selectedScrollAlign = 'auto',
+    matchedIds = new Set<string>(),
+    matchQuery = '',
+    typeaheadActive = false,
+    onTypeaheadInput,
+    onTypeaheadBackspace,
+    onTypeaheadCycle,
+    onTypeaheadClear,
   }: Props = $props()
 
   const ROW_HEIGHT = 32
@@ -466,6 +483,46 @@
     const target = e.target as HTMLElement
     if (target.closest('[role="menu"]')) return
 
+    // ─── Inline typeahead (type-to-jump) ──────────────────────────────────
+    // A printable key starts/extends a name query; matches highlight and the
+    // active one is revealed + selected. Enter cycles matches (Shift = back),
+    // Backspace edits, Escape clears, and any arrow key ends typeahead and
+    // resumes normal navigation. Disabled in compare/restore (editingDisabled)
+    // and never fires while a text input in the tree has focus. Space only
+    // EXTENDS an active query — it still selects the focused row otherwise.
+    const inEditable =
+      target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' ||
+      target.tagName === 'SELECT' || target.isContentEditable
+    if (!editingDisabled && !inEditable) {
+      const isPrintable = e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey
+      if (isPrintable && (e.key !== ' ' || typeaheadActive)) {
+        e.preventDefault()
+        onTypeaheadInput?.(e.key)
+        return
+      }
+      if (typeaheadActive) {
+        if (e.key === 'Backspace') {
+          e.preventDefault()
+          onTypeaheadBackspace?.()
+          return
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          onTypeaheadClear?.()
+          return
+        }
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          onTypeaheadCycle?.(e.shiftKey)
+          return
+        }
+        if (e.key.startsWith('Arrow')) {
+          // End typeahead, then fall through to normal arrow navigation.
+          onTypeaheadClear?.()
+        }
+      }
+    }
+
     const idx = currentFocusIndex()
 
     switch (e.key) {
@@ -548,6 +605,16 @@
     void displayedItems
     if (focusedIndex >= displayedItems.length) focusedIndex = -1
   })
+
+  // When selection changes from outside keyboard nav (click, typeahead jump,
+  // search-result reveal), drop the pinned keyboard focus so currentFocusIndex
+  // falls back to the selected row. Otherwise a stale focusedIndex from an
+  // earlier ArrowUp/Down would make F2/Enter act on the wrong row. Pure arrow
+  // nav doesn't change selectedId, so this never fights live keyboard movement.
+  $effect(() => {
+    void selectedId
+    untrack(() => { focusedIndex = -1 })
+  })
 </script>
 
 <!--
@@ -611,6 +678,8 @@
                 row={item.row}
                 selected={selectedId === item.row.node.id}
                 focused={focusedIndex === virt.index}
+                matched={matchedIds.has(item.row.node.id)}
+                {matchQuery}
                 onSelect={(id) => onSelect?.(id)}
                 onToggle={(id) => onToggle?.(id)}
                 onContextMenu={handleRowContextMenu}

@@ -2,6 +2,7 @@
 
 <script lang="ts">
   import type { VisibleRow } from '../lib/tree-rows'
+  import { splitHighlight } from '../lib/tree-typeahead'
 
   interface Props {
     row: VisibleRow
@@ -16,6 +17,10 @@
      * block.
      */
     onContextMenu: (row: VisibleRow, x: number, y: number) => void
+    /** True when this row matches the active typeahead query (browse mode). */
+    matched?: boolean
+    /** The active typeahead query, for in-name substring highlighting. */
+    matchQuery?: string
   }
 
   let {
@@ -25,7 +30,14 @@
     onSelect,
     onToggle,
     onContextMenu,
+    matched = false,
+    matchQuery = '',
   }: Props = $props()
+
+  // Segment the name for highlight only when this row is a typeahead match.
+  const nameSegments = $derived(
+    matched && matchQuery ? splitHighlight(row.node.name, matchQuery) : null
+  )
 
   const isGhost = $derived(row.kind === 'ghost')
   const nodeId = $derived(row.node.id)
@@ -116,12 +128,14 @@
            hover:bg-stone-100 focus:outline-none focus:ring-1 focus:ring-stone-400
            {selected ? '!bg-stone-200 !text-stone-900' : 'text-stone-700'}
            {focused && !selected ? 'ring-1 ring-stone-300' : ''}
+           {matched && !selected ? 'ring-1 ring-amber-300' : ''}
            {getDecorationClass()}"
     style:padding-left={paddingLeft}
     data-testid="tree-node"
     data-node-id={nodeId}
     data-row-id={row.id}
     data-row-status={row.kind === 'decorated' ? row.status : undefined}
+    data-row-matched={matched ? 'true' : undefined}
     onclick={() => onSelect(nodeId)}
     ondblclick={handleDblClick}
     oncontextmenu={handleContextMenu}
@@ -151,8 +165,16 @@
       {/if}
     </button>
 
-    <!-- Node name -->
-    <span class="flex-1 truncate">{row.node.name}</span>
+    <!-- Node name (segmented when it matches the active typeahead query) -->
+    <span class="flex-1 truncate">
+      {#if nameSegments}
+        {#each nameSegments as seg, i (i)}
+          {#if seg.match}<mark class="rounded bg-amber-200 text-amber-900">{seg.text}</mark>{:else}{seg.text}{/if}
+        {/each}
+      {:else}
+        {row.node.name}
+      {/if}
+    </span>
 
     <!-- Decorated badges (compare mode, PR #2) -->
     {#if row.kind === 'decorated' && row.badges.length > 0}
