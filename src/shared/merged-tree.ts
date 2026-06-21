@@ -87,7 +87,12 @@ export const GHOST_ID_PREFIX = 'ghost:'
  * still resolves by what it actually is, not by how its id reads.
  */
 export function templatesForNode(
-  node: { status?: MergedStatus } | null | undefined,
+  // Accepts a plain ManifestNode (normal mode — no status, resolves to the
+  // to-side) or a MergedTreeNode (compare mode — carries status). The optional
+  // `status` intersection keeps a bare ManifestNode assignable while still
+  // letting us read the merged status; `{ status?: MergedStatus }` alone is a
+  // weak type that a status-less ManifestNode can't satisfy.
+  node: (ManifestNode & { status?: MergedStatus }) | null | undefined,
   tree: Pick<MergedTree, 'fromTemplates' | 'toTemplates'>
 ): Record<string, NodeTemplate> {
   const fromSide = node?.status === 'removed' || node?.status === 'moved-from'
