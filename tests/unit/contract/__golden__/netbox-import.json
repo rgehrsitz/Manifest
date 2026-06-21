@@ -1,0 +1,136 @@
+[
+  {
+    "step": "inspectNetboxImport",
+    "result": {
+      "ok": true,
+      "data": {
+        "format": "netbox-dumpdata",
+        "totalObjects": 10,
+        "sites": 1,
+        "locations": 1,
+        "racks": 1,
+        "devices": 2
+      }
+    }
+  },
+  {
+    "step": "planNetboxImport",
+    "result": {
+      "ok": true,
+      "data": {
+        "templatesCreated": 4,
+        "sites": 1,
+        "locations": 1,
+        "racks": 1,
+        "devices": 2,
+        "acceptedCount": 5,
+        "skippedCount": 0,
+        "warningCount": 0,
+        "skipped": [],
+        "warnings": [],
+        "capped": false
+      }
+    }
+  },
+  {
+    "step": "applyNetboxImport summary",
+    "result": {
+      "ok": true,
+      "summary": {
+        "templatesCreated": 4,
+        "created": 5,
+        "sites": 1,
+        "locations": 1,
+        "racks": 1,
+        "devices": 2,
+        "skippedCount": 0,
+        "warningCount": 0,
+        "skipped": [],
+        "warnings": [],
+        "capped": false
+      }
+    }
+  },
+  {
+    "step": "imported tree (name/parent/template/props)",
+    "result": {
+      "ok": true,
+      "nodes": [
+        {
+          "name": "Rack A",
+          "parent": "Room 1",
+          "templateId": "netbox-rack",
+          "properties": {
+            "status": "active",
+            "role": "Compute",
+            "type": "4-post-cabinet",
+            "width": 19,
+            "u_height": 42,
+            "serial": "RK-1"
+          }
+        },
+        {
+          "name": "Room 1",
+          "parent": "Site Alpha",
+          "templateId": "netbox-location",
+          "properties": {
+            "status": "active"
+          }
+        },
+        {
+          "name": "Site Alpha",
+          "parent": "NetBox Lab",
+          "templateId": "netbox-site",
+          "properties": {
+            "status": "active",
+            "facility": "Bldg 1",
+            "time_zone": "UTC"
+          }
+        },
+        {
+          "name": "sw-01",
+          "parent": "Rack A",
+          "templateId": "netbox-device",
+          "properties": {
+            "status": "active",
+            "manufacturer": "Cisco",
+            "model": "C9300",
+            "role": "Switch",
+            "platform": "IOS-XE",
+            "serial": "SN-1",
+            "asset_tag": "AT-1",
+            "position": 4,
+            "face": "front",
+            "part_number": "WS-C9300"
+          }
+        },
+        {
+          "name": "sw-02",
+          "parent": "Rack A",
+          "templateId": "netbox-device",
+          "properties": {
+            "status": "active",
+            "manufacturer": "Cisco",
+            "model": "C9300",
+            "role": "Switch",
+            "position": 6,
+            "face": "rear",
+            "part_number": "WS-C9300"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "step": "templates created",
+    "result": {
+      "ok": true,
+      "ids": [
+        "netbox-device",
+        "netbox-location",
+        "netbox-rack",
+        "netbox-site"
+      ]
+    }
+  }
+]

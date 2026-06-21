@@ -340,4 +340,55 @@ describe('ManifestAPI contract', () => {
       recordSearch('searchNodes(SN-200)', m.searchNodes('SN-200'))
     })
   })
+
+  it('NetBox relational import — typed Site→Location→Rack→Device tree', async () => {
+    await runScenario('netbox-import.json', async ({ record, setupProject }) => {
+      const { m, rootId } = await setupProject('NetBox Lab')
+
+      // Minimal NetBox dumpdata: 1 site → 1 location → 1 rack → 2 devices, with
+      // FK lookups (device_type→manufacturer, role, platform) to resolve.
+      const dump = [
+        { model: 'dcim.manufacturer', pk: 1, fields: { name: 'Cisco', slug: 'cisco' } },
+        { model: 'dcim.devicetype', pk: 10, fields: { manufacturer: 1, model: 'C9300', slug: 'c9300', part_number: 'WS-C9300' } },
+        { model: 'dcim.devicerole', pk: 20, fields: { name: 'Switch', slug: 'switch' } },
+        { model: 'dcim.platform', pk: 40, fields: { name: 'IOS-XE', slug: 'ios-xe' } },
+        { model: 'dcim.rackrole', pk: 30, fields: { name: 'Compute', slug: 'compute' } },
+        { model: 'dcim.site', pk: 100, fields: { name: 'Site Alpha', status: 'active', facility: 'Bldg 1', time_zone: 'UTC', description: '', physical_address: '' } },
+        { model: 'dcim.location', pk: 200, fields: { name: 'Room 1', site: 100, parent: null, level: 0, status: 'active', description: '' } },
+        { model: 'dcim.rack', pk: 300, fields: { name: 'Rack A', site: 100, location: 200, role: 30, status: 'active', type: '4-post-cabinet', width: 19, u_height: '42.0', serial: 'RK-1', asset_tag: null, facility_id: '', description: '' } },
+        { model: 'dcim.device', pk: 400, fields: { name: 'sw-01', site: 100, location: 200, rack: 300, position: '4.0', face: 'front', status: 'active', serial: 'SN-1', asset_tag: 'AT-1', device_type: 10, role: 20, platform: 40, description: '' } },
+        { model: 'dcim.device', pk: 401, fields: { name: 'sw-02', site: 100, location: 200, rack: 300, position: '6.0', face: 'rear', status: 'active', serial: '', asset_tag: null, device_type: 10, role: 20, platform: null, description: '' } },
+      ]
+      const file = join(tmpDir, 'netbox.json')
+      writeFileSync(file, JSON.stringify(dump), 'utf8')
+      const opts = { baseParentId: rootId }
+
+      record('inspectNetboxImport', m.inspectNetboxImport(file))
+      record('planNetboxImport', m.planNetboxImport(file, opts))
+      const applied = m.applyNetboxImport(file, opts)
+      record('applyNetboxImport summary', applied.ok ? { ok: true, summary: applied.data.summary } : applied)
+
+      // Compact, deterministic projection of the imported tree: each node's name,
+      // its parent's name, template binding, and typed properties — keyed by the
+      // FK-resolved hierarchy, not raw node ids.
+      const cur = m.getCurrent()
+      const byId = new Map(cur!.nodes.map((n) => [n.id, n]))
+      const tree = cur!.nodes
+        .filter((n) => n.parentId !== null)
+        .map((n) => ({
+          name: n.name,
+          parent: n.parentId ? byId.get(n.parentId)?.name ?? null : null,
+          templateId: n.templateId ?? null,
+          properties: n.properties,
+        }))
+        .sort(
+          (a, b) =>
+            a.name.localeCompare(b.name, 'en') ||
+            (a.parent ?? '').localeCompare(b.parent ?? '', 'en') ||
+            (a.templateId ?? '').localeCompare(b.templateId ?? '', 'en'),
+        )
+      record('imported tree (name/parent/template/props)', { ok: true, nodes: tree })
+      record('templates created', { ok: true, ids: Object.keys(cur!.templates ?? {}).sort() })
+    })
+  })
 })
