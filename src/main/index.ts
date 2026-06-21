@@ -7,7 +7,7 @@ import { ProjectManager } from './project-manager'
 import { GitService } from './git-service'
 import { IPC } from '../shared/ipc'
 import { ok, err, ErrorCode } from '../shared/errors'
-import type { NodeTemplate, ImportMapping } from '../shared/types'
+import type { NodeTemplate, ImportMapping, NetboxImportOptions } from '../shared/types'
 import type { ReportFormat } from '../shared/report'
 
 // ─── Logging ────────────────────────────────────────────────────────────────
@@ -154,6 +154,24 @@ function registerIpcHandlers(): void {
     projectManager.applyImportCsv(path, mapping)
   )
 
+  // ── NetBox import ──────────────────────────────────────────────────────────
+
+  ipcMain.handle(IPC.IMPORT_NETBOX_INSPECT, (_, { path }: { path: string }) =>
+    projectManager.inspectNetboxImport(path)
+  )
+
+  ipcMain.handle(
+    IPC.IMPORT_NETBOX_PLAN,
+    (_, { path, options }: { path: string; options: NetboxImportOptions }) =>
+      projectManager.planNetboxImport(path, options)
+  )
+
+  ipcMain.handle(
+    IPC.IMPORT_NETBOX_APPLY,
+    (_, { path, options }: { path: string; options: NetboxImportOptions }) =>
+      projectManager.applyNetboxImport(path, options)
+  )
+
   // ── Search ───────────────────────────────────────────────────────────────
 
   ipcMain.handle(IPC.SEARCH_QUERY, (_, { query }: { query: string }) =>
@@ -209,7 +227,11 @@ function registerIpcHandlers(): void {
     const result = await dialog.showOpenDialog({
       title,
       properties: ['openFile'],
-      filters: [{ name: 'CSV', extensions: ['csv'] }],
+      filters: [
+        { name: 'Importable (CSV, NetBox JSON)', extensions: ['csv', 'json'] },
+        { name: 'CSV', extensions: ['csv'] },
+        { name: 'NetBox JSON', extensions: ['json'] },
+      ],
     })
     return result.canceled ? null : result.filePaths[0]
   })

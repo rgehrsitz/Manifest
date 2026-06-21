@@ -49,6 +49,10 @@ import type {
   ImportInspect,
   ImportPlan,
   ImportResult,
+  NetboxInspect,
+  NetboxImportOptions,
+  NetboxImportPlan,
+  NetboxImportResult,
 } from '../shared/types'
 import { ok, err, ErrorCode } from '../shared/errors'
 import { migrate, getCurrentVersion } from '../shared/migration'
@@ -76,6 +80,7 @@ import { buildMergedTree } from '../shared/merged-tree'
 import { parseCsv, CsvParseError } from '../shared/csv'
 import { detectCloudSyncPath } from '../shared/cloud-sync'
 import { planImport } from '../shared/import'
+import { parseNetboxDump, inspectNetbox, planNetbox, NetboxParseError } from '../shared/netbox'
 import {
   formatDiffReportMarkdown,
   formatDiffReportCsv,
@@ -89,6 +94,8 @@ import { SearchIndexService } from './search-index'
 import { HistoryIndexService } from './history-index'
 
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024  // 50 MB
+const MAX_FILE_SIZE_MB = MAX_FILE_SIZE_BYTES / 1024 / 1024
+const IMPORT_ISSUE_CAP = 100                   // max skipped/warning issues surfaced
 const AUTOSAVE_DEBOUNCE_MS = 2500              // 2.5 seconds
 const MAX_RECOVERY_POINTS = 10                 // cap stored auto-saved recovery points
 
@@ -598,14 +605,22 @@ export class ProjectManager {
 
   // ─── CSV import ───────────────────────────────────────────────────────────────
 
-  // Read + parse a CSV file into rows, with the same 50 MB cap as project files.
+  // Enforce the shared import-file size cap. `label` names the file kind in the
+  // error message; the limit text is derived from the constant so it can't drift.
+  private checkImportFileSize(path: string, label: string): Result<void> {
+    const stat = statSync(path)
+    if (stat.size > MAX_FILE_SIZE_BYTES) {
+      const mb = Math.round(stat.size / 1024 / 1024)
+      return err(ErrorCode.FILE_TOO_LARGE, `${label} is ${mb}MB (limit: ${MAX_FILE_SIZE_MB}MB)`)
+    }
+    return ok(undefined)
+  }
+
+  // Read + parse a CSV file into rows, with the same size cap as project files.
   private readCsv(path: string): Result<string[][]> {
     try {
-      const stat = statSync(path)
-      if (stat.size > MAX_FILE_SIZE_BYTES) {
-        const mb = Math.round(stat.size / 1024 / 1024)
-        return err(ErrorCode.FILE_TOO_LARGE, `CSV is ${mb}MB (limit: 50MB)`)
-      }
+      const sizeCheck = this.checkImportFileSize(path, 'CSV')
+      if (!sizeCheck.ok) return sizeCheck as Result<string[][]>
       const raw = readFileSync(path, 'utf8')
       return ok(parseCsv(raw))
     } catch (e: unknown) {
@@ -636,7 +651,7 @@ export class ProjectManager {
       this.currentProject.templates ?? {}, this.currentProject.nodes,
     )
     if (out.mappingError) return err(ErrorCode.VALIDATION_FAILED, out.mappingError)
-    const CAP = 100
+    const CAP = IMPORT_ISSUE_CAP
     const createdParents = out.create.filter(n => n.auto).length
     return ok({
       acceptedCount: out.create.length - createdParents,
@@ -664,7 +679,7 @@ export class ProjectManager {
     if (out.mappingError) return err(ErrorCode.VALIDATION_FAILED, out.mappingError)
 
     const createdParents = out.create.filter(n => n.auto).length
-    const CAP = 100
+    const CAP = IMPORT_ISSUE_CAP
     const summary: ImportResult = {
       created: out.create.length - createdParents,
       updated: out.update.length,
@@ -740,6 +755,128 @@ export class ProjectManager {
       for (const node of updatedNodeList) this.search.upsertNode(projectPath, node)
     })
     if (!committed.ok) return committed as Result<{ project: Project; summary: ImportResult }>
+    return ok({ project: committed.data, summary })
+  }
+
+  // ─── NetBox relational import ────────────────────────────────────────────
+  // NetBox is a relational DCIM source (Django dumpdata JSON). Unlike CSV, the
+  // adapter resolves FK relations into a Site → Location → Rack → Device tree
+  // with typed attributes (see src/shared/netbox.ts). inspect/plan/apply mirror
+  // the CSV trio; apply creates templates + nodes in ONE commit.
+
+  private readNetbox(path: string): Result<ReturnType<typeof parseNetboxDump>> {
+    try {
+      const sizeCheck = this.checkImportFileSize(path, 'NetBox export')
+      if (!sizeCheck.ok) return sizeCheck as Result<ReturnType<typeof parseNetboxDump>>
+      const raw = readFileSync(path, 'utf8')
+      return ok(parseNetboxDump(raw))
+    } catch (e: unknown) {
+      if (e instanceof NetboxParseError) return err(ErrorCode.VALIDATION_FAILED, e.message)
+      const msg = e instanceof Error ? e.message : String(e)
+      return err(ErrorCode.VALIDATION_FAILED, `Could not read NetBox export: ${msg}`)
+    }
+  }
+
+  inspectNetboxImport(path: string): Result<NetboxInspect> {
+    const parsed = this.readNetbox(path)
+    if (!parsed.ok) return parsed as Result<NetboxInspect>
+    return ok(inspectNetbox(parsed.data))
+  }
+
+  planNetboxImport(path: string, options: NetboxImportOptions): Result<NetboxImportPlan> {
+    if (!this.currentProject) return err(ErrorCode.PROJECT_NOT_FOUND, 'No project open')
+    const parsed = this.readNetbox(path)
+    if (!parsed.ok) return parsed as Result<NetboxImportPlan>
+    const out = planNetbox(
+      parsed.data, options.baseParentId,
+      this.currentProject.templates ?? {}, this.currentProject.nodes,
+    )
+    if (out.mappingError) return err(ErrorCode.VALIDATION_FAILED, out.mappingError)
+    const CAP = IMPORT_ISSUE_CAP
+    return ok({
+      templatesCreated: Object.keys(out.templates).length,
+      sites: out.counts.sites,
+      locations: out.counts.locations,
+      racks: out.counts.racks,
+      devices: out.counts.devices,
+      acceptedCount: out.create.length,
+      skippedCount: out.skipped.length,
+      warningCount: out.warnings.length,
+      skipped: out.skipped.slice(0, CAP),
+      warnings: out.warnings.slice(0, CAP),
+      capped: out.skipped.length > CAP || out.warnings.length > CAP,
+    })
+  }
+
+  applyNetboxImport(
+    path: string,
+    options: NetboxImportOptions,
+  ): Result<{ project: Project; summary: NetboxImportResult }> {
+    if (!this.currentProject) return err(ErrorCode.PROJECT_NOT_FOUND, 'No project open')
+    const parsed = this.readNetbox(path)
+    if (!parsed.ok) return parsed as Result<{ project: Project; summary: NetboxImportResult }>
+    const out = planNetbox(
+      parsed.data, options.baseParentId,
+      this.currentProject.templates ?? {}, this.currentProject.nodes,
+    )
+    if (out.mappingError) {
+      return err(ErrorCode.VALIDATION_FAILED, out.mappingError)
+    }
+    const CAP = IMPORT_ISSUE_CAP
+    const summary: NetboxImportResult = {
+      templatesCreated: Object.keys(out.templates).length,
+      created: out.create.length,
+      sites: out.counts.sites,
+      locations: out.counts.locations,
+      racks: out.counts.racks,
+      devices: out.counts.devices,
+      skippedCount: out.skipped.length,
+      warningCount: out.warnings.length,
+      skipped: out.skipped.slice(0, CAP),
+      warnings: out.warnings.slice(0, CAP),
+      capped: out.skipped.length > CAP || out.warnings.length > CAP,
+    }
+    if (out.create.length === 0 && Object.keys(out.templates).length === 0) {
+      return ok({ project: this.currentProject, summary })
+    }
+
+    const now = new Date().toISOString()
+    const orderByParent = new Map<string, number>()
+    for (const n of this.currentProject.nodes) {
+      if (n.parentId !== null) orderByParent.set(n.parentId, (orderByParent.get(n.parentId) ?? 0) + 1)
+    }
+    // Containers carry a synthetic localId; map it to the real uuid so children
+    // pushed after their parent wire up (same pattern as CSV auto-ancestors).
+    const idMap = new Map<string, string>()
+    const newNodes: ManifestNode[] = out.create.map((p) => {
+      const parentId = idMap.get(p.parentId) ?? p.parentId
+      const id = uuidv7()
+      if (p.localId) idMap.set(p.localId, id)
+      const order = orderByParent.get(parentId) ?? 0
+      orderByParent.set(parentId, order + 1)
+      return {
+        id,
+        parentId,
+        name: p.name,
+        order,
+        properties: p.properties,
+        ...(p.templateId ? { templateId: p.templateId } : {}),
+        created: now,
+        modified: now,
+      }
+    })
+
+    const nextProject: Project = {
+      ...this.currentProject,
+      modified: now,
+      templates: { ...this.currentProject.templates, ...out.templates },
+      nodes: [...this.currentProject.nodes, ...newNodes],
+    }
+    const committed = this.commitProjectMutation(nextProject, () => {
+      const projectPath = nextProject.path!
+      for (const node of newNodes) this.search.upsertNode(projectPath, node)
+    })
+    if (!committed.ok) return committed as Result<{ project: Project; summary: NetboxImportResult }>
     return ok({ project: committed.data, summary })
   }
 

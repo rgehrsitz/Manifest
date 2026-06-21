@@ -53,6 +53,12 @@ const api: ManifestAPI = {
       ipcRenderer.invoke(IPC.IMPORT_PLAN, { path, mapping }),
     apply: (path, mapping) =>
       ipcRenderer.invoke(IPC.IMPORT_APPLY, { path, mapping }),
+    netboxInspect: (path) =>
+      ipcRenderer.invoke(IPC.IMPORT_NETBOX_INSPECT, { path }),
+    netboxPlan: (path, options) =>
+      ipcRenderer.invoke(IPC.IMPORT_NETBOX_PLAN, { path, options }),
+    netboxApply: (path, options) =>
+      ipcRenderer.invoke(IPC.IMPORT_NETBOX_APPLY, { path, options }),
   },
 
   search: {
