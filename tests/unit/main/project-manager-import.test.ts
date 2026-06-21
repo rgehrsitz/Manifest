@@ -340,3 +340,92 @@ describe('applyImportCsv — update-on-key', () => {
     expect(await hits('ALPHA')).toHaveLength(0)    // old value removed by the upsert
   })
 })
+
+// ─── NetBox relational import (wrapper-layer guards + re-import) ─────────────
+
+function writeNetbox(name: string, dump: unknown): string {
+  const p = join(tmpDir, name)
+  writeFileSync(p, JSON.stringify(dump), 'utf8')
+  return p
+}
+
+function netboxDump() {
+  return [
+    { model: 'dcim.manufacturer', pk: 1, fields: { name: 'Cisco', slug: 'cisco' } },
+    { model: 'dcim.devicetype', pk: 10, fields: { manufacturer: 1, model: 'C9300', slug: 'c9300', part_number: 'WS-C9300' } },
+    { model: 'dcim.devicerole', pk: 20, fields: { name: 'Switch', slug: 'switch' } },
+    { model: 'dcim.site', pk: 100, fields: { name: 'Site Alpha', status: 'active', facility: '', time_zone: '', description: '', physical_address: '' } },
+    { model: 'dcim.rack', pk: 300, fields: { name: 'Rack A', site: 100, location: null, role: null, status: 'active', type: '4-post-cabinet', width: 19, u_height: '42.0', serial: '', asset_tag: null, facility_id: '', description: '' } },
+    { model: 'dcim.device', pk: 400, fields: { name: 'sw-01', site: 100, location: null, rack: 300, position: '4.0', face: 'front', status: 'active', serial: 'SN-1', asset_tag: null, device_type: 10, role: 20, platform: null, description: '' } },
+  ]
+}
+
+describe('NetBox import — wrapper guards', () => {
+  it('inspectNetboxImport rejects a non-JSON / malformed file with VALIDATION_FAILED', async () => {
+    await open()
+    const bad = join(tmpDir, 'bad.json')
+    writeFileSync(bad, '{not json', 'utf8')
+    const r = manager.inspectNetboxImport(bad)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.code).toBe('VALIDATION_FAILED')
+  })
+
+  it('caps surfaced skipped issues at 100 and flags capped', async () => {
+    await open()
+    // 101 sites with invalid (empty) names → all skipped.
+    const dump = Array.from({ length: 101 }, (_, i) => ({
+      model: 'dcim.site', pk: i + 1, fields: { name: '', status: 'active' },
+    }))
+    const file = writeNetbox('many.json', dump)
+    const r = manager.planNetboxImport(file, { baseParentId: 'root-id' })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.data.skippedCount).toBe(101)   // exact total
+    expect(r.data.skipped.length).toBe(100)  // surfaced sample capped
+    expect(r.data.capped).toBe(true)
+  })
+
+  it('plan/apply require an open project (PROJECT_NOT_FOUND otherwise)', () => {
+    const pm = new ProjectManager(noopGit as any, noopLogger as any)
+    const file = writeNetbox('nb.json', netboxDump())
+    const plan = pm.planNetboxImport(file, { baseParentId: 'root-id' })
+    expect(plan.ok).toBe(false)
+    if (!plan.ok) expect(plan.error.code).toBe('PROJECT_NOT_FOUND')
+    const apply = pm.applyNetboxImport(file, { baseParentId: 'root-id' })
+    expect(apply.ok).toBe(false)
+    if (!apply.ok) expect(apply.error.code).toBe('PROJECT_NOT_FOUND')
+  })
+})
+
+describe('NetBox import — apply + re-import', () => {
+  it('creates the typed tree + templates, then a re-import reuses templates and skips collisions', async () => {
+    await open()
+    const file = writeNetbox('nb.json', netboxDump())
+
+    // First import: 4 templates + 3 nodes (site, rack, device) under root.
+    const first = manager.applyNetboxImport(file, { baseParentId: 'root-id' })
+    expect(first.ok).toBe(true)
+    if (!first.ok) return
+    expect(first.data.summary.templatesCreated).toBe(4)
+    expect(first.data.summary.created).toBe(3)
+    expect(first.data.summary.sites).toBe(1)
+    expect(first.data.summary.devices).toBe(1)
+    const tplCount = Object.keys(first.data.project.templates ?? {}).length
+    const site = first.data.project.nodes.find((n) => n.name === 'Site Alpha')!
+    expect(site.templateId).toBe('netbox-site')
+    const device = first.data.project.nodes.find((n) => n.name === 'sw-01')!
+    expect(device.properties).toMatchObject({ manufacturer: 'Cisco', model: 'C9300', position: 4 })
+
+    // Re-import the same file: templates already exist (reused, not recreated),
+    // and every node collides with the just-imported children → all skipped.
+    const second = manager.applyNetboxImport(file, { baseParentId: 'root-id' })
+    expect(second.ok).toBe(true)
+    if (!second.ok) return
+    expect(second.data.summary.templatesCreated).toBe(0)   // reused, not recreated
+    expect(second.data.summary.created).toBe(0)            // all collided → skipped
+    expect(second.data.summary.skippedCount).toBeGreaterThan(0)
+    // No duplicate templates or nodes leaked in.
+    expect(Object.keys(second.data.project.templates ?? {}).length).toBe(tplCount)
+    expect(second.data.project.nodes.filter((n) => n.name === 'Site Alpha').length).toBe(1)
+  })
+})

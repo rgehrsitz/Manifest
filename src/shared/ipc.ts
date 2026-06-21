@@ -26,6 +26,10 @@ import type {
   ImportInspect,
   ImportPlan,
   ImportResult,
+  NetboxInspect,
+  NetboxImportOptions,
+  NetboxImportPlan,
+  NetboxImportResult,
 } from './types'
 import type { MergedTree } from './merged-tree'
 import type { ReportFormat } from './report'
@@ -50,6 +54,9 @@ export const IPC = {
   IMPORT_INSPECT:      'import:inspect',
   IMPORT_PLAN:         'import:plan',
   IMPORT_APPLY:        'import:apply',
+  IMPORT_NETBOX_INSPECT: 'import:netbox:inspect',
+  IMPORT_NETBOX_PLAN:    'import:netbox:plan',
+  IMPORT_NETBOX_APPLY:   'import:netbox:apply',
   SEARCH_QUERY:        'search:query',
   SNAPSHOT_CREATE:     'snapshot:create',
   SNAPSHOT_LIST:       'snapshot:list',
@@ -125,6 +132,15 @@ export interface ManifestAPI {
     plan(path: string, mapping: ImportMapping): Promise<Result<ImportPlan>>
     /** Apply the import (re-plans authoritatively). Returns the updated Project + a summary. */
     apply(path: string, mapping: ImportMapping): Promise<Result<{ project: Project; summary: ImportResult }>>
+    /** First look at a NetBox dumpdata JSON: site/location/rack/device counts. */
+    netboxInspect(path: string): Promise<Result<NetboxInspect>>
+    /** Plan a NetBox import under a base parent: per-type counts + capped issues. */
+    netboxPlan(path: string, options: NetboxImportOptions): Promise<Result<NetboxImportPlan>>
+    /** Apply a NetBox import (re-plans authoritatively). Returns the updated Project + a summary. */
+    netboxApply(
+      path: string,
+      options: NetboxImportOptions,
+    ): Promise<Result<{ project: Project; summary: NetboxImportResult }>>
   }
   search: {
     query(query: string): Promise<Result<SearchResult[]>>

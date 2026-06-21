@@ -317,3 +317,47 @@ test('update-on-key: a byte-identical re-import is a no-op (import disabled)', a
   await expect(appPage.getByTestId('import-summary')).toContainText('0 will import')
   await expect(appPage.getByTestId('import-apply')).toBeDisabled()
 })
+
+test('imports a NetBox dumpdata JSON into a typed Site → Location → Rack → Device tree', async ({
+  appPage,
+  electronApp,
+  workspaceDir,
+}) => {
+  await createProjectThroughUi(appPage, electronApp, workspaceDir, 'NetBox Lab')
+
+  // Minimal NetBox dumpdata: 1 site → 1 location → 1 rack → 2 devices, with FK
+  // lookups (device_type → manufacturer, role, platform) to resolve.
+  const dump = [
+    { model: 'dcim.manufacturer', pk: 1, fields: { name: 'Cisco', slug: 'cisco' } },
+    { model: 'dcim.devicetype', pk: 10, fields: { manufacturer: 1, model: 'C9300', slug: 'c9300', part_number: 'WS-C9300' } },
+    { model: 'dcim.devicerole', pk: 20, fields: { name: 'Switch', slug: 'switch' } },
+    { model: 'dcim.platform', pk: 40, fields: { name: 'IOS-XE', slug: 'ios-xe' } },
+    { model: 'dcim.rackrole', pk: 30, fields: { name: 'Compute', slug: 'compute' } },
+    { model: 'dcim.site', pk: 100, fields: { name: 'Site Alpha', status: 'active', facility: 'Bldg 1', time_zone: 'UTC', description: '', physical_address: '' } },
+    { model: 'dcim.location', pk: 200, fields: { name: 'Room 1', site: 100, parent: null, level: 0, status: 'active', description: '' } },
+    { model: 'dcim.rack', pk: 300, fields: { name: 'Rack A', site: 100, location: 200, role: 30, status: 'active', type: '4-post-cabinet', width: 19, u_height: '42.0', serial: 'RK-1', asset_tag: null, facility_id: '', description: '' } },
+    { model: 'dcim.device', pk: 400, fields: { name: 'sw-01', site: 100, location: 200, rack: 300, position: '4.0', face: 'front', status: 'active', serial: 'SN-1', asset_tag: 'AT-1', device_type: 10, role: 20, platform: 40, description: '' } },
+    { model: 'dcim.device', pk: 401, fields: { name: 'sw-02', site: 100, location: 200, rack: 300, position: '6.0', face: 'rear', status: 'active', serial: '', asset_tag: null, device_type: 10, role: 20, platform: null, description: '' } },
+  ]
+  const jsonPath = join(workspaceDir, 'netbox.json')
+  writeFileSync(jsonPath, JSON.stringify(dump), 'utf8')
+
+  await appPage.getByTestId('open-import-btn').click()
+  await expect(appPage.getByTestId('import-dialog')).toBeVisible()
+
+  // Choosing a .json routes to the NetBox flow (no column mapping).
+  await setDialogPath(electronApp, jsonPath)
+  await appPage.getByTestId('import-choose-file').click()
+  await expect(appPage.getByTestId('netbox-counts')).toContainText('1 site')
+  await expect(appPage.getByTestId('netbox-counts')).toContainText('2 devices')
+
+  await appPage.getByTestId('netbox-validate').click()
+  await expect(appPage.getByTestId('netbox-summary')).toContainText('5 nodes will import')
+
+  await appPage.getByTestId('netbox-apply').click()
+  await expect(appPage.getByTestId('import-dialog')).toHaveCount(0)
+  await expect(appPage.getByTestId('import-summary-banner')).toContainText('Imported 5')
+
+  // The Site landed in the tree as the top of the imported subtree.
+  await expect(treeRow(appPage, 'Site Alpha')).toBeVisible()
+})

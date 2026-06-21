@@ -6,6 +6,7 @@
   // authoritative — this dialog only drives it and shows results.
   import type {
     ManifestNode, NodeTemplate, ImportMapping, ImportInspect, ImportPlan, ImportResult, Project,
+    NetboxInspect, NetboxImportPlan,
   } from '../../../shared/types'
   import { isUsableTemplate, templateLabel, templateFields, validatePropertyKey } from '../../../shared/validation'
   import { suggestKey } from '../../../shared/import'
@@ -23,6 +24,15 @@
   let inspect = $state<ImportInspect | null>(null)
   let busy = $state(false)
   let error = $state<string | null>(null)
+
+  // Source mode: CSV (column mapping) or NetBox (relational, no mapping). Set
+  // from the chosen file's extension.
+  let mode = $state<'csv' | 'netbox'>('csv')
+  let netboxInspect = $state<NetboxInspect | null>(null)
+  let netboxPlan = $state<NetboxImportPlan | null>(null)
+
+  // How many skipped issues to list before collapsing to "…and N more".
+  const ISSUE_PREVIEW = 5
 
   // Mapping state.
   let placement = $state<'flat' | 'path'>('flat')
@@ -83,16 +93,67 @@
 
   async function chooseFile() {
     error = null
-    const path = await window.api.dialog.openFile('Choose a CSV to import')
+    const path = await window.api.dialog.openFile('Choose a file to import (CSV or NetBox JSON)')
     if (!path) return // canceled
     busy = true
     try {
-      const res = await window.api.import.inspect(path)
+      if (/\.json$/i.test(path)) {
+        // NetBox relational import — no column mapping.
+        const res = await window.api.import.netboxInspect(path)
+        if (!res.ok) { error = res.error.message; return }
+        mode = 'netbox'
+        filePath = path
+        netboxInspect = res.data
+        netboxPlan = null
+      } else {
+        const res = await window.api.import.inspect(path)
+        if (!res.ok) { error = res.error.message; return }
+        mode = 'csv'
+        filePath = path
+        inspect = res.data
+        initMapping(res.data.headers)
+        plan = null
+      }
+    } finally {
+      busy = false
+    }
+  }
+
+  // ── NetBox actions ───────────────────────────────────────────────────────
+  async function netboxValidate() {
+    if (!filePath) return
+    error = null
+    busy = true
+    try {
+      const res = await window.api.import.netboxPlan(filePath, { baseParentId: baseParent.id })
+      if (!res.ok) { error = res.error.message; netboxPlan = null; return }
+      netboxPlan = res.data
+    } finally {
+      busy = false
+    }
+  }
+
+  async function netboxImport() {
+    if (!filePath) return
+    error = null
+    busy = true
+    try {
+      const res = await window.api.import.netboxApply(filePath, { baseParentId: baseParent.id })
       if (!res.ok) { error = res.error.message; return }
-      filePath = path
-      inspect = res.data
-      initMapping(res.data.headers)
-      plan = null
+      const s = res.data.summary
+      // Map NetBox's per-type summary onto the shared ImportResult shape the
+      // post-import banner consumes (the dialog showed the per-type breakdown).
+      onImported(res.data.project, {
+        created: s.created,
+        updated: 0,
+        createdParents: 0,
+        skippedCount: s.skippedCount,
+        warningCount: s.warningCount,
+        skipped: s.skipped,
+        warnings: s.warnings,
+        capped: s.capped,
+      })
+      onClose()
     } finally {
       busy = false
     }
@@ -190,30 +251,80 @@
     style="height: min(85vh, 720px)"
     role="dialog"
     aria-modal="true"
-    aria-label="Import from CSV"
+    aria-label={mode === 'netbox' && netboxInspect ? 'Import from NetBox' : 'Import'}
     data-testid="import-dialog"
   >
     <div class="px-5 py-4 border-b border-stone-100 flex items-center justify-between">
       <div>
-        <h2 class="text-sm font-semibold text-stone-800">Import from CSV</h2>
-        <p class="text-xs text-stone-400 mt-0.5">Map spreadsheet columns to nodes and typed properties.</p>
+        <h2 class="text-sm font-semibold text-stone-800">
+          {mode === 'netbox' && netboxInspect ? 'Import from NetBox' : 'Import'}
+        </h2>
+        <p class="text-xs text-stone-400 mt-0.5">
+          {#if mode === 'netbox' && netboxInspect}
+            Build a Site → Location → Rack → Device tree with typed properties.
+          {:else if inspect}
+            Map spreadsheet columns to nodes and typed properties.
+          {:else}
+            Import a CSV export or a NetBox dumpdata JSON.
+          {/if}
+        </p>
       </div>
       <button onclick={onClose} class="text-stone-400 hover:text-stone-600 text-sm cursor-default"
         aria-label="Close" data-testid="import-close">✕</button>
     </div>
 
     <div class="flex-1 overflow-y-auto px-5 py-4">
-      {#if !inspect}
+      {#if !inspect && !netboxInspect}
         <div class="flex flex-col items-center justify-center gap-3 py-10 text-center">
-          <p class="text-sm text-stone-500">Choose a CSV exported from your spreadsheet.</p>
+          <p class="text-sm text-stone-500">Choose a CSV export or a NetBox dumpdata JSON file.</p>
           <button onclick={chooseFile} disabled={busy}
             class="bg-stone-800 hover:bg-stone-700 disabled:bg-stone-300 text-white text-sm
                    font-medium px-4 py-2 rounded-lg cursor-default" data-testid="import-choose-file">
-            Choose CSV…
+            Choose file…
           </button>
           {#if error}<p class="text-xs text-red-600" data-testid="import-error">{error}</p>{/if}
         </div>
-      {:else}
+      {:else if mode === 'netbox' && netboxInspect}
+        <div class="flex flex-col gap-4">
+          <p class="text-xs text-stone-500"><span class="font-mono">{filePath}</span></p>
+          <div class="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2">
+            <span class="text-xs font-semibold text-stone-500 uppercase tracking-wide">NetBox export</span>
+            <p class="text-sm text-stone-700 mt-1" data-testid="netbox-counts">
+              {netboxInspect.sites} site{netboxInspect.sites === 1 ? '' : 's'} ·
+              {netboxInspect.locations} location{netboxInspect.locations === 1 ? '' : 's'} ·
+              {netboxInspect.racks} rack{netboxInspect.racks === 1 ? '' : 's'} ·
+              {netboxInspect.devices} device{netboxInspect.devices === 1 ? '' : 's'}
+            </p>
+            <p class="text-xs text-stone-400 mt-1">
+              Imported under “{baseParent.name}” as typed Site / Location / Rack / Device nodes.
+            </p>
+          </div>
+
+          {#if netboxPlan}
+            <div class="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2" data-testid="netbox-summary">
+              <p class="text-xs text-stone-700">
+                <span class="font-semibold text-emerald-700">{netboxPlan.acceptedCount} nodes will import</span>
+                · <span class="text-red-700">{netboxPlan.skippedCount} skipped</span>
+                · <span class="text-amber-700">{netboxPlan.warningCount} warnings</span>
+                {#if netboxPlan.templatesCreated > 0}· <span class="text-sky-700">{netboxPlan.templatesCreated} templates created</span>{/if}
+              </p>
+              <p class="text-xs text-stone-500 mt-0.5">
+                {netboxPlan.sites} sites · {netboxPlan.locations} locations · {netboxPlan.racks} racks · {netboxPlan.devices} devices
+              </p>
+              {#if netboxPlan.skipped.length > 0}
+                <ul class="mt-1 space-y-0.5">
+                  {#each netboxPlan.skipped.slice(0, ISSUE_PREVIEW) as s (s.row + (s.column ?? ''))}
+                    <li class="text-xs text-stone-500 truncate">{s.reason}</li>
+                  {/each}
+                  {#if netboxPlan.skippedCount > ISSUE_PREVIEW}<li class="text-xs text-stone-400">…and {netboxPlan.skippedCount - ISSUE_PREVIEW} more</li>{/if}
+                </ul>
+              {/if}
+            </div>
+          {/if}
+
+          {#if error}<p class="text-xs text-red-600" data-testid="import-error">{error}</p>{/if}
+        </div>
+      {:else if inspect}
         <div class="flex flex-col gap-4">
           <p class="text-xs text-stone-500">
             <span class="font-mono">{filePath}</span> · {inspect.rowCount} rows
@@ -370,7 +481,21 @@
       {/if}
     </div>
 
-    {#if inspect}
+    {#if mode === 'netbox' && netboxInspect}
+      <div class="flex items-center gap-2 px-5 py-3 border-t border-stone-100">
+        <button onclick={netboxValidate} disabled={busy}
+          class="bg-white hover:bg-stone-50 text-stone-700 border border-stone-200 disabled:opacity-50
+                 text-sm font-medium px-4 py-2 rounded-lg cursor-default" data-testid="netbox-validate">
+          Validate
+        </button>
+        <button onclick={netboxImport} disabled={busy || !netboxPlan || netboxPlan.acceptedCount === 0}
+          class="bg-stone-800 hover:bg-stone-700 disabled:bg-stone-300 text-white text-sm font-medium
+                 px-4 py-2 rounded-lg cursor-default disabled:cursor-not-allowed" data-testid="netbox-apply">
+          Import{netboxPlan ? ` ${netboxPlan.acceptedCount}` : ''}
+        </button>
+        <span class="text-xs text-stone-400 ml-auto">Validate to see what will import.</span>
+      </div>
+    {:else if inspect}
       <div class="flex items-center gap-2 px-5 py-3 border-t border-stone-100">
         <button onclick={validate} disabled={busy || duplicateKeys.size > 0 || invalidKeyHeaders.size > 0}
           class="bg-white hover:bg-stone-50 text-stone-700 border border-stone-200 disabled:opacity-50

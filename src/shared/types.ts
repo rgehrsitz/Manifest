@@ -181,6 +181,55 @@ export interface ImportResult {
   capped: boolean
 }
 
+// ─── NetBox relational import ──────────────────────────────────────────────
+// NetBox is a relational DCIM source (Django `dumpdata` JSON). Unlike the flat
+// CSV importer, the adapter resolves FK relations into a Site → Location → Rack
+// → Device tree with typed device attributes. See src/shared/netbox.ts.
+
+// Counts surfaced before import so the user can confirm what will land.
+export interface NetboxInspect {
+  format: 'netbox-dumpdata'
+  totalObjects: number
+  sites: number
+  locations: number
+  racks: number
+  devices: number
+}
+
+export interface NetboxImportOptions {
+  baseParentId: string            // node the imported Site subtree is created under
+}
+
+// Preview/result counts mirror the CSV ImportPlan/ImportResult shapes so the
+// renderer can reuse the same summary UI.
+export interface NetboxImportPlan {
+  templatesCreated: number        // netbox-* templates that will be added
+  sites: number
+  locations: number
+  racks: number
+  devices: number
+  acceptedCount: number           // total nodes that will be created
+  skippedCount: number
+  warningCount: number
+  skipped: ImportIssue[]
+  warnings: ImportIssue[]
+  capped: boolean
+}
+
+export interface NetboxImportResult {
+  templatesCreated: number
+  created: number                 // total nodes created
+  sites: number
+  locations: number
+  racks: number
+  devices: number
+  skippedCount: number
+  warningCount: number
+  skipped: ImportIssue[]
+  warnings: ImportIssue[]
+  capped: boolean
+}
+
 export type ChangeType =
   | 'added'
   | 'removed'
