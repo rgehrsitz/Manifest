@@ -318,7 +318,7 @@ test('update-on-key: a byte-identical re-import is a no-op (import disabled)', a
   await expect(appPage.getByTestId('import-apply')).toBeDisabled()
 })
 
-test('imports a NetBox dumpdata JSON into a typed Site → Rack → Device tree', async ({
+test('imports a NetBox dumpdata JSON into a typed Site → Location → Rack → Device tree', async ({
   appPage,
   electronApp,
   workspaceDir,

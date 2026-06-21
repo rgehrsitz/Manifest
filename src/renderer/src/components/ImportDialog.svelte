@@ -251,7 +251,7 @@
     style="height: min(85vh, 720px)"
     role="dialog"
     aria-modal="true"
-    aria-label="Import from CSV"
+    aria-label={mode === 'netbox' && netboxInspect ? 'Import from NetBox' : 'Import'}
     data-testid="import-dialog"
   >
     <div class="px-5 py-4 border-b border-stone-100 flex items-center justify-between">
@@ -316,7 +316,7 @@
                   {#each netboxPlan.skipped.slice(0, ISSUE_PREVIEW) as s (s.row + (s.column ?? ''))}
                     <li class="text-xs text-stone-500 truncate">{s.reason}</li>
                   {/each}
-                  {#if netboxPlan.skipped.length > ISSUE_PREVIEW}<li class="text-xs text-stone-400">…and {netboxPlan.skippedCount - ISSUE_PREVIEW} more</li>{/if}
+                  {#if netboxPlan.skippedCount > ISSUE_PREVIEW}<li class="text-xs text-stone-400">…and {netboxPlan.skippedCount - ISSUE_PREVIEW} more</li>{/if}
                 </ul>
               {/if}
             </div>

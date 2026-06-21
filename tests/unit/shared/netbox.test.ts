@@ -75,6 +75,7 @@ describe('parseNetboxDump', () => {
       { model: 'dcim.site', pk: 'bad', fields: {} }, // pk not a number
       { nope: true },
       { model: 'dcim.site', pk: 2 }, // no fields
+      { model: 'dcim.site', pk: 3, fields: [] }, // fields is an array, not an object
     ])
     const out = parseNetboxDump(raw)
     expect(out.map((o) => o.pk)).toEqual([1])

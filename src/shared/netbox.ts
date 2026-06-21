@@ -90,7 +90,8 @@ export function parseNetboxDump(text: string): NetboxObject[] {
       typeof (item as Record<string, unknown>).model === 'string' &&
       typeof (item as Record<string, unknown>).pk === 'number' &&
       (item as Record<string, unknown>).fields != null &&
-      typeof (item as Record<string, unknown>).fields === 'object'
+      typeof (item as Record<string, unknown>).fields === 'object' &&
+      !Array.isArray((item as Record<string, unknown>).fields)
     ) {
       out.push(item as NetboxObject)
     }
