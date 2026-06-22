@@ -209,15 +209,13 @@ test('searches by property value and focuses the selected node', async ({ appPag
   await openProjectThroughUi(appPage, electronApp, projectDir)
 
   await appPage.getByTestId('search-input').fill('SN-0002')
-  await expect(appPage.getByTestId('search-results')).toBeVisible()
-  await appPage.getByTestId('search-result').filter({ hasText: 'Server 2' }).click()
 
   await expect(appPage.getByTestId('node-name')).toContainText('Server 2')
   await expect(appPage.getByTestId('search-input')).toHaveValue('SN-0002')
   await expect(appPage.getByTestId('tree')).toBeVisible()
-  await appPage.getByTestId('show-search-results').click()
-  await expect(appPage.getByTestId('search-results')).toBeVisible()
-  await expect(appPage.getByTestId('search-result').filter({ hasText: 'Server 2' })).toBeVisible()
+  await expect(appPage.getByTestId('search-results')).toHaveCount(0)
+  await expect(appPage.locator('[data-testid="tree-node"][data-row-matched="true"]', { hasText: 'Server 2' })).toBeVisible()
+  await expect(appPage.locator('[data-testid="tree-node"]', { hasText: 'Server 1' })).toHaveCount(0)
 })
 
 test('shows an empty state when search finds no matches', async ({ appPage, electronApp, workspaceDir }) => {
@@ -227,9 +225,8 @@ test('shows an empty state when search finds no matches', async ({ appPage, elec
   await openProjectThroughUi(appPage, electronApp, projectDir)
 
   await appPage.getByTestId('search-input').fill('does-not-exist')
-  await expect(appPage.getByTestId('search-results')).toBeVisible()
   await expect(appPage.getByTestId('search-no-results')).toBeVisible()
-  await expect(appPage.getByTestId('search-no-results')).toContainText('No results')
+  await expect(appPage.getByTestId('search-no-results')).toContainText('No matching nodes')
 })
 
 test('autosaves edits to disk and reopens them cleanly', async ({ appPage, electronApp, workspaceDir }) => {

@@ -1,6 +1,7 @@
 <svelte:options runes />
 
 <script lang="ts">
+  import type { SearchResult } from '../../../shared/types'
   import type { VisibleRow } from '../lib/tree-rows'
   import { splitHighlight } from '../lib/tree-typeahead'
 
@@ -17,10 +18,11 @@
      * block.
      */
     onContextMenu: (row: VisibleRow, x: number, y: number) => void
-    /** True when this row matches the active typeahead query (browse mode). */
+    /** True when this row matches the active search query. */
     matched?: boolean
-    /** The active typeahead query, for in-name substring highlighting. */
+    /** The active search query, for in-name substring highlighting. */
     matchQuery?: string
+    matchDetail?: SearchResult
   }
 
   let {
@@ -32,11 +34,14 @@
     onContextMenu,
     matched = false,
     matchQuery = '',
+    matchDetail,
   }: Props = $props()
 
-  // Segment the name for highlight only when this row is a typeahead match.
+  // Segment the name for highlight only when this row is a name match.
   const nameSegments = $derived(
-    matched && matchQuery ? splitHighlight(row.node.name, matchQuery) : null
+    matched && matchDetail?.matchField !== 'property' && matchQuery
+      ? splitHighlight(row.node.name, matchQuery)
+      : null
   )
 
   const isGhost = $derived(row.kind === 'ghost')
@@ -165,7 +170,7 @@
       {/if}
     </button>
 
-    <!-- Node name (segmented when it matches the active typeahead query) -->
+    <!-- Node name (segmented when it matches the active search query) -->
     <span class="flex-1 truncate">
       {#if nameSegments}
         {#each nameSegments as seg, i (i)}
@@ -175,6 +180,16 @@
         {row.node.name}
       {/if}
     </span>
+
+    {#if matched && matchDetail?.matchField === 'property'}
+      <span
+        class="max-w-[42%] truncate rounded bg-amber-100 px-1.5 py-0.5 text-[10px]
+               font-medium text-amber-800"
+        title={matchDetail.snippet}
+      >
+        {matchDetail.snippet}
+      </span>
+    {/if}
 
     <!-- Decorated badges (compare mode, PR #2) -->
     {#if row.kind === 'decorated' && row.badges.length > 0}

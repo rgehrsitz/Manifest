@@ -159,7 +159,7 @@ test('arrow key navigation moves through visible nodes', async ({
   await expect(appPage.getByTestId('detail-pane')).toContainText('Beta')
 })
 
-test('inline typeahead jumps to and cycles matching nodes', async ({
+test('search box filters the tree and cycles matching nodes', async ({
   appPage,
   electronApp,
   workspaceDir,
@@ -185,16 +185,15 @@ test('inline typeahead jumps to and cycles matching nodes', async ({
     await expect(appPage.locator('[data-testid="tree-node"]', { hasText: name })).toBeVisible()
   }
 
-  const view = appPage.getByTestId('manifest-view')
-  await view.focus()
+  const search = appPage.getByTestId('search-input')
 
-  // Type to jump: "rack" matches both racks; the bar appears and the first
-  // match (Rack Alpha, pre-order) is selected.
-  for (const ch of 'rack') await view.press(ch)
-  await expect(appPage.getByTestId('tree-typeahead-bar')).toBeVisible()
-  await expect(appPage.getByTestId('tree-typeahead-query')).toHaveText('rack')
-  await expect(appPage.getByTestId('tree-typeahead-count')).toHaveText('1/2')
+  // Searching in the visible box keeps the tree visible, prunes nonmatching
+  // branches, and selects the first match.
+  await search.fill('rack')
   await expect(appPage.getByTestId('detail-pane')).toContainText('Rack Alpha')
+  await expect(appPage.getByTestId('tree')).toBeVisible()
+  await expect(appPage.getByTestId('search-results')).toHaveCount(0)
+  await expect(appPage.locator('[data-testid="tree-node"]', { hasText: 'Shelf' })).toHaveCount(0)
 
   // Both matches are highlighted in the tree.
   await expect(
@@ -202,26 +201,22 @@ test('inline typeahead jumps to and cycles matching nodes', async ({
   ).toHaveCount(2)
 
   // Enter cycles to the next match.
-  await view.press('Enter')
-  await expect(appPage.getByTestId('tree-typeahead-count')).toHaveText('2/2')
+  await search.press('Enter')
   await expect(appPage.getByTestId('detail-pane')).toContainText('Rack Beta')
 
   // Shift+Enter cycles back to the previous match.
-  await view.press('Shift+Enter')
-  await expect(appPage.getByTestId('tree-typeahead-count')).toHaveText('1/2')
+  await search.press('Shift+Enter')
+  await expect(appPage.getByTestId('detail-pane')).toContainText('Rack Alpha')
 
-  // Backspace edits the query in place (both racks still match "rac").
-  await view.press('Backspace')
-  await expect(appPage.getByTestId('tree-typeahead-query')).toHaveText('rac')
-  await expect(appPage.getByTestId('tree-typeahead-count')).toHaveText('1/2')
+  // Escape clears the search and restores the full expanded tree.
+  await search.press('Escape')
+  await expect(search).toHaveValue('')
+  await expect(appPage.locator('[data-testid="tree-node"]', { hasText: 'Shelf' })).toBeVisible()
 
-  // An arrow key ends typeahead and resumes normal navigation.
-  await view.press('ArrowDown')
-  await expect(appPage.getByTestId('tree-typeahead-bar')).toHaveCount(0)
-
-  // Re-entering then Escape also clears.
+  // Typing while the tree has focus feeds the same visible search box.
+  const view = appPage.getByTestId('manifest-view')
+  await view.focus()
   await view.press('s')
-  await expect(appPage.getByTestId('tree-typeahead-bar')).toBeVisible()
-  await view.press('Escape')
-  await expect(appPage.getByTestId('tree-typeahead-bar')).toHaveCount(0)
+  await expect(search).toHaveValue('s')
+  await expect(appPage.getByTestId('detail-pane')).toContainText('Shelf')
 })
