@@ -7,7 +7,6 @@
   import {
     severityBadgeClass,
     severityClass,
-    formatChangeType,
     describeTemplateChange,
   } from '../lib/diff-format'
   import SnapshotDiffRowBody from './SnapshotDiffRowBody.svelte'
@@ -88,9 +87,19 @@
   })
 
   const severityOrder = ['High', 'Medium', 'Low'] as const
+  const changeGroupOrder = ['modified', 'added', 'removed'] as const
   type SeverityFilter = 'All' | DiffEntry['severity']
+  type ChangeGroupId = typeof changeGroupOrder[number]
+  interface ChangeGroup {
+    id: ChangeGroupId
+    label: string
+    entries: DiffEntry[]
+    total: number
+  }
+
   let activeSeverityFilter = $state<SeverityFilter>('All')
   let activeCompareKey = $state('')
+  let collapsedChangeGroups = $state<Set<ChangeGroupId>>(new Set())
 
   // Flatten all diffs from the merged tree nodes.
   const allDiffs = $derived(
@@ -106,6 +115,7 @@
     if (key !== activeCompareKey) {
       activeCompareKey = key
       activeSeverityFilter = 'All'
+      collapsedChangeGroups = new Set()
     }
   })
 
@@ -126,26 +136,34 @@
     })),
   ])
 
-  const changeSummary = $derived(
-    Array.from(new Set(allDiffs.map(e => e.changeType))).map(changeType => ({
-      changeType,
-      count: allDiffs.filter(e => e.changeType === changeType).length,
-    }))
-  )
-
   const visibleDiffs = $derived(
     activeSeverityFilter === 'All'
       ? allDiffs
       : allDiffs.filter(e => e.severity === activeSeverityFilter)
   )
 
-  const groupedDiffs = $derived(
-    severityOrder
-      .map(severity => ({
-        severity,
-        entries: visibleDiffs.filter(e => e.severity === severity),
+  const changeGroups = $derived(
+    changeGroupOrder
+      .map(id => {
+        const label = changeGroupLabel(id)
+        return {
+          id,
+          label,
+          entries: visibleDiffs.filter(e => changeGroupFor(e) === id),
+          total: allDiffs.filter(e => changeGroupFor(e) === id).length,
+        }
+      })
+      .filter(group => group.entries.length > 0)
+  )
+
+  const changeGroupTotals = $derived(
+    changeGroupOrder
+      .map(id => ({
+        id,
+        label: changeGroupLabel(id),
+        total: allDiffs.filter(e => changeGroupFor(e) === id).length,
       }))
-      .filter(g => g.entries.length > 0)
+      .filter(g => g.total > 0)
   )
 
   interface ReviewInsight {
@@ -169,6 +187,30 @@
     if (severity === 'Medium') return 'border-amber-200 bg-amber-50 text-amber-700'
     if (severity === 'Low') return 'border-slate-200 bg-slate-100 text-slate-600'
     return 'border-stone-700 bg-stone-800 text-white'
+  }
+
+  function changeGroupFor(diff: DiffEntry): ChangeGroupId {
+    if (diff.changeType === 'added') return 'added'
+    if (diff.changeType === 'removed') return 'removed'
+    return 'modified'
+  }
+
+  function changeGroupLabel(id: ChangeGroupId): string {
+    if (id === 'added') return 'Added'
+    if (id === 'removed') return 'Removed'
+    return 'Modified'
+  }
+
+  function changeGroupCount(group: ChangeGroup): string {
+    if (activeSeverityFilter === 'All') return String(group.total)
+    return `${group.entries.length} / ${group.total}`
+  }
+
+  function toggleChangeGroup(id: ChangeGroupId) {
+    const next = new Set(collapsedChangeGroups)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    collapsedChangeGroups = next
   }
 
   const reviewInsights = $derived.by<ReviewInsight[]>(() => {
@@ -517,9 +559,9 @@
               {/each}
             </div>
             <div class="flex flex-wrap gap-1">
-              {#each changeSummary as item (item.changeType)}
+              {#each changeGroupTotals as item (item.id)}
                 <span class="rounded-full bg-stone-100 px-2 py-0.5 text-[10px] text-stone-600">
-                  {item.count} {formatChangeType(item.changeType)}
+                  {item.total} {item.label}
                 </span>
               {/each}
             </div>
@@ -533,11 +575,31 @@
                 <p class="mt-0.5 text-xs text-stone-400">Choose another priority or return to All.</p>
               </div>
             {:else}
-              {#each groupedDiffs as group (group.severity)}
-                <div class="space-y-1.5">
-                  <h4 class="text-[10px] font-semibold uppercase tracking-wide text-stone-400">
-                    {group.severity} Priority
-                  </h4>
+              {#each changeGroups as group (group.id)}
+                <section class="space-y-1.5" data-testid={`compare-change-group-${group.id}`}>
+                  <button
+                    type="button"
+                    aria-expanded={!collapsedChangeGroups.has(group.id)}
+                    onclick={() => toggleChangeGroup(group.id)}
+                    class="flex w-full items-center justify-between rounded-lg border border-stone-200
+                           bg-white px-2 py-1 text-left text-[10px] font-semibold uppercase
+                           tracking-wide text-stone-500 transition-colors hover:bg-stone-50 cursor-default"
+                    data-testid={`compare-change-group-toggle-${group.id}`}
+                  >
+                    <span class="flex items-center gap-1.5">
+                      <span class="inline-flex h-4 w-4 items-center justify-center rounded border border-stone-200 text-[10px]">
+                        {collapsedChangeGroups.has(group.id) ? '+' : '-'}
+                      </span>
+                      {group.label}
+                    </span>
+                    <span
+                      class="rounded-full bg-stone-100 px-1.5 py-0.5 text-[9px] text-stone-500"
+                      data-testid={`compare-change-group-count-${group.id}`}
+                    >
+                      {changeGroupCount(group)}
+                    </span>
+                  </button>
+                  {#if !collapsedChangeGroups.has(group.id)}
                   {#each group.entries as diff, idx (`${diff.nodeId}-${diff.changeType}-${idx}`)}
                     {@const isHighlighted = highlightedNodeId === diff.nodeId || highlightedNodeId === `ghost:${diff.nodeId}`}
                     {#if onDiffNodeSelect}
@@ -565,7 +627,8 @@
                       </div>
                     {/if}
                   {/each}
-                </div>
+                  {/if}
+                </section>
               {/each}
             {/if}
           {/if}
