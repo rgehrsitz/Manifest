@@ -42,6 +42,12 @@ describe('validateTemplateField', () => {
     expect(validateTemplateField('n', { type: 'number', default: 'nope' as any }).valid).toBe(false)
     expect(validateTemplateField('n', { type: 'number', default: 5 }).valid).toBe(true)
   })
+  it('accepts High/Medium/Low compare importance and rejects other values', () => {
+    expect(validateTemplateField('serial', { type: 'string', compareImportance: 'High' }).valid).toBe(true)
+    expect(validateTemplateField('serial', { type: 'string', compareImportance: 'Medium' }).valid).toBe(true)
+    expect(validateTemplateField('serial', { type: 'string', compareImportance: 'Low' }).valid).toBe(true)
+    expect(validateTemplateField('serial', { type: 'string', compareImportance: 'Critical' as any }).valid).toBe(false)
+  })
   it('rejects invalid property keys', () => {
     expect(validateTemplateField('bad key', { type: 'string' }).valid).toBe(false)
   })

@@ -531,6 +531,7 @@
           "nodeId": "<id:5>",
           "changeType": "added",
           "severity": "High",
+          "severityReason": "High: node was added to the hierarchy.",
           "newValue": {
             "id": "<id:5>",
             "parentId": "<id:2>",
@@ -552,6 +553,7 @@
           "nodeId": "<id:4>",
           "changeType": "moved",
           "severity": "High",
+          "severityReason": "High: node moved to a different parent.",
           "oldValue": "<id:2>",
           "newValue": "<id:5>",
           "context": {
@@ -608,6 +610,7 @@
                 "nodeId": "<id:5>",
                 "changeType": "added",
                 "severity": "High",
+                "severityReason": "High: node was added to the hierarchy.",
                 "newValue": {
                   "id": "<id:5>",
                   "parentId": "<id:2>",
@@ -649,6 +652,7 @@
                 "nodeId": "<id:4>",
                 "changeType": "moved",
                 "severity": "High",
+                "severityReason": "High: node moved to a different parent.",
                 "oldValue": "<id:2>",
                 "newValue": "<id:5>",
                 "context": {

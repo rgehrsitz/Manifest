@@ -214,6 +214,7 @@ test('surfaces property-only snapshot diffs', async ({ appPage, electronApp, wor
   const propertyRow = appPage.getByTestId('snapshot-diff-row').filter({ hasText: 'Property Changed' })
   await expect(propertyRow).toBeVisible()
   await expect(propertyRow).toContainText('Rack A')
+  await expect(propertyRow.getByTestId('diff-severity-reason')).toContainText('Medium: field "serial" changed.')
   await expect(propertyRow).toContainText('Added serial: SN-42')
 
   await propertyRow.click()

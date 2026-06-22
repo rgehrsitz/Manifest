@@ -8,6 +8,7 @@
           "nodeId": "<id:1>",
           "changeType": "added",
           "severity": "High",
+          "severityReason": "High: node was added to the hierarchy.",
           "newValue": {
             "id": "<id:1>",
             "parentId": "<id:2>",
@@ -29,6 +30,7 @@
           "nodeId": "<id:3>",
           "changeType": "moved",
           "severity": "High",
+          "severityReason": "High: node moved to a different parent.",
           "oldValue": "<id:4>",
           "newValue": "<id:2>",
           "context": {
@@ -43,6 +45,7 @@
           "nodeId": "<id:5>",
           "changeType": "removed",
           "severity": "High",
+          "severityReason": "High: node was removed from the hierarchy.",
           "oldValue": {
             "id": "<id:5>",
             "parentId": "<id:2>",
@@ -64,6 +67,7 @@
           "nodeId": "<id:6>",
           "changeType": "renamed",
           "severity": "Medium",
+          "severityReason": "Medium: node display name changed.",
           "oldValue": "ToRename",
           "newValue": "Renamed",
           "context": {
@@ -78,6 +82,7 @@
           "nodeId": "<id:7>",
           "changeType": "property-changed",
           "severity": "Medium",
+          "severityReason": "Medium: field \"note\" changed.",
           "oldValue": {},
           "newValue": {
             "note": "changed"
@@ -87,13 +92,17 @@
             "parentName": "Diff Lab",
             "path": [
               "Diff Lab"
-            ]
+            ],
+            "propertyImportance": {
+              "note": "Medium"
+            }
           }
         },
         {
           "nodeId": "<id:8>",
           "changeType": "template-changed",
           "severity": "Medium",
+          "severityReason": "Medium: node template binding changed.",
           "oldValue": "alpha",
           "newValue": "beta",
           "context": {
@@ -108,6 +117,7 @@
           "nodeId": "<id:4>",
           "changeType": "order-changed",
           "severity": "Low",
+          "severityReason": "Low: sibling order changed without structural movement.",
           "oldValue": 0,
           "newValue": 1,
           "context": {
@@ -122,6 +132,7 @@
           "nodeId": "<id:8>",
           "changeType": "order-changed",
           "severity": "Low",
+          "severityReason": "Low: sibling order changed without structural movement.",
           "oldValue": 5,
           "newValue": 4,
           "context": {
@@ -136,6 +147,7 @@
           "nodeId": "<id:9>",
           "changeType": "order-changed",
           "severity": "Low",
+          "severityReason": "Low: sibling order changed without structural movement.",
           "oldValue": 4,
           "newValue": 0,
           "context": {

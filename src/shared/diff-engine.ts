@@ -5,6 +5,7 @@ import type {
   NodeTemplate,
   TemplateField,
   TemplateDiffEntry,
+  Severity,
 } from './types'
 import { templateFields, templateLabel } from './validation'
 
@@ -68,6 +69,103 @@ function propertiesEqual(a: ManifestNode['properties'], b: ManifestNode['propert
   return true
 }
 
+function buildChildrenMap(nodes: ManifestNode[]): Map<string | null, ManifestNode[]> {
+  const byParent = new Map<string | null, ManifestNode[]>()
+  for (const node of nodes) {
+    const children = byParent.get(node.parentId) ?? []
+    children.push(node)
+    byParent.set(node.parentId, children)
+  }
+  return byParent
+}
+
+function countDescendants(nodeId: string, childrenByParent: Map<string | null, ManifestNode[]>): number {
+  let count = 0
+  const queue = [...(childrenByParent.get(nodeId) ?? [])]
+  while (queue.length > 0) {
+    const node = queue.shift()!
+    count++
+    queue.push(...(childrenByParent.get(node.id) ?? []))
+  }
+  return count
+}
+
+function countIncomingReferences(targetId: string, project: Project): number {
+  let count = 0
+  for (const node of project.nodes) {
+    if (node.id === targetId || !node.templateId) continue
+    const fields = templateFields(project.templates?.[node.templateId])
+    for (const [key, field] of Object.entries(fields)) {
+      if (field.type === 'reference' && node.properties[key] === targetId) count++
+    }
+  }
+  return count
+}
+
+function changedPropertyKeys(
+  a: ManifestNode['properties'],
+  b: ManifestNode['properties']
+): string[] {
+  return Array.from(new Set([...Object.keys(a), ...Object.keys(b)]))
+    .filter(key => a[key] !== b[key])
+    .sort()
+}
+
+function inferredFieldImportance(key: string, field: TemplateField | undefined): Severity {
+  if (field?.compareImportance) return field.compareImportance
+  if (!field) return 'Medium'
+  const normalized = key.toLowerCase()
+  if (
+    field.type === 'reference' ||
+    field.type === 'version' ||
+    ['status', 'state', 'enabled', 'active', 'serial', 'serial_number', 'asset_tag', 'firmware', 'ip', 'ip_address'].includes(normalized)
+  ) {
+    return 'High'
+  }
+  if (field?.required) return 'Medium'
+  return 'Medium'
+}
+
+function severityRank(severity: Severity): number {
+  return severity === 'High' ? 0 : severity === 'Medium' ? 1 : 2
+}
+
+function mostImportantSeverity(values: Severity[]): Severity {
+  if (values.length === 0) return 'Medium'
+  return [...values].sort((a, b) => severityRank(a) - severityRank(b))[0]
+}
+
+function propertyImportance(
+  nodeA: ManifestNode,
+  nodeB: ManifestNode,
+  projectA: Project,
+  projectB: Project,
+  keys: string[]
+): Record<string, Severity> {
+  const fieldsA = templateFields(nodeA.templateId ? projectA.templates?.[nodeA.templateId] : undefined)
+  const fieldsB = templateFields(nodeB.templateId ? projectB.templates?.[nodeB.templateId] : undefined)
+  const out: Record<string, Severity> = {}
+  for (const key of keys) {
+    const a = inferredFieldImportance(key, fieldsA[key])
+    const b = inferredFieldImportance(key, fieldsB[key])
+    out[key] = mostImportantSeverity([a, b])
+  }
+  return out
+}
+
+function propertySeverityReason(importance: Record<string, Severity>): { severity: Severity; reason: string } {
+  const entries = Object.entries(importance)
+  const severity = mostImportantSeverity(entries.map(([, value]) => value))
+  const important = entries
+    .filter(([, value]) => value === severity)
+    .map(([key]) => `"${key}"`)
+    .slice(0, 3)
+    .join(', ')
+  if (severity === 'High') return { severity, reason: `High: important field ${important} changed.` }
+  if (severity === 'Low') return { severity, reason: `Low: only low-importance field ${important} changed.` }
+  return { severity, reason: `Medium: field ${important} changed.` }
+}
+
 function referenceLabel(value: unknown, nodeMap: NodeMap): string | undefined {
   if (typeof value !== 'string' || value.length === 0) return undefined
   const target = nodeMap.get(value)
@@ -118,6 +216,7 @@ function compareEntries(a: DiffEntry, b: DiffEntry): number {
 export function diffProjects(projectA: Project, projectB: Project): DiffEntry[] {
   const nodesA = buildNodeMap(projectA.nodes)
   const nodesB = buildNodeMap(projectB.nodes)
+  const childrenA = buildChildrenMap(projectA.nodes)
   const ids = new Set([...nodesA.keys(), ...nodesB.keys()])
   const diffs: DiffEntry[] = []
 
@@ -130,6 +229,7 @@ export function diffProjects(projectA: Project, projectB: Project): DiffEntry[] 
         nodeId: id,
         changeType: 'added',
         severity: 'High',
+        severityReason: 'High: node was added to the hierarchy.',
         newValue: nodeB,
         context: makeContext(nodeB, nodesB),
       })
@@ -137,10 +237,19 @@ export function diffProjects(projectA: Project, projectB: Project): DiffEntry[] 
     }
 
     if (nodeA && !nodeB) {
+      const descendants = countDescendants(id, childrenA)
+      const references = countIncomingReferences(id, projectA)
+      const impacts = [
+        descendants > 0 ? `${descendants} descendant${descendants === 1 ? '' : 's'}` : '',
+        references > 0 ? `${references} incoming reference${references === 1 ? '' : 's'}` : '',
+      ].filter(Boolean)
       diffs.push({
         nodeId: id,
         changeType: 'removed',
         severity: 'High',
+        severityReason: impacts.length > 0
+          ? `High: removed node affected ${impacts.join(' and ')}.`
+          : 'High: node was removed from the hierarchy.',
         oldValue: nodeA,
         context: makeContext(nodeA, nodesA),
       })
@@ -154,6 +263,7 @@ export function diffProjects(projectA: Project, projectB: Project): DiffEntry[] 
         nodeId: id,
         changeType: 'moved',
         severity: 'High',
+        severityReason: 'High: node moved to a different parent.',
         oldValue: nodeA.parentId,
         newValue: nodeB.parentId,
         context: makeContext(nodeB, nodesB),
@@ -165,6 +275,7 @@ export function diffProjects(projectA: Project, projectB: Project): DiffEntry[] 
         nodeId: id,
         changeType: 'renamed',
         severity: 'Medium',
+        severityReason: 'Medium: node display name changed.',
         oldValue: nodeA.name,
         newValue: nodeB.name,
         context: makeContext(nodeB, nodesB),
@@ -176,6 +287,7 @@ export function diffProjects(projectA: Project, projectB: Project): DiffEntry[] 
         nodeId: id,
         changeType: 'template-changed',
         severity: 'Medium',
+        severityReason: 'Medium: node template binding changed.',
         oldValue: nodeA.templateId ?? null,
         newValue: nodeB.templateId ?? null,
         context: makeContext(nodeB, nodesB),
@@ -184,15 +296,20 @@ export function diffProjects(projectA: Project, projectB: Project): DiffEntry[] 
 
     if (!propertiesEqual(nodeA.properties, nodeB.properties)) {
       const labels = propertyValueLabels(nodeA, nodeB, projectA, projectB, nodesA, nodesB)
+      const keys = changedPropertyKeys(nodeA.properties, nodeB.properties)
+      const importance = propertyImportance(nodeA, nodeB, projectA, projectB, keys)
+      const { severity, reason } = propertySeverityReason(importance)
       diffs.push({
         nodeId: id,
         changeType: 'property-changed',
-        severity: 'Medium',
+        severity,
+        severityReason: reason,
         oldValue: nodeA.properties,
         newValue: nodeB.properties,
         context: {
           ...makeContext(nodeB, nodesB),
           ...(labels ? { propertyValueLabels: labels } : {}),
+          propertyImportance: importance,
         },
       })
     }
@@ -202,6 +319,7 @@ export function diffProjects(projectA: Project, projectB: Project): DiffEntry[] 
         nodeId: id,
         changeType: 'order-changed',
         severity: 'Low',
+        severityReason: 'Low: sibling order changed without structural movement.',
         oldValue: nodeA.order,
         newValue: nodeB.order,
         context: makeContext(nodeB, nodesB),
