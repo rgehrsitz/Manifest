@@ -114,14 +114,13 @@ function buildIncomingReferenceImpact(project: Project, nodeMap: NodeMap): Map<s
     for (const [key, field] of Object.entries(fields)) {
       const targetId = node.properties[key]
       if (field.type === 'reference' && typeof targetId === 'string' && targetId !== node.id) {
-        const entries = references.get(targetId) ?? []
-        entries.push({
+        const entry = {
           nodeId: node.id,
           nodeName: node.name,
           path: getPath(node, nodeMap),
           fieldKey: key,
-        })
-        references.set(targetId, entries)
+        }
+        references.set(targetId, [...(references.get(targetId) ?? []), entry])
       }
     }
   }

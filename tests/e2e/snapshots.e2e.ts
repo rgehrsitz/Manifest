@@ -203,7 +203,7 @@ test('surfaces removed nodes in snapshot compare mode', async ({ appPage, electr
   await rackRow.locator('[data-testid="removed-impact-details"] summary').click()
   await expect(rackRow.getByTestId('removed-impact-descendants')).toContainText('Server 1')
 
-  await rackRow.click({ position: { x: 12, y: 12 } })
+  await rackRow.getByTestId('snapshot-diff-row-header').click()
   await expect(appPage.locator('[data-testid="tree-node"][data-row-status="removed"]', { hasText: 'Rack A' })).toBeVisible()
 })
 

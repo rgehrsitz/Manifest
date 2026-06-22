@@ -33,8 +33,7 @@
   const impactCount = $derived(
     (removalImpact?.descendants.length ?? 0) + (removalImpact?.incomingReferences.length ?? 0)
   )
-
-  function impactSummary(): string {
+  const impactSummary = $derived.by(() => {
     if (!removalImpact) return ''
     const parts = [
       removalImpact.descendants.length > 0
@@ -45,10 +44,10 @@
         : '',
     ].filter(Boolean)
     return parts.join(', ')
-  }
+  })
 </script>
 
-<div class="flex items-start justify-between gap-2">
+<div class="flex items-start justify-between gap-2" data-testid="snapshot-diff-row-header">
   <div class="min-w-0">
     <p class="text-xs font-medium text-stone-800">{formatChangeType(diff.changeType)}</p>
     <p class="mt-0.5 text-xs text-stone-600 truncate">
@@ -75,7 +74,7 @@
   >
     <summary class="cursor-pointer text-[9px] font-semibold uppercase tracking-wide text-stone-500">
       Removal impact
-      <span class="ml-1 normal-case tracking-normal text-stone-400">{impactSummary()}</span>
+      <span class="ml-1 normal-case tracking-normal text-stone-400">{impactSummary}</span>
     </summary>
 
     <div class="mt-2 space-y-2">

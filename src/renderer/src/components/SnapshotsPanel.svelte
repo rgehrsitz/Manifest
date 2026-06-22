@@ -220,6 +220,7 @@
   function activateDiffRow(nodeId: string, event?: KeyboardEvent | MouseEvent) {
     if (event && shouldIgnoreDiffRowEvent(event)) return
     if (event instanceof KeyboardEvent) {
+      if (event.repeat) return
       if (event.key !== 'Enter' && event.key !== ' ') return
       event.preventDefault()
     }
@@ -625,7 +626,8 @@
                         class={`w-full rounded-xl border px-3 py-3 shadow-sm transition-shadow text-left
                           ${severityClass(diff.severity)}
                           ${isHighlighted ? 'ring-2 ring-sky-400 ring-offset-1' : ''}
-                          cursor-pointer hover:shadow-md`}
+                          cursor-pointer hover:shadow-md focus-visible:outline-none
+                          focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-1`}
                         data-testid="snapshot-diff-row"
                       >
                         <SnapshotDiffRowBody {diff} />
