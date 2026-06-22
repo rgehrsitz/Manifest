@@ -104,6 +104,9 @@ test('creates, compares, and reverts snapshots from the renderer surface', async
   await expect(appPage.getByTestId('snapshot-name-input')).toHaveCount(0)
   await expect(appPage.getByTestId('compare-from-select')).toHaveCount(0)
   await expect(appPage.getByTestId('detail-readonly-banner')).toContainText('Snapshots are read-only')
+  await expect(appPage.getByTestId('compare-change-group-added')).toBeVisible()
+  await expect(appPage.getByTestId('compare-change-group-count-added')).toHaveText('1')
+  await expect(appPage.getByTestId('compare-change-group-modified')).toHaveCount(0)
   await expect(appPage.getByTestId('snapshot-diff-row').filter({ hasText: 'Added' })).toBeVisible()
   await expect(appPage.getByTestId('snapshot-diff-row').filter({ hasText: 'Rack A' })).toBeVisible()
   await expect(treeRow(appPage, 'Rack A')).toBeVisible()
@@ -186,6 +189,8 @@ test('surfaces removed nodes in snapshot compare mode', async ({ appPage, electr
   await compareSnapshots(appPage, 'with-rack', 'without-rack')
 
   const removedRow = appPage.getByTestId('snapshot-diff-row').filter({ hasText: 'Removed' })
+  await expect(appPage.getByTestId('compare-change-group-removed')).toBeVisible()
+  await expect(appPage.getByTestId('compare-change-group-count-removed')).toHaveText('1')
   await expect(removedRow).toBeVisible()
   await expect(removedRow).toContainText('Rack A')
 
@@ -218,12 +223,19 @@ test('surfaces property-only snapshot diffs', async ({ appPage, electronApp, wor
   await expect(propertyRow).toContainText('Added serial: SN-42')
   await expect(appPage.getByTestId('compare-filter-all')).toHaveText('All 1')
   await expect(appPage.getByTestId('compare-filter-medium')).toHaveText('Medium 1')
+  await expect(appPage.getByTestId('compare-change-group-modified')).toBeVisible()
+  await expect(appPage.getByTestId('compare-change-group-count-modified')).toHaveText('1')
+  await expect(appPage.getByTestId('compare-change-group-added')).toHaveCount(0)
 
   await appPage.getByTestId('compare-filter-high').click()
   await expect(appPage.getByTestId('snapshot-diff-row')).toHaveCount(0)
   await expect(appPage.getByTestId('compare-filter-empty')).toContainText('No high changes')
 
   await appPage.getByTestId('compare-filter-all').click()
+  await expect(propertyRow).toBeVisible()
+  await appPage.getByTestId('compare-change-group-toggle-modified').click()
+  await expect(propertyRow).toHaveCount(0)
+  await appPage.getByTestId('compare-change-group-toggle-modified').click()
   await expect(propertyRow).toBeVisible()
 
   await propertyRow.click()
@@ -282,13 +294,18 @@ test('surfaces move and rename snapshot diffs for the same node', async ({ appPa
   await expect(appPage.getByTestId('compare-filter-all')).toHaveText('All 3')
   await expect(appPage.getByTestId('compare-filter-high')).toHaveText('High 1')
   await expect(appPage.getByTestId('compare-filter-medium')).toHaveText('Medium 1')
+  await expect(appPage.getByTestId('compare-change-group-modified')).toBeVisible()
+  await expect(appPage.getByTestId('compare-change-group-count-modified')).toHaveText('3')
+  await expect(appPage.getByTestId('compare-change-group-added')).toHaveCount(0)
 
   await appPage.getByTestId('compare-filter-high').click()
   await expect(appPage.getByTestId('compare-filter-summary')).toContainText('Showing 1 of 3 node changes.')
+  await expect(appPage.getByTestId('compare-change-group-count-modified')).toHaveText('1 / 3')
   await expect(movedRow).toBeVisible()
   await expect(renamedRow).toHaveCount(0)
 
   await appPage.getByTestId('compare-filter-medium').click()
+  await expect(appPage.getByTestId('compare-change-group-count-modified')).toHaveText('1 / 3')
   await expect(movedRow).toHaveCount(0)
   await expect(renamedRow).toBeVisible()
 
