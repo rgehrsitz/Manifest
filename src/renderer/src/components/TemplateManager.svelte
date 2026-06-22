@@ -7,7 +7,7 @@
   // bound node). Errors render inline; the templates prop refreshes after each
   // successful op via App.applyProject.
   import { onMount, tick } from 'svelte'
-  import type { NodeTemplate, TemplateField, PropertyType } from '../../../shared/types'
+  import type { NodeTemplate, TemplateField, PropertyType, Severity } from '../../../shared/types'
   import {
     validateTemplateId,
     validatePropertyKey,
@@ -27,12 +27,14 @@
   let { templates, onCreate, onUpdate, onDelete, onClose }: Props = $props()
 
   const TYPES: PropertyType[] = ['string', 'number', 'boolean', 'date', 'version', 'enum', 'reference']
+  const IMPORTANCE: Severity[] = ['High', 'Medium', 'Low']
 
   interface DraftField {
     key: string
     type: PropertyType
     optionsText: string
     required: boolean
+    compareImportance: Severity | ''
     // Preserved across edits even though the form doesn't expose them, so
     // saving an existing template never drops field metadata it already had.
     label?: string
@@ -107,6 +109,7 @@
       type: f.type,
       optionsText: (f.options ?? []).join(', '),
       required: f.required ?? false,
+      compareImportance: f.compareImportance ?? '',
       label: f.label,
       default: f.default,
     }
@@ -139,7 +142,7 @@
   }
 
   function addField() {
-    draftFields = [...draftFields, { key: '', type: 'string', optionsText: '', required: false }]
+    draftFields = [...draftFields, { key: '', type: 'string', optionsText: '', required: false, compareImportance: '' }]
   }
 
   function removeField(index: number) {
@@ -153,6 +156,7 @@
       if (!key) continue
       const field: TemplateField = { type: f.type }
       if (f.required) field.required = true
+      if (f.compareImportance) field.compareImportance = f.compareImportance
       if (f.type === 'enum') {
         field.options = f.optionsText.split(',').map(s => s.trim()).filter(Boolean)
       }
@@ -349,6 +353,20 @@
                   <label class="flex items-center gap-1 text-xs text-stone-500">
                     <input type="checkbox" bind:checked={field.required} class="h-3.5 w-3.5" />
                     required
+                  </label>
+                  <label class="flex items-center gap-1 text-xs text-stone-500">
+                    <span>compare</span>
+                    <select
+                      bind:value={field.compareImportance}
+                      class="text-xs border border-stone-300 rounded px-1.5 py-1 bg-white
+                             focus:outline-none focus:ring-1 focus:ring-stone-400"
+                      data-testid="field-importance"
+                    >
+                      <option value="">auto</option>
+                      {#each IMPORTANCE as importance (importance)}
+                        <option value={importance}>{importance}</option>
+                      {/each}
+                    </select>
                   </label>
                   <button
                     onclick={() => removeField(i)}

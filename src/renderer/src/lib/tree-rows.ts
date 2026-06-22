@@ -250,7 +250,15 @@ const BADGE_SEVERITY: Partial<Record<RowStatus, 'High' | 'Medium' | 'Low'>> = {
 function buildBadges(merged: MergedTreeNode): RowBadge[] {
   const status = mergedStatusToRowStatus(merged.status)
   const label = BADGE_LABELS[status]
-  const severity = BADGE_SEVERITY[status] ?? 'Medium'
+  const severity = merged.diffs.length > 0
+    ? strongestSeverity(merged.diffs.map(d => d.severity))
+    : (BADGE_SEVERITY[status] ?? 'Medium')
   if (!label) return []
   return [{ kind: status, label, severity }]
+}
+
+function strongestSeverity(severities: Array<'High' | 'Medium' | 'Low'>): 'High' | 'Medium' | 'Low' {
+  if (severities.includes('High')) return 'High'
+  if (severities.includes('Medium')) return 'Medium'
+  return 'Low'
 }

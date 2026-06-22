@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { diffProjects } from '../../../src/shared/diff-engine'
-import type { Project } from '../../../src/shared/types'
+import type { NodeTemplate, Project } from '../../../src/shared/types'
 
-function makeProject(nodes: Project['nodes']): Project {
+function makeProject(nodes: Project['nodes'], templates?: Record<string, NodeTemplate>): Project {
   return {
     version: 2,
     id: 'project-id',
@@ -10,6 +10,7 @@ function makeProject(nodes: Project['nodes']): Project {
     created: '2026-01-01T00:00:00.000Z',
     modified: '2026-01-01T00:00:00.000Z',
     nodes,
+    ...(templates ? { templates } : {}),
   }
 }
 
@@ -61,6 +62,7 @@ describe('diffProjects', () => {
     expect(removed).toHaveLength(1)
     expect(removed[0].changeType).toBe('removed')
     expect(removed[0].severity).toBe('High')
+    expect(removed[0].severityReason).toContain('removed')
   })
 
   it('detects rename, property, and order changes on the same node', () => {
@@ -206,5 +208,79 @@ describe('diffProjects', () => {
       old: 'Power Supply A (supply-alpha-id)',
       new: 'Power Supply B (supply-bravo-id)',
     })
+  })
+
+  it('uses template field importance to classify property changes', () => {
+    const template: NodeTemplate = {
+      label: 'Device',
+      fields: {
+        firmware: { type: 'version', compareImportance: 'High' },
+        notes: { type: 'string', compareImportance: 'Low' },
+      },
+    }
+    const before = makeProject([
+      ...baseNodes(),
+      {
+        id: 'device',
+        parentId: 'rack-a',
+        name: 'Device',
+        order: 0,
+        templateId: 'device',
+        properties: { firmware: '1.0', notes: 'old' },
+        created: '2026-01-01T00:00:00.000Z',
+        modified: '2026-01-01T00:00:00.000Z',
+      },
+    ], { device: template })
+    const afterFirmware = makeProject(before.nodes.map(node => node.id === 'device'
+      ? { ...node, properties: { firmware: '2.0', notes: 'old' } }
+      : node
+    ), { device: template })
+    const afterNotes = makeProject(before.nodes.map(node => node.id === 'device'
+      ? { ...node, properties: { firmware: '1.0', notes: 'new' } }
+      : node
+    ), { device: template })
+
+    const firmware = diffProjects(before, afterFirmware).find(d => d.changeType === 'property-changed')!
+    expect(firmware.severity).toBe('High')
+    expect(firmware.severityReason).toBe('High: important field "firmware" changed.')
+    expect(firmware.context.propertyImportance).toEqual({ firmware: 'High' })
+
+    const notes = diffProjects(before, afterNotes).find(d => d.changeType === 'property-changed')!
+    expect(notes.severity).toBe('Low')
+    expect(notes.severityReason).toBe('Low: only low-importance field "notes" changed.')
+    expect(notes.context.propertyImportance).toEqual({ notes: 'Low' })
+  })
+
+  it('explains removal impact for descendants and incoming references', () => {
+    const before = {
+      ...makeProject([
+        ...baseNodes(),
+        {
+          id: 'child',
+          parentId: 'rack-a',
+          name: 'Child',
+          order: 0,
+          properties: {},
+          created: '2026-01-01T00:00:00.000Z',
+          modified: '2026-01-01T00:00:00.000Z',
+        },
+        {
+          id: 'controller',
+          parentId: 'root',
+          name: 'Controller',
+          order: 1,
+          templateId: 'controller',
+          properties: { target: 'rack-a' },
+          created: '2026-01-01T00:00:00.000Z',
+          modified: '2026-01-01T00:00:00.000Z',
+        },
+      ]),
+      templates: { controller: { label: 'Controller', fields: { target: { type: 'reference' } } } },
+    }
+    const after = makeProject(before.nodes.filter(node => node.id !== 'rack-a' && node.id !== 'child'), before.templates)
+
+    const removed = diffProjects(before, after).find(d => d.nodeId === 'rack-a')!
+    expect(removed.severityReason).toContain('1 descendant')
+    expect(removed.severityReason).toContain('1 incoming reference')
   })
 })

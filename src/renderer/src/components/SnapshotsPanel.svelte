@@ -1,7 +1,7 @@
 <svelte:options runes />
 
 <script lang="ts">
-  import type { RecoveryPoint, Snapshot, SnapshotTimelineEvent } from '../../../shared/types'
+  import type { DiffEntry, RecoveryPoint, Snapshot, SnapshotTimelineEvent } from '../../../shared/types'
   import type { MergedTree } from '../../../shared/merged-tree'
   import { CURRENT_PROJECT_REF, snapshotRefLabel } from '../../../shared/snapshot-ref'
   import {
@@ -125,6 +125,64 @@
       }))
       .filter(g => g.entries.length > 0)
   )
+
+  interface ReviewInsight {
+    label: string
+    detail: string
+    severity: DiffEntry['severity']
+  }
+
+  function changedPropertyKeys(diff: DiffEntry): string[] {
+    if (diff.changeType !== 'property-changed') return []
+    const before = (diff.oldValue ?? {}) as Record<string, unknown>
+    const after = (diff.newValue ?? {}) as Record<string, unknown>
+    return Array.from(new Set([...Object.keys(before), ...Object.keys(after)]))
+      .filter(key => before[key] !== after[key])
+      .sort()
+  }
+
+  const reviewInsights = $derived.by<ReviewInsight[]>(() => {
+    const insights: ReviewInsight[] = []
+    const high = allDiffs.filter(diff => diff.severity === 'High').length
+    if (high > 0) {
+      insights.push({
+        label: `${high} high-priority ${high === 1 ? 'change' : 'changes'}`,
+        detail: 'Review these before lower-priority edits.',
+        severity: 'High',
+      })
+    }
+
+    const propertyCounts = new Map<string, number>()
+    for (const diff of allDiffs) {
+      for (const key of changedPropertyKeys(diff)) {
+        propertyCounts.set(key, (propertyCounts.get(key) ?? 0) + 1)
+      }
+    }
+    for (const [key, count] of [...propertyCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3)) {
+      if (count < 2) continue
+      insights.push({
+        label: `${count} changes to "${key}"`,
+        detail: 'Likely a repeated field update.',
+        severity: 'Medium',
+      })
+    }
+
+    const parentCounts = new Map<string, number>()
+    for (const diff of allDiffs) {
+      const path = diff.context.path.join(' / ') || '(root)'
+      parentCounts.set(path, (parentCounts.get(path) ?? 0) + 1)
+    }
+    const [path, count] = [...parentCounts.entries()].sort((a, b) => b[1] - a[1])[0] ?? []
+    if (path && count >= 3) {
+      insights.push({
+        label: `${count} changes under ${path}`,
+        detail: 'This branch carries most of the activity.',
+        severity: 'Medium',
+      })
+    }
+
+    return insights.slice(0, 4)
+  })
 
   // Auto-fill From/To once on first load. After that, leave them alone — if
   // the user toggled a pill off (third-click clear), don't pre-fill on top of
@@ -373,21 +431,46 @@
           {/if}
 
           {#if allDiffs.length > 0}
-          <div class="flex flex-wrap gap-1.5">
-            {#each severitySummary as item (item.severity)}
-              <span class={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase
-                            tracking-wide ${severityBadgeClass(item.severity)}`}>
-                {item.count} {item.severity}
-              </span>
-            {/each}
-          </div>
-          <div class="flex flex-wrap gap-1">
-            {#each changeSummary as item (item.changeType)}
-              <span class="rounded-full bg-stone-100 px-2 py-0.5 text-[10px] text-stone-600">
-                {item.count} {formatChangeType(item.changeType)}
-              </span>
-            {/each}
-          </div>
+            {#if reviewInsights.length > 0}
+              <div
+                class="rounded-xl border border-stone-200 bg-stone-50/70 px-3 py-2"
+                data-testid="compare-review-focus"
+              >
+                <h4 class="text-[10px] font-semibold uppercase tracking-wide text-stone-500">
+                  Review focus
+                </h4>
+                <div class="mt-2 space-y-1.5">
+                  {#each reviewInsights as insight (insight.label)}
+                    <div class="flex items-start justify-between gap-2">
+                      <div class="min-w-0">
+                        <p class="truncate text-xs font-medium text-stone-700">{insight.label}</p>
+                        <p class="text-[11px] text-stone-500">{insight.detail}</p>
+                      </div>
+                      <span class={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold
+                                    uppercase tracking-wide ${severityBadgeClass(insight.severity)}`}>
+                        {insight.severity}
+                      </span>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+
+            <div class="flex flex-wrap gap-1.5">
+              {#each severitySummary as item (item.severity)}
+                <span class={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase
+                              tracking-wide ${severityBadgeClass(item.severity)}`}>
+                  {item.count} {item.severity}
+                </span>
+              {/each}
+            </div>
+            <div class="flex flex-wrap gap-1">
+              {#each changeSummary as item (item.changeType)}
+                <span class="rounded-full bg-stone-100 px-2 py-0.5 text-[10px] text-stone-600">
+                  {item.count} {formatChangeType(item.changeType)}
+                </span>
+              {/each}
+            </div>
 
           {#each groupedDiffs as group (group.severity)}
             <div class="space-y-1.5">
@@ -419,6 +502,12 @@
                         {diff.severity}
                       </span>
                     </div>
+
+                    {#if diff.severityReason}
+                      <p class="mt-2 text-[11px] leading-snug text-stone-600" data-testid="diff-severity-reason">
+                        {diff.severityReason}
+                      </p>
+                    {/if}
 
                     {#if diff.changeType === 'renamed' || diff.changeType === 'moved' || diff.changeType === 'order-changed'}
                       <div class="mt-2 grid grid-cols-2 gap-1.5">
@@ -475,6 +564,12 @@
                         {diff.severity}
                       </span>
                     </div>
+
+                    {#if diff.severityReason}
+                      <p class="mt-2 text-[11px] leading-snug text-stone-600" data-testid="diff-severity-reason">
+                        {diff.severityReason}
+                      </p>
+                    {/if}
 
                     {#if diff.changeType === 'renamed' || diff.changeType === 'moved' || diff.changeType === 'order-changed'}
                       <div class="mt-2 grid grid-cols-2 gap-1.5">

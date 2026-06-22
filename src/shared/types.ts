@@ -32,10 +32,15 @@ export type PropertyType =
   | 'enum'
   | 'reference'
 
+export type Severity = 'High' | 'Medium' | 'Low'
+
 export interface TemplateField {
   type: PropertyType
   label?: string
   required?: boolean
+  // Optional compare weighting for this field. When absent, compare falls back
+  // to deterministic type/key heuristics.
+  compareImportance?: Severity
   default?: string | number | boolean | null
   // Required (non-empty) when type === 'enum'. The set of allowed values.
   options?: string[]
@@ -239,12 +244,11 @@ export type ChangeType =
   | 'template-changed'
   | 'order-changed'
 
-export type Severity = 'High' | 'Medium' | 'Low'
-
 export interface DiffEntry {
   nodeId: string
   changeType: ChangeType
   severity: Severity
+  severityReason?: string
   oldValue?: unknown
   newValue?: unknown
   context: {
@@ -252,6 +256,7 @@ export interface DiffEntry {
     parentName: string | null
     path: string[]
     propertyValueLabels?: Record<string, { old?: string; new?: string }>
+    propertyImportance?: Record<string, Severity>
   }
 }
 

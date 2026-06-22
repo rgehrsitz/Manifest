@@ -155,6 +155,12 @@ function isPropertyType(t: unknown): t is PropertyType {
   return typeof t === 'string' && (PROPERTY_TYPES as readonly string[]).includes(t)
 }
 
+const COMPARE_IMPORTANCE = ['High', 'Medium', 'Low'] as const
+
+function isCompareImportance(value: unknown): value is TemplateField['compareImportance'] {
+  return typeof value === 'string' && (COMPARE_IMPORTANCE as readonly string[]).includes(value)
+}
+
 // Validate a single field definition (used by validateTemplate). `key` is the
 // property key the field is stored under — it must be a valid property key.
 export function validateTemplateField(key: string, field: TemplateField): ValidationResult {
@@ -176,6 +182,9 @@ export function validateTemplateField(key: string, field: TemplateField): Valida
         return { valid: false, message: `Enum field "${key}" options must be non-empty strings` }
       }
     }
+  }
+  if (field.compareImportance !== undefined && !isCompareImportance(field.compareImportance)) {
+    return { valid: false, message: `Field "${key}" compareImportance must be High, Medium, or Low` }
   }
   // A declared default must itself be valid for the field's type.
   if (field.default !== undefined && field.default !== null) {
