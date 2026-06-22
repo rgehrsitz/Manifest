@@ -8,12 +8,9 @@
     severityBadgeClass,
     severityClass,
     formatChangeType,
-    formatPath,
-    formatValue,
-    formatTemplateRef,
-    describePropertyChange,
     describeTemplateChange,
   } from '../lib/diff-format'
+  import SnapshotDiffRowBody from './SnapshotDiffRowBody.svelte'
 
   interface Props {
     snapshots: Snapshot[]
@@ -91,6 +88,9 @@
   })
 
   const severityOrder = ['High', 'Medium', 'Low'] as const
+  type SeverityFilter = 'All' | DiffEntry['severity']
+  let activeSeverityFilter = $state<SeverityFilter>('All')
+  let activeCompareKey = $state('')
 
   // Flatten all diffs from the merged tree nodes.
   const allDiffs = $derived(
@@ -101,6 +101,14 @@
   const templateChanges = $derived(mergedTree?.templateChanges ?? [])
   const totalChanges = $derived(allDiffs.length + templateChanges.length)
 
+  $effect(() => {
+    const key = mergedTree ? `${mergedTree.fromSnapshot}\u0000${mergedTree.toSnapshot}` : ''
+    if (key !== activeCompareKey) {
+      activeCompareKey = key
+      activeSeverityFilter = 'All'
+    }
+  })
+
   const severitySummary = $derived(
     severityOrder
       .map(severity => ({
@@ -110,6 +118,14 @@
       .filter(e => e.count > 0)
   )
 
+  const severityFilterOptions = $derived([
+    { severity: 'All' as const, count: allDiffs.length },
+    ...severityOrder.map(severity => ({
+      severity,
+      count: allDiffs.filter(e => e.severity === severity).length,
+    })),
+  ])
+
   const changeSummary = $derived(
     Array.from(new Set(allDiffs.map(e => e.changeType))).map(changeType => ({
       changeType,
@@ -117,11 +133,17 @@
     }))
   )
 
+  const visibleDiffs = $derived(
+    activeSeverityFilter === 'All'
+      ? allDiffs
+      : allDiffs.filter(e => e.severity === activeSeverityFilter)
+  )
+
   const groupedDiffs = $derived(
     severityOrder
       .map(severity => ({
         severity,
-        entries: allDiffs.filter(e => e.severity === severity),
+        entries: visibleDiffs.filter(e => e.severity === severity),
       }))
       .filter(g => g.entries.length > 0)
   )
@@ -139,6 +161,14 @@
     return Array.from(new Set([...Object.keys(before), ...Object.keys(after)]))
       .filter(key => before[key] !== after[key])
       .sort()
+  }
+
+  function severityFilterClass(severity: SeverityFilter): string {
+    if (severity !== activeSeverityFilter) return 'border-stone-200 bg-white text-stone-500 hover:bg-stone-50'
+    if (severity === 'High') return 'border-red-200 bg-red-50 text-red-700'
+    if (severity === 'Medium') return 'border-amber-200 bg-amber-50 text-amber-700'
+    if (severity === 'Low') return 'border-slate-200 bg-slate-100 text-slate-600'
+    return 'border-stone-700 bg-stone-800 text-white'
   }
 
   const reviewInsights = $derived.by<ReviewInsight[]>(() => {
@@ -456,6 +486,28 @@
               </div>
             {/if}
 
+            <div class="space-y-1.5" data-testid="compare-severity-filter">
+              <div class="flex flex-wrap gap-1.5">
+                {#each severityFilterOptions as option (option.severity)}
+                  <button
+                    type="button"
+                    aria-pressed={activeSeverityFilter === option.severity}
+                    onclick={() => { activeSeverityFilter = option.severity }}
+                    class={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase
+                            tracking-wide transition-colors cursor-default ${severityFilterClass(option.severity)}`}
+                    data-testid={`compare-filter-${option.severity.toLowerCase()}`}
+                  >
+                    {option.severity} {option.count}
+                  </button>
+                {/each}
+              </div>
+              {#if activeSeverityFilter !== 'All'}
+                <p class="text-[11px] text-stone-400" data-testid="compare-filter-summary">
+                  Showing {visibleDiffs.length} of {allDiffs.length} node {allDiffs.length === 1 ? 'change' : 'changes'}.
+                </p>
+              {/if}
+            </div>
+
             <div class="flex flex-wrap gap-1.5">
               {#each severitySummary as item (item.severity)}
                 <span class={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase
@@ -472,144 +524,50 @@
               {/each}
             </div>
 
-          {#each groupedDiffs as group (group.severity)}
-            <div class="space-y-1.5">
-              <h4 class="text-[10px] font-semibold uppercase tracking-wide text-stone-400">
-                {group.severity} Priority
-              </h4>
-              {#each group.entries as diff, idx (`${diff.nodeId}-${diff.changeType}-${idx}`)}
-                {@const isHighlighted = highlightedNodeId === diff.nodeId || highlightedNodeId === `ghost:${diff.nodeId}`}
-                {#if onDiffNodeSelect}
-                  <button
-                    type="button"
-                    onclick={() => onDiffNodeSelect(diff.nodeId)}
-                    data-node-id={diff.nodeId}
-                    class={`w-full rounded-xl border px-3 py-3 shadow-sm transition-shadow text-left
-                      ${severityClass(diff.severity)}
-                      ${isHighlighted ? 'ring-2 ring-sky-400 ring-offset-1' : ''}
-                      cursor-pointer hover:shadow-md`}
-                    data-testid="snapshot-diff-row"
-                  >
-                    <div class="flex items-start justify-between gap-2">
-                      <div class="min-w-0">
-                        <p class="text-xs font-medium text-stone-800">{formatChangeType(diff.changeType)}</p>
-                        <p class="mt-0.5 text-xs text-stone-600 truncate">
-                          {formatPath(diff.context.path, diff.context.nodeName)}
-                        </p>
-                      </div>
-                      <span class={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold
-                                    uppercase tracking-wide ${severityBadgeClass(diff.severity)}`}>
-                        {diff.severity}
-                      </span>
-                    </div>
-
-                    {#if diff.severityReason}
-                      <p class="mt-2 text-[11px] leading-snug text-stone-600" data-testid="diff-severity-reason">
-                        {diff.severityReason}
-                      </p>
-                    {/if}
-
-                    {#if diff.changeType === 'renamed' || diff.changeType === 'moved' || diff.changeType === 'order-changed'}
-                      <div class="mt-2 grid grid-cols-2 gap-1.5">
-                        <div class="rounded bg-white/80 px-2 py-1.5 ring-1 ring-black/5">
-                          <p class="text-[9px] font-semibold uppercase tracking-wide text-stone-400">Before</p>
-                          <p class="mt-0.5 text-xs text-stone-700">{formatValue(diff.oldValue)}</p>
-                        </div>
-                        <div class="rounded bg-white/80 px-2 py-1.5 ring-1 ring-black/5">
-                          <p class="text-[9px] font-semibold uppercase tracking-wide text-stone-400">After</p>
-                          <p class="mt-0.5 text-xs text-stone-700">{formatValue(diff.newValue)}</p>
-                        </div>
-                      </div>
-                    {:else if diff.changeType === 'template-changed'}
-                      <div class="mt-2 grid grid-cols-2 gap-1.5">
-                        <div class="rounded bg-white/80 px-2 py-1.5 ring-1 ring-black/5">
-                          <p class="text-[9px] font-semibold uppercase tracking-wide text-stone-400">Template was</p>
-                          <p class="mt-0.5 text-xs text-stone-700">{formatTemplateRef(diff.oldValue)}</p>
-                        </div>
-                        <div class="rounded bg-white/80 px-2 py-1.5 ring-1 ring-black/5">
-                          <p class="text-[9px] font-semibold uppercase tracking-wide text-stone-400">Template now</p>
-                          <p class="mt-0.5 text-xs text-stone-700">{formatTemplateRef(diff.newValue)}</p>
-                        </div>
-                      </div>
-                    {:else if diff.changeType === 'property-changed'}
-                      <div class="mt-2 rounded bg-white/80 px-2 py-2 ring-1 ring-black/5">
-                        <p class="text-[9px] font-semibold uppercase tracking-wide text-stone-400">Changes</p>
-                        <div class="mt-1 flex flex-wrap gap-1">
-                          {#each describePropertyChange(diff) as line (line)}
-                            <span class="rounded-full bg-stone-100 px-2 py-0.5 text-[10px] text-stone-600">
-                              {line}
-                            </span>
-                          {/each}
-                        </div>
+            {#if visibleDiffs.length === 0}
+              <div
+                class="rounded-xl border border-dashed border-stone-200 bg-stone-50/70 px-4 py-5 text-center"
+                data-testid="compare-filter-empty"
+              >
+                <p class="text-xs font-medium text-stone-600">No {activeSeverityFilter.toLowerCase()} changes</p>
+                <p class="mt-0.5 text-xs text-stone-400">Choose another priority or return to All.</p>
+              </div>
+            {:else}
+              {#each groupedDiffs as group (group.severity)}
+                <div class="space-y-1.5">
+                  <h4 class="text-[10px] font-semibold uppercase tracking-wide text-stone-400">
+                    {group.severity} Priority
+                  </h4>
+                  {#each group.entries as diff, idx (`${diff.nodeId}-${diff.changeType}-${idx}`)}
+                    {@const isHighlighted = highlightedNodeId === diff.nodeId || highlightedNodeId === `ghost:${diff.nodeId}`}
+                    {#if onDiffNodeSelect}
+                      <button
+                        type="button"
+                        onclick={() => onDiffNodeSelect(diff.nodeId)}
+                        data-node-id={diff.nodeId}
+                        class={`w-full rounded-xl border px-3 py-3 shadow-sm transition-shadow text-left
+                          ${severityClass(diff.severity)}
+                          ${isHighlighted ? 'ring-2 ring-sky-400 ring-offset-1' : ''}
+                          cursor-pointer hover:shadow-md`}
+                        data-testid="snapshot-diff-row"
+                      >
+                        <SnapshotDiffRowBody {diff} />
+                      </button>
+                    {:else}
+                      <div
+                        data-node-id={diff.nodeId}
+                        class={`rounded-xl border px-3 py-3 shadow-sm transition-shadow
+                          ${severityClass(diff.severity)}
+                          ${isHighlighted ? 'ring-2 ring-sky-400 ring-offset-1' : ''}`}
+                        data-testid="snapshot-diff-row"
+                      >
+                        <SnapshotDiffRowBody {diff} />
                       </div>
                     {/if}
-                  </button>
-                {:else}
-                  <div
-                    data-node-id={diff.nodeId}
-                    class={`rounded-xl border px-3 py-3 shadow-sm transition-shadow
-                      ${severityClass(diff.severity)}
-                      ${isHighlighted ? 'ring-2 ring-sky-400 ring-offset-1' : ''}`}
-                    data-testid="snapshot-diff-row"
-                  >
-                    <div class="flex items-start justify-between gap-2">
-                      <div class="min-w-0">
-                        <p class="text-xs font-medium text-stone-800">{formatChangeType(diff.changeType)}</p>
-                        <p class="mt-0.5 text-xs text-stone-600 truncate">
-                          {formatPath(diff.context.path, diff.context.nodeName)}
-                        </p>
-                      </div>
-                      <span class={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold
-                                    uppercase tracking-wide ${severityBadgeClass(diff.severity)}`}>
-                        {diff.severity}
-                      </span>
-                    </div>
-
-                    {#if diff.severityReason}
-                      <p class="mt-2 text-[11px] leading-snug text-stone-600" data-testid="diff-severity-reason">
-                        {diff.severityReason}
-                      </p>
-                    {/if}
-
-                    {#if diff.changeType === 'renamed' || diff.changeType === 'moved' || diff.changeType === 'order-changed'}
-                      <div class="mt-2 grid grid-cols-2 gap-1.5">
-                        <div class="rounded bg-white/80 px-2 py-1.5 ring-1 ring-black/5">
-                          <p class="text-[9px] font-semibold uppercase tracking-wide text-stone-400">Before</p>
-                          <p class="mt-0.5 text-xs text-stone-700">{formatValue(diff.oldValue)}</p>
-                        </div>
-                        <div class="rounded bg-white/80 px-2 py-1.5 ring-1 ring-black/5">
-                          <p class="text-[9px] font-semibold uppercase tracking-wide text-stone-400">After</p>
-                          <p class="mt-0.5 text-xs text-stone-700">{formatValue(diff.newValue)}</p>
-                        </div>
-                      </div>
-                    {:else if diff.changeType === 'template-changed'}
-                      <div class="mt-2 grid grid-cols-2 gap-1.5">
-                        <div class="rounded bg-white/80 px-2 py-1.5 ring-1 ring-black/5">
-                          <p class="text-[9px] font-semibold uppercase tracking-wide text-stone-400">Template was</p>
-                          <p class="mt-0.5 text-xs text-stone-700">{formatTemplateRef(diff.oldValue)}</p>
-                        </div>
-                        <div class="rounded bg-white/80 px-2 py-1.5 ring-1 ring-black/5">
-                          <p class="text-[9px] font-semibold uppercase tracking-wide text-stone-400">Template now</p>
-                          <p class="mt-0.5 text-xs text-stone-700">{formatTemplateRef(diff.newValue)}</p>
-                        </div>
-                      </div>
-                    {:else if diff.changeType === 'property-changed'}
-                      <div class="mt-2 rounded bg-white/80 px-2 py-2 ring-1 ring-black/5">
-                        <p class="text-[9px] font-semibold uppercase tracking-wide text-stone-400">Changes</p>
-                        <div class="mt-1 flex flex-wrap gap-1">
-                          {#each describePropertyChange(diff) as line (line)}
-                            <span class="rounded-full bg-stone-100 px-2 py-0.5 text-[10px] text-stone-600">
-                              {line}
-                            </span>
-                          {/each}
-                        </div>
-                      </div>
-                    {/if}
-                  </div>
-                {/if}
+                  {/each}
+                </div>
               {/each}
-            </div>
-          {/each}
+            {/if}
           {/if}
         {/if}
       </section>
