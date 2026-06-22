@@ -213,6 +213,19 @@
     collapsedChangeGroups = next
   }
 
+  function shouldIgnoreDiffRowEvent(event: Event): boolean {
+    return event.target instanceof Element && event.target.closest('[data-no-row-select]') !== null
+  }
+
+  function activateDiffRow(nodeId: string, event?: KeyboardEvent | MouseEvent) {
+    if (event && shouldIgnoreDiffRowEvent(event)) return
+    if (event instanceof KeyboardEvent) {
+      if (event.key !== 'Enter' && event.key !== ' ') return
+      event.preventDefault()
+    }
+    onDiffNodeSelect?.(nodeId)
+  }
+
   const reviewInsights = $derived.by<ReviewInsight[]>(() => {
     const insights: ReviewInsight[] = []
     const high = allDiffs.filter(diff => diff.severity === 'High').length
@@ -603,9 +616,11 @@
                   {#each group.entries as diff, idx (`${diff.nodeId}-${diff.changeType}-${idx}`)}
                     {@const isHighlighted = highlightedNodeId === diff.nodeId || highlightedNodeId === `ghost:${diff.nodeId}`}
                     {#if onDiffNodeSelect}
-                      <button
-                        type="button"
-                        onclick={() => onDiffNodeSelect(diff.nodeId)}
+                      <div
+                        role="button"
+                        tabindex="0"
+                        onclick={(event) => activateDiffRow(diff.nodeId, event)}
+                        onkeydown={(event) => activateDiffRow(diff.nodeId, event)}
                         data-node-id={diff.nodeId}
                         class={`w-full rounded-xl border px-3 py-3 shadow-sm transition-shadow text-left
                           ${severityClass(diff.severity)}
@@ -614,7 +629,7 @@
                         data-testid="snapshot-diff-row"
                       >
                         <SnapshotDiffRowBody {diff} />
-                      </button>
+                      </div>
                     {:else}
                       <div
                         data-node-id={diff.nodeId}

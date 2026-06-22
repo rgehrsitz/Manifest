@@ -175,6 +175,7 @@ test('surfaces removed nodes in snapshot compare mode', async ({ appPage, electr
 
   await createProjectThroughUi(appPage, electronApp, workspaceDir, projectName)
   await addChildNode(appPage, projectName, 'Rack A')
+  await addChildNode(appPage, 'Rack A', 'Server 1')
 
   await openSnapshotsPanel(appPage)
   await createSnapshot(appPage, 'with-rack')
@@ -183,18 +184,26 @@ test('surfaces removed nodes in snapshot compare mode', async ({ appPage, electr
   appPage.once('dialog', (dialog) => dialog.accept())
   await openContextMenuAction(appPage, 'Rack A', 'Delete…')
   await expect(treeRow(appPage, 'Rack A')).toHaveCount(0)
+  await expect(treeRow(appPage, 'Server 1')).toHaveCount(0)
 
   await openSnapshotsPanel(appPage)
   await createSnapshot(appPage, 'without-rack')
   await compareSnapshots(appPage, 'with-rack', 'without-rack')
 
-  const removedRow = appPage.getByTestId('snapshot-diff-row').filter({ hasText: 'Removed' })
+  const removedRows = appPage.getByTestId('snapshot-diff-row').filter({ hasText: 'Removed' })
+  const rackRow = removedRows.filter({
+    has: appPage.getByText(`${projectName} / Rack A`, { exact: true }),
+  })
   await expect(appPage.getByTestId('compare-change-group-removed')).toBeVisible()
-  await expect(appPage.getByTestId('compare-change-group-count-removed')).toHaveText('1')
-  await expect(removedRow).toBeVisible()
-  await expect(removedRow).toContainText('Rack A')
+  await expect(appPage.getByTestId('compare-change-group-count-removed')).toHaveText('2')
+  await expect(rackRow).toBeVisible()
+  await expect(rackRow).toContainText('Rack A')
+  await expect(appPage.getByTestId('removed-impact-details')).toHaveCount(1)
+  await expect(rackRow.getByTestId('removed-impact-details')).toBeVisible()
+  await rackRow.locator('[data-testid="removed-impact-details"] summary').click()
+  await expect(rackRow.getByTestId('removed-impact-descendants')).toContainText('Server 1')
 
-  await removedRow.click()
+  await rackRow.click({ position: { x: 12, y: 12 } })
   await expect(appPage.locator('[data-testid="tree-node"][data-row-status="removed"]', { hasText: 'Rack A' })).toBeVisible()
 })
 

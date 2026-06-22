@@ -63,6 +63,7 @@ describe('diffProjects', () => {
     expect(removed[0].changeType).toBe('removed')
     expect(removed[0].severity).toBe('High')
     expect(removed[0].severityReason).toContain('removed')
+    expect(removed[0].context.removalImpact).toBeUndefined()
   })
 
   it('detects rename, property, and order changes on the same node', () => {
@@ -282,5 +283,11 @@ describe('diffProjects', () => {
     const removed = diffProjects(before, after).find(d => d.nodeId === 'rack-a')!
     expect(removed.severityReason).toContain('1 descendant')
     expect(removed.severityReason).toContain('1 incoming reference')
+    expect(removed.context.removalImpact?.descendants).toEqual([
+      { id: 'child', name: 'Child', path: ['Root', 'Rack A'] },
+    ])
+    expect(removed.context.removalImpact?.incomingReferences).toEqual([
+      { nodeId: 'controller', nodeName: 'Controller', path: ['Root'], fieldKey: 'target' },
+    ])
   })
 })

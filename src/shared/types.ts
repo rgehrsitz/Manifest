@@ -257,6 +257,10 @@ export interface DiffEntry {
     path: string[]
     propertyValueLabels?: Record<string, { old?: string; new?: string }>
     propertyImportance?: Record<string, Severity>
+    removalImpact?: {
+      descendants: Array<{ id: string; name: string; path: string[] }>
+      incomingReferences: Array<{ nodeId: string; nodeName: string; path: string[]; fieldKey: string }>
+    }
   }
 }
 
