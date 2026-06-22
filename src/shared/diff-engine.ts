@@ -82,24 +82,38 @@ function buildChildrenMap(nodes: ManifestNode[]): Map<string | null, ManifestNod
 function countDescendants(nodeId: string, childrenByParent: Map<string | null, ManifestNode[]>): number {
   let count = 0
   const queue = [...(childrenByParent.get(nodeId) ?? [])]
-  while (queue.length > 0) {
-    const node = queue.shift()!
+  for (let index = 0; index < queue.length; index++) {
+    const node = queue[index]
     count++
     queue.push(...(childrenByParent.get(node.id) ?? []))
   }
   return count
 }
 
-function countIncomingReferences(targetId: string, project: Project): number {
-  let count = 0
+function buildIncomingReferenceCounts(project: Project): Map<string, number> {
+  const counts = new Map<string, number>()
+  const fieldsByTemplateId = new Map<string, Record<string, TemplateField>>()
+
+  function fieldsFor(templateId: string): Record<string, TemplateField> {
+    const cached = fieldsByTemplateId.get(templateId)
+    if (cached) return cached
+    const fields = templateFields(project.templates?.[templateId])
+    fieldsByTemplateId.set(templateId, fields)
+    return fields
+  }
+
   for (const node of project.nodes) {
-    if (node.id === targetId || !node.templateId) continue
-    const fields = templateFields(project.templates?.[node.templateId])
+    if (!node.templateId) continue
+    const fields = fieldsFor(node.templateId)
     for (const [key, field] of Object.entries(fields)) {
-      if (field.type === 'reference' && node.properties[key] === targetId) count++
+      const targetId = node.properties[key]
+      if (field.type === 'reference' && typeof targetId === 'string' && targetId !== node.id) {
+        counts.set(targetId, (counts.get(targetId) ?? 0) + 1)
+      }
     }
   }
-  return count
+
+  return counts
 }
 
 function changedPropertyKeys(
@@ -122,7 +136,6 @@ function inferredFieldImportance(key: string, field: TemplateField | undefined):
   ) {
     return 'High'
   }
-  if (field?.required) return 'Medium'
   return 'Medium'
 }
 
@@ -217,6 +230,7 @@ export function diffProjects(projectA: Project, projectB: Project): DiffEntry[] 
   const nodesA = buildNodeMap(projectA.nodes)
   const nodesB = buildNodeMap(projectB.nodes)
   const childrenA = buildChildrenMap(projectA.nodes)
+  const incomingReferencesA = buildIncomingReferenceCounts(projectA)
   const ids = new Set([...nodesA.keys(), ...nodesB.keys()])
   const diffs: DiffEntry[] = []
 
@@ -238,7 +252,7 @@ export function diffProjects(projectA: Project, projectB: Project): DiffEntry[] 
 
     if (nodeA && !nodeB) {
       const descendants = countDescendants(id, childrenA)
-      const references = countIncomingReferences(id, projectA)
+      const references = incomingReferencesA.get(id) ?? 0
       const impacts = [
         descendants > 0 ? `${descendants} descendant${descendants === 1 ? '' : 's'}` : '',
         references > 0 ? `${references} incoming reference${references === 1 ? '' : 's'}` : '',
@@ -343,6 +357,7 @@ function fieldsEqual(a: TemplateField, b: TemplateField): boolean {
   if ((a.label ?? '') !== (b.label ?? '')) return false
   if ((a.required ?? false) !== (b.required ?? false)) return false
   if ((a.default ?? null) !== (b.default ?? null)) return false
+  if ((a.compareImportance ?? null) !== (b.compareImportance ?? null)) return false
   const aOpts = a.options ?? []
   const bOpts = b.options ?? []
   if (aOpts.length !== bOpts.length) return false

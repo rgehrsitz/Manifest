@@ -140,4 +140,21 @@ describe('diffTemplates', () => {
     expect(diffProjects(a, b)).toEqual([])
     expect(diffTemplates(a, b)).toHaveLength(1)
   })
+
+  it('detects compare importance changes as schema changes', () => {
+    const a = project([node('root')], {
+      device: { label: 'Device', fields: { firmware: { type: 'version', compareImportance: 'High' } } },
+    })
+    const b = project([node('root')], {
+      device: { label: 'Device', fields: { firmware: { type: 'version', compareImportance: 'Low' } } },
+    })
+
+    const out = diffTemplates(a, b)
+    expect(out).toHaveLength(1)
+    expect(out[0]).toMatchObject({
+      templateId: 'device',
+      fieldKey: 'firmware',
+      changeType: 'field-changed',
+    })
+  })
 })
