@@ -216,6 +216,15 @@ test('surfaces property-only snapshot diffs', async ({ appPage, electronApp, wor
   await expect(propertyRow).toContainText('Rack A')
   await expect(propertyRow.getByTestId('diff-severity-reason')).toContainText('Medium: field "serial" changed.')
   await expect(propertyRow).toContainText('Added serial: SN-42')
+  await expect(appPage.getByTestId('compare-filter-all')).toHaveText('All 1')
+  await expect(appPage.getByTestId('compare-filter-medium')).toHaveText('Medium 1')
+
+  await appPage.getByTestId('compare-filter-high').click()
+  await expect(appPage.getByTestId('snapshot-diff-row')).toHaveCount(0)
+  await expect(appPage.getByTestId('compare-filter-empty')).toContainText('No high changes')
+
+  await appPage.getByTestId('compare-filter-all').click()
+  await expect(propertyRow).toBeVisible()
 
   await propertyRow.click()
   await expect(appPage.locator('[data-testid="tree-node"][data-row-status="property-changed"]', { hasText: 'Rack A' })).toBeVisible()
@@ -268,6 +277,22 @@ test('surfaces move and rename snapshot diffs for the same node', async ({ appPa
   const movedRow = appPage.getByTestId('snapshot-diff-row').filter({ hasText: 'Moved' }).filter({ hasText: 'Alpha Prime' })
   const renamedRow = appPage.getByTestId('snapshot-diff-row').filter({ hasText: 'Renamed' }).filter({ hasText: 'Alpha Prime' })
 
+  await expect(movedRow).toBeVisible()
+  await expect(renamedRow).toBeVisible()
+  await expect(appPage.getByTestId('compare-filter-all')).toHaveText('All 3')
+  await expect(appPage.getByTestId('compare-filter-high')).toHaveText('High 1')
+  await expect(appPage.getByTestId('compare-filter-medium')).toHaveText('Medium 1')
+
+  await appPage.getByTestId('compare-filter-high').click()
+  await expect(appPage.getByTestId('compare-filter-summary')).toContainText('Showing 1 of 3 node changes.')
+  await expect(movedRow).toBeVisible()
+  await expect(renamedRow).toHaveCount(0)
+
+  await appPage.getByTestId('compare-filter-medium').click()
+  await expect(movedRow).toHaveCount(0)
+  await expect(renamedRow).toBeVisible()
+
+  await appPage.getByTestId('compare-filter-all').click()
   await expect(movedRow).toBeVisible()
   await expect(renamedRow).toBeVisible()
 
