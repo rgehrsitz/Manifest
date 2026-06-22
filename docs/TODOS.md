@@ -43,9 +43,9 @@ These items were explicitly deferred during the 2026-04-10 eng review of the tre
 **Priority:** P1.5 (post-tree-rewrite, pre-v1 release if pilot feedback demands it)
 **Depends on:** Tree rewrite (PR #1) landing
 
-### Typeahead / Search-in-Tree
-**Status:** DONE — inline type-to-jump shipped on `feat/tree-typeahead` (2026-06-20, 31a4f14). Typing while the tree is focused jumps to nodes by name (case-insensitive), reveals and selects the active match, and highlights all matches; Enter/Shift+Enter cycle, Backspace edits, Escape clears. Core logic in `src/renderer/src/lib/tree-typeahead.ts` (`collectTypeaheadMatches`, `cycleIndex`, `splitHighlight`) with unit coverage in `tests/unit/renderer/tree-typeahead.test.ts` and E2E in `tests/e2e/tree.e2e.ts`.
-**What:** Typing in the tree filters/highlights matching nodes inline without leaving the tree to the search panel.
+### Search-in-Tree
+**Status:** DONE — unified visible search updated 2026-06-22. The search box filters the hierarchy to matching nodes plus ancestors, keeps the tree visible, highlights name matches, shows property-match snippets inline, and supports Enter/Shift+Enter/Escape for next/previous/clear. Typing while the tree is focused feeds that same search box instead of starting a separate hidden typeahead mode.
+**What:** Searching filters/highlights matching nodes inline without leaving the tree to a separate results panel.
 **Why:** Faster navigation in large hierarchies with known node names.
 **Was:** P1.5, deferred from tree rewrite plan (2026-04-10). Existing search panel works; this was an enhancement.
 

@@ -204,6 +204,28 @@ describe('flattenTree (normal mode)', () => {
     expect(rowById['child'].hasChildren).toBe(false)
     expect(rowById['leaf'].hasChildren).toBe(false)
   })
+
+  it('can prune rows to search matches and ancestors', () => {
+    const nodes = [
+      node('root', null, 0),
+      node('rack-a', 'root', 0, 'Rack A'),
+      node('server-a', 'rack-a', 0, 'Server A'),
+      node('rack-b', 'root', 1, 'Rack B'),
+      node('server-b', 'rack-b', 0, 'Server B'),
+      node('storage', 'root', 2, 'Storage'),
+    ]
+    const tree = makeTree(nodes)
+    const rows = flattenTree(tree, new Set(), {
+      includeIds: new Set(['root', 'rack-b', 'server-b']),
+    })
+
+    expect(rows.map(r => r.id)).toEqual(['root', 'rack-b', 'server-b'])
+    expect(rows[0].expanded).toBe(true)
+    expect(rows[0].childCount).toBe(1)
+    expect(rows[1].expanded).toBe(true)
+    expect(rows[1].childCount).toBe(1)
+    expect(rows[2].hasChildren).toBe(false)
+  })
 })
 
 // ─── flattenTree — compare mode ───────────────────────────────────────────────

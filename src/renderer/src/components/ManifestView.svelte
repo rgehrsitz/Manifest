@@ -4,6 +4,7 @@
   import { tick, onDestroy, untrack } from 'svelte'
   import { get } from 'svelte/store'
   import { createVirtualizer } from '@tanstack/svelte-virtual'
+  import type { SearchResult } from '../../../shared/types'
   import type { VisibleRow } from '../lib/tree-rows'
   import {
     computeBrowseSections,
@@ -46,16 +47,15 @@
     onImportHere?: (id: string) => void
     editingDisabled?: boolean
     selectedScrollAlign?: 'auto' | 'center'
-    /** Node ids matching the active inline typeahead (browse mode only). */
+    /** Node ids matching the active search query. */
     matchedIds?: Set<string>
-    /** The active typeahead query, for in-name substring highlighting. */
+    /** The active search query, for in-name substring highlighting. */
     matchQuery?: string
-    /** Whether inline typeahead is active — gates Enter/Escape key meaning. */
-    typeaheadActive?: boolean
-    onTypeaheadInput?: (ch: string) => void
-    onTypeaheadBackspace?: () => void
-    onTypeaheadCycle?: (reverse: boolean) => void
-    onTypeaheadClear?: () => void
+    matchDetails?: Map<string, SearchResult>
+    searchActive?: boolean
+    onSearchShortcutInput?: (ch: string) => void
+    onSearchCycle?: (reverse: boolean) => void
+    onSearchClear?: () => void
   }
 
   let {
@@ -78,11 +78,11 @@
     selectedScrollAlign = 'auto',
     matchedIds = new Set<string>(),
     matchQuery = '',
-    typeaheadActive = false,
-    onTypeaheadInput,
-    onTypeaheadBackspace,
-    onTypeaheadCycle,
-    onTypeaheadClear,
+    matchDetails = new Map<string, SearchResult>(),
+    searchActive = false,
+    onSearchShortcutInput,
+    onSearchCycle,
+    onSearchClear,
   }: Props = $props()
 
   const ROW_HEIGHT = 32
@@ -483,42 +483,29 @@
     const target = e.target as HTMLElement
     if (target.closest('[role="menu"]')) return
 
-    // ─── Inline typeahead (type-to-jump) ──────────────────────────────────
-    // A printable key starts/extends a name query; matches highlight and the
-    // active one is revealed + selected. Enter cycles matches (Shift = back),
-    // Backspace edits, Escape clears, and any arrow key ends typeahead and
-    // resumes normal navigation. Disabled in compare/restore (editingDisabled)
-    // and never fires while a text input in the tree has focus. Space only
-    // EXTENDS an active query — it still selects the focused row otherwise.
+    // ─── Search shortcuts ─────────────────────────────────────────────────
+    // Typing while the tree has focus feeds the visible search box instead of
+    // starting a separate hidden mode. Enter cycles matches; Escape clears.
     const inEditable =
       target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' ||
       target.tagName === 'SELECT' || target.isContentEditable
     if (!editingDisabled && !inEditable) {
       const isPrintable = e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey
-      if (isPrintable && (e.key !== ' ' || typeaheadActive)) {
+      if (isPrintable && (e.key !== ' ' || searchActive)) {
         e.preventDefault()
-        onTypeaheadInput?.(e.key)
+        onSearchShortcutInput?.(e.key)
         return
       }
-      if (typeaheadActive) {
-        if (e.key === 'Backspace') {
-          e.preventDefault()
-          onTypeaheadBackspace?.()
-          return
-        }
+      if (searchActive) {
         if (e.key === 'Escape') {
           e.preventDefault()
-          onTypeaheadClear?.()
+          onSearchClear?.()
           return
         }
         if (e.key === 'Enter') {
           e.preventDefault()
-          onTypeaheadCycle?.(e.shiftKey)
+          onSearchCycle?.(e.shiftKey)
           return
-        }
-        if (e.key.startsWith('Arrow')) {
-          // End typeahead, then fall through to normal arrow navigation.
-          onTypeaheadClear?.()
         }
       }
     }
@@ -606,8 +593,8 @@
     if (focusedIndex >= displayedItems.length) focusedIndex = -1
   })
 
-  // When selection changes from outside keyboard nav (click, typeahead jump,
-  // search-result reveal), drop the pinned keyboard focus so currentFocusIndex
+  // When selection changes from outside keyboard nav (click, search reveal),
+  // drop the pinned keyboard focus so currentFocusIndex
   // falls back to the selected row. Otherwise a stale focusedIndex from an
   // earlier ArrowUp/Down would make F2/Enter act on the wrong row. Pure arrow
   // nav doesn't change selectedId, so this never fights live keyboard movement.
@@ -680,6 +667,7 @@
                 focused={focusedIndex === virt.index}
                 matched={matchedIds.has(item.row.node.id)}
                 {matchQuery}
+                matchDetail={matchDetails.get(item.row.node.id)}
                 onSelect={(id) => onSelect?.(id)}
                 onToggle={(id) => onToggle?.(id)}
                 onContextMenu={handleRowContextMenu}

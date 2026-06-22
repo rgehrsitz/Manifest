@@ -92,6 +92,11 @@ export interface RowBadge {
 export interface FlattenOptions {
   /** When true, nodes are treated as MergedTreeNode and emit decorated/ghost rows. */
   compareMode?: boolean
+  /**
+   * Optional allow-list for browse-mode search. Matching nodes and their
+   * ancestors are rendered; sibling branches outside this set are skipped.
+   */
+  includeIds?: Set<string>
 }
 
 /**
@@ -173,24 +178,30 @@ export function flattenTree(
 
   // Normal mode — no compare data.
   function walk(treeNode: TreeNode, siblingIndex: number, siblingCount: number): void {
+    if (options.includeIds && !options.includeIds.has(treeNode.node.id)) return
+
     const hasChildren = treeNode.children.length > 0
-    const isExpanded = expandedIds.has(treeNode.node.id)
+    const isExpanded = options.includeIds ? true : expandedIds.has(treeNode.node.id)
+    const visibleChildren = options.includeIds
+      ? treeNode.children.filter(child => options.includeIds!.has(child.node.id))
+      : treeNode.children
+    const renderedHasChildren = options.includeIds ? visibleChildren.length > 0 : hasChildren
 
     result.push({
       kind: 'normal',
       id: treeNode.node.id,
       depth: treeNode.depth,
       node: treeNode.node,
-      hasChildren,
-      childCount: treeNode.children.length,
+      hasChildren: renderedHasChildren,
+      childCount: options.includeIds ? visibleChildren.length : treeNode.children.length,
       expanded: isExpanded,
       isFirst: siblingIndex === 0,
       isLast: siblingIndex === siblingCount - 1,
     })
 
-    if (hasChildren && isExpanded) {
-      for (let i = 0; i < treeNode.children.length; i++) {
-        walk(treeNode.children[i], i, treeNode.children.length)
+    if (renderedHasChildren && isExpanded) {
+      for (let i = 0; i < visibleChildren.length; i++) {
+        walk(visibleChildren[i], i, visibleChildren.length)
       }
     }
   }

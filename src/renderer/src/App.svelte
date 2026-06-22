@@ -9,7 +9,7 @@
   import { computeSubtreeSummaries, templatesForNode } from '../../shared/merged-tree'
   import { buildTree, getSiblingIndex, getAncestorIds } from './lib/tree'
   import { flattenTree } from './lib/tree-rows'
-  import { collectTypeaheadMatches, cycleIndex } from './lib/tree-typeahead'
+  import { cycleIndex } from './lib/tree-typeahead'
   import ManifestView from './components/ManifestView.svelte'
   import DetailPane from './components/DetailPane.svelte'
   import MoveToDialog from './components/MoveToDialog.svelte'
@@ -41,18 +41,23 @@
   let expandedIds: Set<string>   = $state(new Set())
   let searchQuery: string        = $state('')
   let searchResults: SearchResult[] = $state([])
-  let searchResultsOpen: boolean = $state(false)
+  let searchResultIndex: number = $state(0)
   let searching:   boolean       = $state(false)
   let selectedScrollAlign: 'auto' | 'center' = $state('auto')
+  let searchInputEl: HTMLInputElement | null = $state(null)
 
-  // Inline typeahead (type-to-jump) state — browse mode only. The query is a
-  // transient buffer driven by keystrokes on the focused tree; matches are node
-  // ids in tree pre-order and the active one is revealed + selected.
-  let typeaheadQuery: string = $state('')
-  let typeaheadMatches: string[] = $state([])
-  let typeaheadIndex: number = $state(0)
-  const typeaheadActive = $derived(typeaheadQuery.length > 0)
-  const typeaheadMatchSet = $derived(new Set(typeaheadMatches))
+  const searchActive = $derived(searchQuery.trim().length > 0)
+  const searchMatchSet = $derived(new Set(searchResults.map(r => r.nodeId)))
+  const searchResultMap = $derived(new Map(searchResults.map(r => [r.nodeId, r])))
+  const searchIncludeIds = $derived.by(() => {
+    if (!project || !searchActive || searching) return null
+    const ids = new Set<string>()
+    for (const result of searchResults) {
+      ids.add(result.nodeId)
+      for (const ancestor of getAncestorIds(result.nodeId, project.nodes)) ids.add(ancestor)
+    }
+    return ids
+  })
 
   // Inline add-child state
   let addingChildTo: string | null = $state(null)
@@ -159,7 +164,7 @@
       return flattenTree(mergedTreeBuilt, compareExpanded, { compareMode: true })
     }
     if (!tree) return []
-    return flattenTree(tree, expandedIds)
+    return flattenTree(tree, expandedIds, searchIncludeIds ? { includeIds: searchIncludeIds } : {})
   })
 
   const selectedNode = $derived.by(() => {
@@ -281,11 +286,9 @@
 
   function applyProject(p: Project) {
     project = p
-    // A typeahead match set is computed against the previous tree; once the
-    // project mutates (node added/deleted/moved/renamed, import, revert, or an
-    // external file reload) those ids and the match count can be stale, so end
-    // typeahead rather than let the bar lie or the index point at a deleted id.
-    if (typeaheadActive) clearTypeahead()
+    // Search results are computed against the previous project; once the
+    // project mutates, stale match ids can point at deleted or moved nodes.
+    if (searchActive) clearSearch()
     // If selected node was deleted, fall back to root.
     // Ghost selections (issue #3) live in mergedTree.nodes, not project.nodes,
     // so don't clobber them just because the live project mutated.
@@ -359,7 +362,6 @@
     setSelection(null)
     expandedIds = new Set()
     clearSearch()
-    clearTypeahead()
     appState = 'welcome'
     newName = ''
     newPath = ''
@@ -397,56 +399,6 @@
     selectedScrollAlign = 'auto'
     setSelection(id)
     addingChildTo = null
-    // A deliberate click ends an in-progress typeahead so the bar doesn't linger.
-    clearTypeahead()
-  }
-
-  // ─── Inline typeahead (type-to-jump) ───────────────────────────────────────
-  function clearTypeahead(): void {
-    typeaheadQuery = ''
-    typeaheadMatches = []
-    typeaheadIndex = 0
-  }
-
-  // Recompute matches for the current query and reveal the active one.
-  function refreshTypeahead(): void {
-    if (!typeaheadQuery || !tree) {
-      typeaheadMatches = []
-      typeaheadIndex = 0
-      return
-    }
-    typeaheadMatches = collectTypeaheadMatches(tree, typeaheadQuery)
-    typeaheadIndex = 0
-    revealTypeaheadMatch()
-  }
-
-  // Expand ancestors of the active match (never collapsing other branches),
-  // select it, and scroll it to center.
-  function revealTypeaheadMatch(): void {
-    const id = typeaheadMatches[typeaheadIndex]
-    if (!id || !project) return
-    const ancestors = getAncestorIds(id, project.nodes)
-    expandedIds = new Set([...expandedIds, ...ancestors])
-    selectedScrollAlign = 'center'
-    setSelection(id)
-  }
-
-  function handleTypeaheadInput(ch: string): void {
-    if (compareMode) return
-    typeaheadQuery += ch
-    refreshTypeahead()
-  }
-
-  function handleTypeaheadBackspace(): void {
-    if (!typeaheadQuery) return
-    typeaheadQuery = typeaheadQuery.slice(0, -1)
-    refreshTypeahead()
-  }
-
-  function handleTypeaheadCycle(reverse: boolean): void {
-    if (typeaheadMatches.length === 0) return
-    typeaheadIndex = cycleIndex(typeaheadIndex, typeaheadMatches.length, reverse)
-    revealTypeaheadMatch()
   }
 
   function handleToggle(id: string) {
@@ -748,45 +700,76 @@
 
   let searchTimer: ReturnType<typeof setTimeout> | null = null
 
-  function handleSearchInput(e: Event) {
-    // The full search panel supersedes inline typeahead — end it so a stale
-    // "Find" bar and match set don't linger behind the search results.
-    clearTypeahead()
-    searchQuery = (e.target as HTMLInputElement).value
-    searchResultsOpen = true
+  function revealSearchResult(index = searchResultIndex): void {
+    const result = searchResults[index]
+    if (!result) return
+    searchResultIndex = index
+    selectedScrollAlign = 'center'
+    setSelection(result.nodeId)
+  }
+
+  function cycleSearchResult(reverse: boolean): void {
+    if (searchResults.length === 0) return
+    const next = cycleIndex(searchResultIndex, searchResults.length, reverse)
+    revealSearchResult(next)
+  }
+
+  function runSearch(query: string): void {
     if (searchTimer) clearTimeout(searchTimer)
-    if (!searchQuery.trim()) {
+    if (!query.trim()) {
       searchResults = []
-      searchResultsOpen = false
+      searchResultIndex = 0
       searching = false
       return
     }
     searching = true
-    const query = searchQuery
+    searchResults = []
+    searchResultIndex = 0
     searchTimer = setTimeout(async () => {
       const result = await window.api.search.query(query)
       if (query !== searchQuery) return
       searching = false
-      if (result.ok) searchResults = result.data
+      if (result.ok) {
+        searchResults = result.data
+        searchResultIndex = 0
+        await tick()
+        revealSearchResult(0)
+      }
     }, 200)
   }
 
-  function handleSearchSelect(nodeId: string) {
-    // Expand ancestors so the node is visible.
-    if (project) {
-      const ancestors = getAncestorIds(nodeId, project.nodes)
-      expandedIds = new Set([...expandedIds, ...ancestors, nodeId])
+  function handleSearchInput(e: Event) {
+    searchQuery = (e.target as HTMLInputElement).value
+    runSearch(searchQuery)
+  }
+
+  function handleSearchKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      if (!searchQuery) return
+      e.preventDefault()
+      clearSearch()
+      searchInputEl?.focus()
+      return
     }
-    selectedScrollAlign = 'center'
-    setSelection(nodeId)
-    searchResultsOpen = false
+    if (e.key === 'Enter') {
+      if (!searchActive) return
+      e.preventDefault()
+      cycleSearchResult(e.shiftKey)
+    }
+  }
+
+  function handleSearchShortcutInput(ch: string) {
+    if (compareMode) return
+    searchQuery += ch
+    searchInputEl?.focus()
+    runSearch(searchQuery)
   }
 
   function clearSearch() {
     if (searchTimer) clearTimeout(searchTimer)
     searchQuery = ''
     searchResults = []
-    searchResultsOpen = false
+    searchResultIndex = 0
     searching = false
   }
 
@@ -904,7 +887,7 @@
       }
       compareExpanded = new Set([...expandedIds, ...ancestors])
       compareMode = true
-      clearTypeahead()  // typeahead is a browse-mode aid; don't carry it into compare
+      clearSearch()  // search is a browse-mode aid; don't carry it into compare
 
       // Restore a stashed ghost selection if this snapshot pair still
       // contains the same ghost id (issue #3). Otherwise drop the stash —
@@ -1405,9 +1388,11 @@
         <div class="px-3 py-2 border-b border-stone-200">
           <div class="relative">
             <input
+              bind:this={searchInputEl}
               type="text"
               value={searchQuery}
               oninput={handleSearchInput}
+              onkeydown={handleSearchKeydown}
               placeholder="Search nodes…"
               class="w-full bg-white border border-stone-200 rounded-lg pl-8 pr-8 py-1.5
                      text-sm text-stone-700 placeholder-stone-300 focus:outline-none
@@ -1426,71 +1411,29 @@
               >✕</button>
             {/if}
           </div>
-          {#if searchQuery.trim() && !searchResultsOpen}
+          {#if searchQuery.trim()}
             <div class="mt-2 flex items-center justify-between gap-2">
               <p class="truncate text-xs text-stone-500">
-                {searchResults.length} result{searchResults.length === 1 ? '' : 's'} for "{searchQuery}"
+                {#if searching}
+                  Searching…
+                {:else if searchResults.length === 0}
+                  No results for "{searchQuery}"
+                {:else}
+                  {searchResultIndex + 1}/{searchResults.length} result{searchResults.length === 1 ? '' : 's'} for "{searchQuery}"
+                {/if}
               </p>
-              <button
-                class="shrink-0 rounded-md border border-stone-200 bg-white px-2 py-1 text-xs
-                       font-medium text-stone-600 hover:bg-stone-100 cursor-default"
-                onclick={() => { searchResultsOpen = true }}
-                data-testid="show-search-results"
-              >
-                Results
-              </button>
+              {#if searchResults.length > 1}
+                <span class="shrink-0 text-[10px] text-stone-400">Enter next · Shift+Enter prev</span>
+              {/if}
             </div>
           {/if}
         </div>
 
-        <!-- Search results overlay -->
-        {#if searchQuery.trim() && searchResultsOpen}
-          <div class="flex-1 overflow-y-auto p-2" data-testid="search-results">
-            {#if searching}
-              <p class="text-xs text-stone-400 px-2 py-1">Searching…</p>
-            {:else}
-              {#each searchResults as r (r.nodeId)}
-                <button
-                  class="w-full text-left px-2 py-1.5 rounded text-sm text-stone-700
-                         hover:bg-stone-100"
-                  onclick={() => handleSearchSelect(r.nodeId)}
-                  data-testid="search-result"
-                >
-                  <span class="block truncate">{r.nodeName}</span>
-                  {#if r.parentName || r.matchField === 'property'}
-                    <span class="block truncate text-xs text-stone-400">
-                      {r.parentName ?? 'Root'}{r.matchField === 'property' ? ` · ${r.snippet}` : ''}
-                    </span>
-                  {/if}
-                </button>
-              {/each}
-              {#if searchResults.length === 0}
-                <p class="text-xs text-stone-400 px-2 py-1" data-testid="search-no-results">No results</p>
-              {/if}
-            {/if}
-          </div>
-
         <!-- Tree -->
-        {:else}
-          <div class="flex-1 flex flex-col overflow-hidden" data-testid="tree">
-            <!-- Inline typeahead bar — only while editing is unlocked (browse mode);
-                 compare/revert/recovery disable the key handler, so the bar must
-                 not linger as a stale, non-interactive UI. -->
-            {#if !editingLocked && typeaheadActive}
-              <div
-                class="shrink-0 flex items-center gap-2 border-b border-stone-200 bg-amber-50 px-3 py-1.5"
-                data-testid="tree-typeahead-bar"
-              >
-                <span class="text-[10px] font-semibold uppercase tracking-wide text-amber-700">Find</span>
-                <span class="flex-1 truncate text-sm text-stone-800" data-testid="tree-typeahead-query">{typeaheadQuery}</span>
-                <span class="text-xs tabular-nums text-stone-500" data-testid="tree-typeahead-count">
-                  {typeaheadMatches.length === 0
-                    ? 'No matches'
-                    : `${typeaheadIndex + 1}/${typeaheadMatches.length}`}
-                </span>
-                <span class="hidden sm:inline text-[10px] text-stone-400">↵ next · ⇧↵ prev · esc clear</span>
-              </div>
-            {/if}
+        <div class="flex-1 flex flex-col overflow-hidden" data-testid="tree">
+          {#if searchActive && !searching && searchResults.length === 0}
+            <div class="flex-1 p-3 text-sm text-stone-400" data-testid="search-no-results">No matching nodes</div>
+          {:else}
             <div class="flex-1 overflow-hidden">
               <ManifestView
                 rows={flatRows}
@@ -1521,15 +1464,16 @@
                 onDelete={handleDelete}
                 onMoveTo={handleMoveTo}
                 editingDisabled={editingLocked}
-                matchedIds={typeaheadMatchSet}
-                matchQuery={typeaheadQuery}
-                typeaheadActive={typeaheadActive}
-                onTypeaheadInput={handleTypeaheadInput}
-                onTypeaheadBackspace={handleTypeaheadBackspace}
-                onTypeaheadCycle={handleTypeaheadCycle}
-                onTypeaheadClear={clearTypeahead}
+                matchedIds={searchMatchSet}
+                matchQuery={searchQuery}
+                matchDetails={searchResultMap}
+                searchActive={searchActive}
+                onSearchShortcutInput={handleSearchShortcutInput}
+                onSearchClear={clearSearch}
+                onSearchCycle={cycleSearchResult}
               />
             </div>
+          {/if}
 
             <!-- Inline add-child input — rendered below the tree, always visible -->
             {#if addingChildTo}
@@ -1576,8 +1520,7 @@
                 </div>
               </div>
             {/if}
-          </div>
-        {/if}
+        </div>
 
       </div>
 
