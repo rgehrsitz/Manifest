@@ -51,10 +51,15 @@
   const searchResultMap = $derived(new Map(searchResults.map(r => [r.nodeId, r])))
   const searchIncludeIds = $derived.by(() => {
     if (!project || !searchActive || searching) return null
+    const parentMap = new Map(project.nodes.map(n => [n.id, n.parentId]))
     const ids = new Set<string>()
     for (const result of searchResults) {
       ids.add(result.nodeId)
-      for (const ancestor of getAncestorIds(result.nodeId, project.nodes)) ids.add(ancestor)
+      let current = parentMap.get(result.nodeId) ?? null
+      while (current !== null) {
+        ids.add(current)
+        current = parentMap.get(current) ?? null
+      }
     }
     return ids
   })

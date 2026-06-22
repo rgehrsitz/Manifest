@@ -212,4 +212,11 @@ test('search box filters the tree and cycles matching nodes', async ({
   await search.press('Escape')
   await expect(search).toHaveValue('')
   await expect(appPage.locator('[data-testid="tree-node"]', { hasText: 'Shelf' })).toBeVisible()
+
+  // Typing while the tree has focus feeds the same visible search box.
+  const view = appPage.getByTestId('manifest-view')
+  await view.focus()
+  await view.press('s')
+  await expect(search).toHaveValue('s')
+  await expect(appPage.getByTestId('detail-pane')).toContainText('Shelf')
 })

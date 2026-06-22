@@ -181,11 +181,13 @@ export function flattenTree(
     if (options.includeIds && !options.includeIds.has(treeNode.node.id)) return
 
     const hasChildren = treeNode.children.length > 0
-    const isExpanded = options.includeIds ? true : expandedIds.has(treeNode.node.id)
     const visibleChildren = options.includeIds
       ? treeNode.children.filter(child => options.includeIds!.has(child.node.id))
       : treeNode.children
     const renderedHasChildren = options.includeIds ? visibleChildren.length > 0 : hasChildren
+    const isExpanded = renderedHasChildren
+      ? (options.includeIds ? true : expandedIds.has(treeNode.node.id))
+      : false
 
     result.push({
       kind: 'normal',
