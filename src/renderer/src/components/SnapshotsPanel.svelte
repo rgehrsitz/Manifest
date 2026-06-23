@@ -213,6 +213,20 @@
     collapsedChangeGroups = next
   }
 
+  function shouldIgnoreDiffRowEvent(event: Event): boolean {
+    return event.target instanceof Element && event.target.closest('[data-no-row-select]') !== null
+  }
+
+  function activateDiffRow(nodeId: string, event?: KeyboardEvent | MouseEvent) {
+    if (event && shouldIgnoreDiffRowEvent(event)) return
+    if (event instanceof KeyboardEvent) {
+      if (event.repeat) return
+      if (event.key !== 'Enter' && event.key !== ' ') return
+      event.preventDefault()
+    }
+    onDiffNodeSelect?.(nodeId)
+  }
+
   const reviewInsights = $derived.by<ReviewInsight[]>(() => {
     const insights: ReviewInsight[] = []
     const high = allDiffs.filter(diff => diff.severity === 'High').length
@@ -603,18 +617,21 @@
                   {#each group.entries as diff, idx (`${diff.nodeId}-${diff.changeType}-${idx}`)}
                     {@const isHighlighted = highlightedNodeId === diff.nodeId || highlightedNodeId === `ghost:${diff.nodeId}`}
                     {#if onDiffNodeSelect}
-                      <button
-                        type="button"
-                        onclick={() => onDiffNodeSelect(diff.nodeId)}
+                      <div
+                        role="button"
+                        tabindex="0"
+                        onclick={(event) => activateDiffRow(diff.nodeId, event)}
+                        onkeydown={(event) => activateDiffRow(diff.nodeId, event)}
                         data-node-id={diff.nodeId}
                         class={`w-full rounded-xl border px-3 py-3 shadow-sm transition-shadow text-left
                           ${severityClass(diff.severity)}
                           ${isHighlighted ? 'ring-2 ring-sky-400 ring-offset-1' : ''}
-                          cursor-pointer hover:shadow-md`}
+                          cursor-pointer hover:shadow-md focus-visible:outline-none
+                          focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-1`}
                         data-testid="snapshot-diff-row"
                       >
                         <SnapshotDiffRowBody {diff} />
-                      </button>
+                      </div>
                     {:else}
                       <div
                         data-node-id={diff.nodeId}

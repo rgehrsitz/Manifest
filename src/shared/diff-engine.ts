@@ -26,6 +26,8 @@ const CHANGE_WEIGHT = {
 } as const
 
 type NodeMap = Map<string, ManifestNode>
+type RemovedDescendantImpact = NonNullable<DiffEntry['context']['removalImpact']>['descendants'][number]
+type IncomingReferenceImpact = NonNullable<DiffEntry['context']['removalImpact']>['incomingReferences'][number]
 
 function buildNodeMap(nodes: ManifestNode[]): NodeMap {
   return new Map(nodes.map((node) => [node.id, node]))
@@ -79,19 +81,23 @@ function buildChildrenMap(nodes: ManifestNode[]): Map<string | null, ManifestNod
   return byParent
 }
 
-function countDescendants(nodeId: string, childrenByParent: Map<string | null, ManifestNode[]>): number {
-  let count = 0
+function descendantImpact(
+  nodeId: string,
+  childrenByParent: Map<string | null, ManifestNode[]>,
+  nodeMap: NodeMap,
+): RemovedDescendantImpact[] {
+  const out: RemovedDescendantImpact[] = []
   const queue = [...(childrenByParent.get(nodeId) ?? [])]
   for (let index = 0; index < queue.length; index++) {
     const node = queue[index]
-    count++
+    out.push({ id: node.id, name: node.name, path: getPath(node, nodeMap) })
     queue.push(...(childrenByParent.get(node.id) ?? []))
   }
-  return count
+  return out
 }
 
-function buildIncomingReferenceCounts(project: Project): Map<string, number> {
-  const counts = new Map<string, number>()
+function buildIncomingReferenceImpact(project: Project, nodeMap: NodeMap): Map<string, IncomingReferenceImpact[]> {
+  const references = new Map<string, IncomingReferenceImpact[]>()
   const fieldsByTemplateId = new Map<string, Record<string, TemplateField>>()
 
   function fieldsFor(templateId: string): Record<string, TemplateField> {
@@ -108,12 +114,18 @@ function buildIncomingReferenceCounts(project: Project): Map<string, number> {
     for (const [key, field] of Object.entries(fields)) {
       const targetId = node.properties[key]
       if (field.type === 'reference' && typeof targetId === 'string' && targetId !== node.id) {
-        counts.set(targetId, (counts.get(targetId) ?? 0) + 1)
+        const entry = {
+          nodeId: node.id,
+          nodeName: node.name,
+          path: getPath(node, nodeMap),
+          fieldKey: key,
+        }
+        references.set(targetId, [...(references.get(targetId) ?? []), entry])
       }
     }
   }
 
-  return counts
+  return references
 }
 
 function changedPropertyKeys(
@@ -230,7 +242,7 @@ export function diffProjects(projectA: Project, projectB: Project): DiffEntry[] 
   const nodesA = buildNodeMap(projectA.nodes)
   const nodesB = buildNodeMap(projectB.nodes)
   const childrenA = buildChildrenMap(projectA.nodes)
-  const incomingReferencesA = buildIncomingReferenceCounts(projectA)
+  const incomingReferencesA = buildIncomingReferenceImpact(projectA, nodesA)
   const ids = new Set([...nodesA.keys(), ...nodesB.keys()])
   const diffs: DiffEntry[] = []
 
@@ -251,11 +263,11 @@ export function diffProjects(projectA: Project, projectB: Project): DiffEntry[] 
     }
 
     if (nodeA && !nodeB) {
-      const descendants = countDescendants(id, childrenA)
-      const references = incomingReferencesA.get(id) ?? 0
+      const descendants = descendantImpact(id, childrenA, nodesA)
+      const references = incomingReferencesA.get(id) ?? []
       const impacts = [
-        descendants > 0 ? `${descendants} descendant${descendants === 1 ? '' : 's'}` : '',
-        references > 0 ? `${references} incoming reference${references === 1 ? '' : 's'}` : '',
+        descendants.length > 0 ? `${descendants.length} descendant${descendants.length === 1 ? '' : 's'}` : '',
+        references.length > 0 ? `${references.length} incoming reference${references.length === 1 ? '' : 's'}` : '',
       ].filter(Boolean)
       diffs.push({
         nodeId: id,
@@ -265,7 +277,12 @@ export function diffProjects(projectA: Project, projectB: Project): DiffEntry[] 
           ? `High: removed node affected ${impacts.join(' and ')}.`
           : 'High: node was removed from the hierarchy.',
         oldValue: nodeA,
-        context: makeContext(nodeA, nodesA),
+        context: {
+          ...makeContext(nodeA, nodesA),
+          ...((descendants.length > 0 || references.length > 0)
+            ? { removalImpact: { descendants, incomingReferences: references } }
+            : {}),
+        },
       })
       continue
     }
