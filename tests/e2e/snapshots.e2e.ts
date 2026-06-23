@@ -196,6 +196,7 @@ test('surfaces removed nodes in snapshot compare mode', async ({ appPage, electr
   })
   await expect(appPage.getByTestId('compare-change-group-removed')).toBeVisible()
   await expect(appPage.getByTestId('compare-change-group-count-removed')).toHaveText('2')
+  await expect(appPage.getByTestId('compare-review-focus')).toContainText('1 removal includes 1 descendant')
   await expect(rackRow).toBeVisible()
   await expect(rackRow).toContainText('Rack A')
   await expect(appPage.getByTestId('removed-impact-details')).toHaveCount(1)
