@@ -90,9 +90,9 @@ describe('buildReport', () => {
     expect(r.ok).toBe(true)
     if (!r.ok) return
     const rows = parseCsv(r.data.content)
-    expect(rows[0]).toEqual(['path', 'node', 'change', 'severity', 'property', 'old', 'new'])
-    expect(rows).toContainEqual(['Lab', 'B2', 'added', 'High', '', '', ''])
-    expect(rows).toContainEqual(['Lab', 'B1', 'property-changed', 'Medium', 'serial', 'SN-1', 'SN-2'])
+    expect(rows[0]).toEqual(['path', 'node', 'change', 'severity', 'property', 'old', 'new', 'removed_descendants', 'broken_references'])
+    expect(rows).toContainEqual(['Lab', 'B2', 'added', 'High', '', '', '', '', ''])
+    expect(rows).toContainEqual(['Lab', 'B1', 'property-changed', 'Medium', 'serial', 'SN-1', 'SN-2', '', ''])
     expect(r.data.suggestedName).toBe('Lab-changes-before-to-after.csv')
   })
 

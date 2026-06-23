@@ -49,6 +49,9 @@ export interface PropertyChange {
 }
 
 type PropertyValueLabels = NonNullable<DiffEntry['context']['propertyValueLabels']>
+type RemovalImpact = NonNullable<DiffEntry['context']['removalImpact']>
+type RemovedDescendantImpact = RemovalImpact['descendants'][number]
+type IncomingReferenceImpact = RemovalImpact['incomingReferences'][number]
 
 // Expand the whole-map oldValue/newValue of a property-changed DiffEntry into the
 // per-key delta. diffProjects emits one entry per node with both full maps, so the
@@ -86,6 +89,25 @@ function ancestorPath(entry: DiffEntry): string {
 
 function fullPath(entry: DiffEntry): string {
   return formatPath(entry.context.path, entry.context.nodeName)
+}
+
+function removalImpact(entry: DiffEntry): RemovalImpact | undefined {
+  const impact = entry.context.removalImpact
+  if (!impact) return undefined
+  if (impact.descendants.length === 0 && impact.incomingReferences.length === 0) return undefined
+  return impact
+}
+
+function descendantLabel(descendant: RemovedDescendantImpact): string {
+  return formatPath(descendant.path, descendant.name)
+}
+
+function incomingReferenceLabel(reference: IncomingReferenceImpact): string {
+  return `${formatPath(reference.path, reference.nodeName)} (${reference.fieldKey})`
+}
+
+function joinedImpactLabels(values: string[]): string {
+  return values.join(' | ')
 }
 
 // Neutralize Markdown-significant content in an interpolated value so a node name
@@ -146,6 +168,12 @@ export function formatDiffReportMarkdown(
   lines.push(`- Template changes: ${tplChanged.length}`)
   lines.push(`- Order changes: ${orderChanged.length}`)
   lines.push(`- Schema changes: ${templateDiffs.length}`)
+  const removedWithBrokenReferences = removed
+    .filter(e => (e.context.removalImpact?.incomingReferences.length ?? 0) > 0)
+    .length
+  if (removedWithBrokenReferences > 0) {
+    lines.push(`- Removed nodes with broken references: ${removedWithBrokenReferences}`)
+  }
   lines.push('')
 
   if (added.length > 0) {
@@ -155,7 +183,16 @@ export function formatDiffReportMarkdown(
   }
   if (removed.length > 0) {
     lines.push(`## Removed (${removed.length})`)
-    for (const e of removed) lines.push(`- ${md(fullPath(e))}`)
+    for (const e of removed) {
+      lines.push(`- ${md(fullPath(e))}`)
+      const impact = removalImpact(e)
+      if (impact?.descendants.length) {
+        lines.push(`  - Descendants also removed (${impact.descendants.length}): ${impact.descendants.map(d => md(descendantLabel(d))).join(', ')}`)
+      }
+      if (impact?.incomingReferences.length) {
+        lines.push(`  - Incoming references broken (${impact.incomingReferences.length}): ${impact.incomingReferences.map(r => md(incomingReferenceLabel(r))).join(', ')}`)
+      }
+    }
     lines.push('')
   }
   if (renamed.length > 0) {
@@ -213,7 +250,7 @@ export function formatDiffReportMarkdown(
 
 // ─── CSV (node changes only; one row per change, property-changes expanded) ───
 
-const CSV_HEADER = ['path', 'node', 'change', 'severity', 'property', 'old', 'new']
+const CSV_HEADER = ['path', 'node', 'change', 'severity', 'property', 'old', 'new', 'removed_descendants', 'broken_references']
 
 // CSV carries node changes only (schema detail lives in the Markdown report). But
 // it must never read as "no changes" when a schema-only diff happened — so a
@@ -227,19 +264,34 @@ export function formatDiffReportCsv(
 
   if (templateDiffs.length > 0) {
     const n = templateDiffs.length
-    rows.push(['', '(schema changes)', 'schema-change', '', '', '', `${n} schema change${n === 1 ? '' : 's'} — see the Markdown report for detail`])
+    rows.push(['', '(schema changes)', 'schema-change', '', '', '', `${n} schema change${n === 1 ? '' : 's'} — see the Markdown report for detail`, '', ''])
   }
 
   for (const e of diffs) {
     const path = ancestorPath(e)
     const node = e.context.nodeName
     const base = (change: string, property: string, oldV: string, newV: string): string[] =>
-      [path, node, change, e.severity, property, oldV, newV]
+      [path, node, change, e.severity, property, oldV, newV, '', '']
 
     switch (e.changeType) {
       case 'added':
-      case 'removed':
         rows.push(base(e.changeType, '', '', ''))
+        break
+      case 'removed':
+        {
+          const impact = removalImpact(e)
+          rows.push([
+            path,
+            node,
+            e.changeType,
+            e.severity,
+            '',
+            '',
+            '',
+            joinedImpactLabels(impact?.descendants.map(descendantLabel) ?? []),
+            joinedImpactLabels(impact?.incomingReferences.map(incomingReferenceLabel) ?? []),
+          ])
+        }
         break
       case 'renamed':
         rows.push(base('renamed', '', String(e.oldValue ?? ''), String(e.newValue ?? '')))
