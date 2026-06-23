@@ -73,7 +73,7 @@ test('exports a CSV report of the snapshot diff', async ({ appPage, electronApp,
   await expect(appPage.getByTestId('toast')).toContainText('Report saved')
 
   const csv = readFileSync(outPath, 'utf8')
-  expect(csv).toContain('path,node,change,severity,property,old,new')
+  expect(csv).toContain('path,node,change,severity,property,old,new,removed_descendants,broken_references')
   expect(csv).toContain('Widget')   // the added node appears in the diff
   expect(csv).toContain('added')
 })

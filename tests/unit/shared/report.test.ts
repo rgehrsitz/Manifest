@@ -18,6 +18,8 @@ const ctx: ReportContext = {
   templateLabelNew: (v) => (v ? `tplNew(${String(v)})` : '(none)'),
 }
 
+const CSV_HEADER = ['path', 'node', 'change', 'severity', 'property', 'old', 'new', 'removed_descendants', 'broken_references']
+
 function entry(over: Partial<DiffEntry> & Pick<DiffEntry, 'changeType'>): DiffEntry {
   return {
     nodeId: 'n1',
@@ -98,6 +100,38 @@ describe('formatDiffReportMarkdown', () => {
     expect(md).toContain('"Old" → "Widget"')
     expect(md).toContain('## Order changes (1)')
     expect(md).toContain(': 0 → 3')
+    expect(md).not.toContain('Descendants also removed')
+    expect(md).not.toContain('Incoming references broken')
+  })
+
+  it('renders removed-node impact details when present', () => {
+    const md = formatDiffReportMarkdown([
+      entry({ changeType: 'removed', severity: 'High', nodeId: 'clean' }),
+      entry({
+        changeType: 'removed',
+        severity: 'High',
+        nodeId: 'rack-a',
+        context: {
+          nodeName: 'Rack A',
+          parentName: 'Lab',
+          path: ['Lab'],
+          removalImpact: {
+            descendants: [
+              { id: 'server-1', name: 'Server 1', path: ['Lab', 'Rack A'] },
+            ],
+            incomingReferences: [
+              { nodeId: 'probe', nodeName: 'Probe', path: ['Lab'], fieldKey: 'controller' },
+            ],
+          },
+        },
+      }),
+    ], [], ctx)
+
+    expect(md).toContain('- Removed nodes with broken references: 1')
+    expect(md).toContain('- Lab / Rack A')
+    expect(md).toContain('  - Descendants also removed (1): Lab / Rack A / Server 1')
+    expect(md).toContain('  - Incoming references broken (1): Lab / Probe (controller)')
+    expect(md).not.toContain('Descendants also removed (0)')
   })
 
   it('shows moved as old path → new path', () => {
@@ -170,9 +204,9 @@ describe('formatDiffReportCsv', () => {
       entry({ changeType: 'renamed', oldValue: 'Old', newValue: 'Widget' }),
     ], [], ctx)
     const rows = parseCsv(csv)
-    expect(rows[0]).toEqual(['path', 'node', 'change', 'severity', 'property', 'old', 'new'])
-    expect(rows[1]).toEqual(['Lab / Rack A-01', 'Widget', 'added', 'High', '', '', ''])
-    expect(rows[2]).toEqual(['Lab / Rack A-01', 'Widget', 'renamed', 'Medium', '', 'Old', 'Widget'])
+    expect(rows[0]).toEqual(CSV_HEADER)
+    expect(rows[1]).toEqual(['Lab / Rack A-01', 'Widget', 'added', 'High', '', '', '', '', ''])
+    expect(rows[2]).toEqual(['Lab / Rack A-01', 'Widget', 'renamed', 'Medium', '', 'Old', 'Widget', '', ''])
   })
 
   it('expands a property-changed node to one row per changed key', () => {
@@ -185,9 +219,9 @@ describe('formatDiffReportCsv', () => {
     ], [], ctx)
     const rows = parseCsv(csv).slice(1) // drop header — keys sorted alphabetically
     expect(rows).toEqual([
-      ['Lab / Rack A-01', 'Widget', 'property-added', 'Medium', 'added', '', 'y'],
-      ['Lab / Rack A-01', 'Widget', 'property-removed', 'Medium', 'gone', 'x', ''],
-      ['Lab / Rack A-01', 'Widget', 'property-changed', 'Medium', 'serial', 'SN-1', 'SN-2'],
+      ['Lab / Rack A-01', 'Widget', 'property-added', 'Medium', 'added', '', 'y', '', ''],
+      ['Lab / Rack A-01', 'Widget', 'property-removed', 'Medium', 'gone', 'x', '', '', ''],
+      ['Lab / Rack A-01', 'Widget', 'property-changed', 'Medium', 'serial', 'SN-1', 'SN-2', '', ''],
     ])
   })
 
@@ -199,26 +233,61 @@ describe('formatDiffReportCsv', () => {
       entry({ changeType: 'order-changed', severity: 'Low', oldValue: 0, newValue: 2 }),
     ], [], ctx)
     const rows = parseCsv(csv).slice(1)
-    expect(rows[0]).toEqual(['Lab / Rack A-01', 'Widget', 'removed', 'High', '', '', ''])
+    expect(rows[0]).toEqual(['Lab / Rack A-01', 'Widget', 'removed', 'High', '', '', '', '', ''])
     // moved: old = resolved old path, new = full new path.
-    expect(rows[1]).toEqual(['Lab / Rack A-01', 'Widget', 'moved', 'High', '', 'Lab / Old Rack / Widget', 'Lab / Rack A-01 / Widget'])
+    expect(rows[1]).toEqual(['Lab / Rack A-01', 'Widget', 'moved', 'High', '', 'Lab / Old Rack / Widget', 'Lab / Rack A-01 / Widget', '', ''])
     // template-changed: old/new = resolved labels.
-    expect(rows[2]).toEqual(['Lab / Rack A-01', 'Widget', 'template-changed', 'Medium', '', 'tplOld(board)', 'tplNew(panel)'])
-    expect(rows[3]).toEqual(['Lab / Rack A-01', 'Widget', 'order-changed', 'Low', '', '0', '2'])
+    expect(rows[2]).toEqual(['Lab / Rack A-01', 'Widget', 'template-changed', 'Medium', '', 'tplOld(board)', 'tplNew(panel)', '', ''])
+    expect(rows[3]).toEqual(['Lab / Rack A-01', 'Widget', 'order-changed', 'Low', '', '0', '2', '', ''])
+  })
+
+  it('populates removal impact columns for removed rows', () => {
+    const csv = formatDiffReportCsv([
+      entry({
+        changeType: 'removed',
+        severity: 'High',
+        context: {
+          nodeName: 'Rack A',
+          parentName: 'Lab',
+          path: ['Lab'],
+          removalImpact: {
+            descendants: [
+              { id: 'server-1', name: 'Server 1', path: ['Lab', 'Rack A'] },
+              { id: 'server-2', name: 'Server 2', path: ['Lab', 'Rack A'] },
+            ],
+            incomingReferences: [
+              { nodeId: 'probe', nodeName: 'Probe', path: ['Lab'], fieldKey: 'controller' },
+            ],
+          },
+        },
+      }),
+    ], [], ctx)
+
+    expect(parseCsv(csv)[1]).toEqual([
+      'Lab',
+      'Rack A',
+      'removed',
+      'High',
+      '',
+      '',
+      '',
+      'Lab / Rack A / Server 1 | Lab / Rack A / Server 2',
+      'Lab / Probe (controller)',
+    ])
   })
 
   it('resolves a null template side to (none) [gain/lose binding]', () => {
     const csv = formatDiffReportCsv([
       entry({ changeType: 'template-changed', oldValue: null, newValue: 'panel' }),
     ], [], ctx)
-    expect(parseCsv(csv)[1]).toEqual(['Lab / Rack A-01', 'Widget', 'template-changed', 'Medium', '', '(none)', 'tplNew(panel)'])
+    expect(parseCsv(csv)[1]).toEqual(['Lab / Rack A-01', 'Widget', 'template-changed', 'Medium', '', '(none)', 'tplNew(panel)', '', ''])
   })
 
   it('falls back to an empty old-path cell when a moved node has no resolvable old path', () => {
     const csv = formatDiffReportCsv([
       entry({ changeType: 'moved', severity: 'High', nodeId: 'unknown' }),
     ], [], ctx)
-    expect(parseCsv(csv)[1]).toEqual(['Lab / Rack A-01', 'Widget', 'moved', 'High', '', '', 'Lab / Rack A-01 / Widget'])
+    expect(parseCsv(csv)[1]).toEqual(['Lab / Rack A-01', 'Widget', 'moved', 'High', '', '', 'Lab / Rack A-01 / Widget', '', ''])
   })
 
   it('records a schema-only diff as a notice row (never a silently empty CSV)', () => {
@@ -226,14 +295,14 @@ describe('formatDiffReportCsv', () => {
       { templateId: 't1', templateLabel: 'Board', changeType: 'field-added', fieldKey: 'sku', newValue: { type: 'string' } },
     ]
     const rows = parseCsv(formatDiffReportCsv([], tpl, ctx))
-    expect(rows[0]).toEqual(['path', 'node', 'change', 'severity', 'property', 'old', 'new'])
+    expect(rows[0]).toEqual(CSV_HEADER)
     expect(rows[1][2]).toBe('schema-change')
     expect(rows[1][6]).toContain('1 schema change')
   })
 
   it('is a well-formed header-only CSV when there are no changes at all', () => {
     expect(parseCsv(formatDiffReportCsv([], [], ctx))).toEqual([
-      ['path', 'node', 'change', 'severity', 'property', 'old', 'new'],
+      CSV_HEADER,
     ])
   })
 
