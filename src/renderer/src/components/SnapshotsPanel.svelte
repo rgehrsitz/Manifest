@@ -9,6 +9,7 @@
     severityClass,
     describeTemplateChange,
   } from '../lib/diff-format'
+  import { buildReviewInsights } from '../lib/compare-review-insights'
   import SnapshotDiffRowBody from './SnapshotDiffRowBody.svelte'
 
   interface Props {
@@ -166,21 +167,6 @@
       .filter(g => g.total > 0)
   )
 
-  interface ReviewInsight {
-    label: string
-    detail: string
-    severity: DiffEntry['severity']
-  }
-
-  function changedPropertyKeys(diff: DiffEntry): string[] {
-    if (diff.changeType !== 'property-changed') return []
-    const before = (diff.oldValue ?? {}) as Record<string, unknown>
-    const after = (diff.newValue ?? {}) as Record<string, unknown>
-    return Array.from(new Set([...Object.keys(before), ...Object.keys(after)]))
-      .filter(key => before[key] !== after[key])
-      .sort()
-  }
-
   function severityFilterClass(severity: SeverityFilter): string {
     if (severity !== activeSeverityFilter) return 'border-stone-200 bg-white text-stone-500 hover:bg-stone-50'
     if (severity === 'High') return 'border-red-200 bg-red-50 text-red-700'
@@ -227,48 +213,7 @@
     onDiffNodeSelect?.(nodeId)
   }
 
-  const reviewInsights = $derived.by<ReviewInsight[]>(() => {
-    const insights: ReviewInsight[] = []
-    const high = allDiffs.filter(diff => diff.severity === 'High').length
-    if (high > 0) {
-      insights.push({
-        label: `${high} high-priority ${high === 1 ? 'change' : 'changes'}`,
-        detail: 'Review these before lower-priority edits.',
-        severity: 'High',
-      })
-    }
-
-    const propertyCounts = new Map<string, number>()
-    for (const diff of allDiffs) {
-      for (const key of changedPropertyKeys(diff)) {
-        propertyCounts.set(key, (propertyCounts.get(key) ?? 0) + 1)
-      }
-    }
-    for (const [key, count] of [...propertyCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3)) {
-      if (count < 2) continue
-      insights.push({
-        label: `${count} changes to "${key}"`,
-        detail: 'Likely a repeated field update.',
-        severity: 'Medium',
-      })
-    }
-
-    const parentCounts = new Map<string, number>()
-    for (const diff of allDiffs) {
-      const path = diff.context.path.join(' / ') || '(root)'
-      parentCounts.set(path, (parentCounts.get(path) ?? 0) + 1)
-    }
-    const [path, count] = [...parentCounts.entries()].sort((a, b) => b[1] - a[1])[0] ?? []
-    if (path && count >= 3) {
-      insights.push({
-        label: `${count} changes under ${path}`,
-        detail: 'This branch carries most of the activity.',
-        severity: 'Medium',
-      })
-    }
-
-    return insights.slice(0, 4)
-  })
+  const reviewInsights = $derived(buildReviewInsights(allDiffs))
 
   // Auto-fill From/To once on first load. After that, leave them alone — if
   // the user toggled a pill off (third-click clear), don't pre-fill on top of
