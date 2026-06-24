@@ -123,3 +123,42 @@ test('copy-as-Markdown builds report content', async ({ appPage, electronApp, wo
   // Clicking the button does not crash (clipboard may be denied headless → toast).
   await appPage.getByTestId('report-copy-md').click()
 })
+
+test('report actions lock while an export is in flight', async ({ appPage, electronApp, workspaceDir }) => {
+  await setUpCompare(appPage, electronApp, workspaceDir, 'Busy Report Lab')
+
+  const outPath = join(workspaceDir, 'busy-report.md')
+  await electronApp.evaluate(({ dialog }, path) => {
+    const state = {} as {
+      calls: number
+      release: () => void
+    }
+    state.calls = 0
+    dialog.showSaveDialog = async () => {
+      state.calls++
+      return new Promise((resolve) => {
+        state.release = () => resolve({ canceled: false, filePath: path })
+      })
+    }
+    ;(globalThis as unknown as { __reportSaveDialogTest: typeof state }).__reportSaveDialogTest = state
+  }, outPath)
+
+  await appPage.getByTestId('report-export-md').click()
+  await expect(appPage.getByTestId('report-copy-md')).toBeDisabled()
+  await expect(appPage.getByTestId('report-export-md')).toBeDisabled()
+  await expect(appPage.getByTestId('report-export-csv')).toBeDisabled()
+  await expect.poll(async () => electronApp.evaluate(() => (
+    (globalThis as unknown as { __reportSaveDialogTest: { calls: number } }).__reportSaveDialogTest.calls
+  ))).toBe(1)
+
+  await electronApp.evaluate(() => {
+    (globalThis as unknown as { __reportSaveDialogTest: { release: () => void } }).__reportSaveDialogTest.release()
+  })
+  await expect(appPage.getByTestId('toast')).toContainText('Report saved')
+  await expect(appPage.getByTestId('report-export-md')).toBeEnabled()
+  await expect(appPage.getByTestId('report-export-csv')).toBeEnabled()
+  await expect(appPage.getByTestId('report-copy-md')).toBeEnabled()
+
+  const md = readFileSync(outPath, 'utf8')
+  expect(md).toContain('# Change Report: Busy Report Lab')
+})

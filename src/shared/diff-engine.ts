@@ -128,6 +128,15 @@ function buildIncomingReferenceImpact(project: Project, nodeMap: NodeMap): Map<s
   return references
 }
 
+function hasRemovedAncestor(node: ManifestNode, nodes: NodeMap, removedIds: Set<string>): boolean {
+  let currentParentId = node.parentId
+  while (currentParentId !== null) {
+    if (removedIds.has(currentParentId)) return true
+    currentParentId = nodes.get(currentParentId)?.parentId ?? null
+  }
+  return false
+}
+
 function changedPropertyKeys(
   a: ManifestNode['properties'],
   b: ManifestNode['properties']
@@ -242,8 +251,9 @@ export function diffProjects(projectA: Project, projectB: Project): DiffEntry[] 
   const nodesA = buildNodeMap(projectA.nodes)
   const nodesB = buildNodeMap(projectB.nodes)
   const childrenA = buildChildrenMap(projectA.nodes)
-  const incomingReferencesA = buildIncomingReferenceImpact(projectA, nodesA)
+  const incomingReferencesB = buildIncomingReferenceImpact(projectB, nodesB)
   const ids = new Set([...nodesA.keys(), ...nodesB.keys()])
+  const removedIds = new Set([...nodesA.keys()].filter(id => !nodesB.has(id)))
   const diffs: DiffEntry[] = []
 
   for (const id of ids) {
@@ -263,8 +273,10 @@ export function diffProjects(projectA: Project, projectB: Project): DiffEntry[] 
     }
 
     if (nodeA && !nodeB) {
-      const descendants = descendantImpact(id, childrenA, nodesA)
-      const references = incomingReferencesA.get(id) ?? []
+      const descendants = hasRemovedAncestor(nodeA, nodesA, removedIds)
+        ? []
+        : descendantImpact(id, childrenA, nodesA)
+      const references = incomingReferencesB.get(id) ?? []
       const impacts = [
         descendants.length > 0 ? `${descendants.length} descendant${descendants.length === 1 ? '' : 's'}` : '',
         references.length > 0 ? `${references.length} incoming reference${references.length === 1 ? '' : 's'}` : '',

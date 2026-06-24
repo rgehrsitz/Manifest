@@ -11,6 +11,7 @@
   } from '../lib/diff-format'
   import { buildReviewInsights } from '../lib/compare-review-insights'
   import { orderCompareDiffs, type CompareOrderMode } from '../lib/compare-diff-order'
+  import { diffNodeIdFromSelection } from '../lib/compare-highlight'
   import SnapshotDiffRowBody from './SnapshotDiffRowBody.svelte'
 
   interface Props {
@@ -84,7 +85,10 @@
   // Scroll highlighted diff card into view whenever the selection changes.
   $effect(() => {
     if (!highlightedNodeId || !scrollEl) return
-    const el = scrollEl.querySelector<HTMLElement>(`[data-node-id="${highlightedNodeId}"]`)
+    const diffNodeId = diffNodeIdFromSelection(highlightedNodeId)
+    const el = Array
+      .from(scrollEl.querySelectorAll<HTMLElement>('[data-node-id]'))
+      .find(row => row.dataset.nodeId === diffNodeId)
     el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   })
 
@@ -598,7 +602,7 @@
                     </span>
                   </button>
                   {#if !collapsedChangeGroups.has(group.id)}
-                  {#each group.entries as diff, idx (`${diff.nodeId}-${diff.changeType}-${idx}`)}
+                  {#each group.entries as diff (`${diff.nodeId}-${diff.changeType}`)}
                     {@const isHighlighted = highlightedNodeId === diff.nodeId || highlightedNodeId === `ghost:${diff.nodeId}`}
                     {#if onDiffNodeSelect}
                       <div
