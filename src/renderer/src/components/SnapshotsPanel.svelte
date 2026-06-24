@@ -6,6 +6,8 @@
   import { CURRENT_PROJECT_REF, snapshotRefLabel } from '../../../shared/snapshot-ref'
   import {
     severityBadgeClass,
+    classificationBadgeClass,
+    DIFF_CLASSIFICATION_LABELS,
     severityClass,
     describeTemplateChange,
   } from '../lib/diff-format'
@@ -228,7 +230,7 @@
     onDiffNodeSelect?.(nodeId)
   }
 
-  const reviewInsights = $derived(buildReviewInsights(allDiffs))
+  const reviewInsights = $derived(buildReviewInsights(allDiffs, templateChanges))
 
   // Auto-fill From/To once on first load. After that, leave them alone — if
   // the user toggled a pill off (third-click clear), don't pre-fill on top of
@@ -476,32 +478,39 @@
             </div>
           {/if}
 
-          {#if allDiffs.length > 0}
-            {#if reviewInsights.length > 0}
-              <div
-                class="rounded-xl border border-stone-200 bg-stone-50/70 px-3 py-2"
-                data-testid="compare-review-focus"
-              >
-                <h4 class="text-[10px] font-semibold uppercase tracking-wide text-stone-500">
-                  Review focus
-                </h4>
-                <div class="mt-2 space-y-1.5">
-                  {#each reviewInsights as insight (insight.label)}
-                    <div class="flex items-start justify-between gap-2">
-                      <div class="min-w-0">
-                        <p class="truncate text-xs font-medium text-stone-700">{insight.label}</p>
-                        <p class="text-[11px] text-stone-500">{insight.detail}</p>
-                      </div>
-                      <span class={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold
+          {#if reviewInsights.length > 0}
+            <div
+              class="rounded-xl border border-stone-200 bg-stone-50/70 px-3 py-2"
+              data-testid="compare-review-focus"
+            >
+              <h4 class="text-[10px] font-semibold uppercase tracking-wide text-stone-500">
+                Review focus
+              </h4>
+              <div class="mt-2 space-y-1.5">
+                {#each reviewInsights as insight (insight.label)}
+                  <div class="flex items-start justify-between gap-2">
+                    <div class="min-w-0">
+                      <p class="truncate text-xs font-medium text-stone-700">{insight.label}</p>
+                      <p class="text-[11px] text-stone-500">{insight.detail}</p>
+                    </div>
+                    <div class="flex shrink-0 flex-wrap justify-end gap-1">
+                      <span class={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold
                                     uppercase tracking-wide ${severityBadgeClass(insight.severity)}`}>
                         {insight.severity}
                       </span>
+                      <span class={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold
+                                    uppercase tracking-wide ${classificationBadgeClass(insight.classification)}`}
+                            data-testid="review-focus-classification-badge">
+                        {DIFF_CLASSIFICATION_LABELS[insight.classification]}
+                      </span>
                     </div>
-                  {/each}
-                </div>
+                  </div>
+                {/each}
               </div>
-            {/if}
+            </div>
+          {/if}
 
+          {#if allDiffs.length > 0}
             <div class="space-y-1.5" data-testid="compare-order-mode">
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <p class="text-[10px] font-semibold uppercase tracking-wide text-stone-400">Row order</p>

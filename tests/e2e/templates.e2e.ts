@@ -219,6 +219,8 @@ test('a schema-only change between snapshots is surfaced, not hidden as "No chan
   // The schema change must be visible — and the panel must NOT claim "No changes".
   await expect(appPage.getByTestId('schema-changes')).toBeVisible()
   await expect(appPage.getByTestId('schema-change-row').filter({ hasText: 'vendor' })).toBeVisible()
+  await expect(appPage.getByTestId('compare-review-focus')).toContainText('1 schema change')
+  await expect(appPage.getByTestId('review-focus-classification-badge')).toHaveText('Schema')
   await expect(appPage.getByTestId('snapshot-diff-list')).not.toContainText('No changes')
 })
 

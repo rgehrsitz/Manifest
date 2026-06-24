@@ -24,7 +24,8 @@
             "path": [
               "Diff Lab"
             ]
-          }
+          },
+          "classification": "structural"
         },
         {
           "nodeId": "<id:3>",
@@ -39,7 +40,8 @@
             "path": [
               "Diff Lab"
             ]
-          }
+          },
+          "classification": "structural"
         },
         {
           "nodeId": "<id:5>",
@@ -61,7 +63,8 @@
             "path": [
               "Diff Lab"
             ]
-          }
+          },
+          "classification": "structural"
         },
         {
           "nodeId": "<id:6>",
@@ -76,7 +79,8 @@
             "path": [
               "Diff Lab"
             ]
-          }
+          },
+          "classification": "data"
         },
         {
           "nodeId": "<id:7>",
@@ -96,7 +100,8 @@
             "propertyImportance": {
               "note": "Medium"
             }
-          }
+          },
+          "classification": "data"
         },
         {
           "nodeId": "<id:8>",
@@ -111,7 +116,8 @@
             "path": [
               "Diff Lab"
             ]
-          }
+          },
+          "classification": "schema"
         },
         {
           "nodeId": "<id:4>",
@@ -126,7 +132,8 @@
             "path": [
               "Diff Lab"
             ]
-          }
+          },
+          "classification": "ordering"
         },
         {
           "nodeId": "<id:8>",
@@ -141,7 +148,8 @@
             "path": [
               "Diff Lab"
             ]
-          }
+          },
+          "classification": "ordering"
         },
         {
           "nodeId": "<id:9>",
@@ -156,7 +164,8 @@
             "path": [
               "Diff Lab"
             ]
-          }
+          },
+          "classification": "ordering"
         }
       ]
     }

@@ -116,6 +116,7 @@ function makeDiff(
   return {
     nodeId: 'rack',
     changeType: 'property-changed',
+    classification: 'data',
     severity: 'Medium',
     oldValue,
     newValue,
