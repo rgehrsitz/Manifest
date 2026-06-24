@@ -318,6 +318,13 @@ of user impact caused that priority?"
 independently. In the briefing view, the node's highest severity determines
 its grouping position.
 
+The renderer's Review Focus panel builds grouped findings over this flat diff
+list: removal cascades, broken references by removed target, repeated property
+updates, schema changes, branch concentrations, high-priority rollups, and
+display-only changes. Clicking a finding filters the existing row list to the
+contributing rows; schema-only findings point at the schema section instead of
+inventing node rows.
+
 ### Diff engine pipeline
 
 ```

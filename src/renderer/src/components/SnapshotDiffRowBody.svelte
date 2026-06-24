@@ -16,11 +16,12 @@
 
   interface Props {
     diff: DiffEntry
+    forceOpenImpact?: boolean
   }
 
   const MAX_IMPACT_ITEMS = 5
 
-  let { diff }: Props = $props()
+  let { diff, forceOpenImpact = false }: Props = $props()
 
   const removalImpact = $derived(
     diff.changeType === 'removed' ? diff.context.removalImpact : undefined
@@ -81,6 +82,7 @@
 
 {#if removalImpact && impactCount > 0}
   <details
+    open={forceOpenImpact}
     class="mt-2 rounded bg-white/80 px-2 py-2 ring-1 ring-black/5"
     data-no-row-select="true"
     data-testid="removed-impact-details"

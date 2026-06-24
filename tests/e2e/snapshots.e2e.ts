@@ -202,6 +202,16 @@ test('surfaces removed nodes in snapshot compare mode', async ({ appPage, electr
   await expect(rackRow).toContainText('Rack A')
   await expect(appPage.getByTestId('removed-impact-details')).toHaveCount(1)
   await expect(rackRow.getByTestId('removed-impact-details')).toBeVisible()
+
+  const cascadeFocus = appPage.getByTestId('review-focus-item').filter({ hasText: '1 removal includes 2 descendants' })
+  await cascadeFocus.click()
+  await expect(cascadeFocus).toHaveAttribute('aria-pressed', 'true')
+  await expect(appPage.getByTestId('compare-focus-summary')).toContainText('Showing 3 contributing node rows.')
+  await expect(appPage.getByTestId('snapshot-diff-row')).toHaveCount(3)
+  await expect(rackRow.getByTestId('removed-impact-details')).toHaveJSProperty('open', true)
+  await appPage.getByTestId('compare-focus-clear').click()
+  await expect(cascadeFocus).toHaveAttribute('aria-pressed', 'false')
+
   await rackRow.locator('[data-testid="removed-impact-details"] summary').click()
   await expect(rackRow.getByTestId('removed-impact-descendants')).toContainText('Server 1')
   await expect(rackRow.getByTestId('removed-impact-descendants')).toContainText('Disk 1')
@@ -313,6 +323,19 @@ test('surfaces move and rename snapshot diffs for the same node', async ({ appPa
   await appPage.getByTestId('compare-order-priority').click()
   await expect(appPage.getByTestId('compare-order-document')).toHaveAttribute('aria-pressed', 'false')
   await expect(appPage.getByTestId('compare-order-priority')).toHaveAttribute('aria-pressed', 'true')
+
+  const highPriorityFocus = appPage.getByTestId('review-focus-item').filter({ hasText: '1 high-priority change' })
+  await highPriorityFocus.press('Enter')
+  await expect(highPriorityFocus).toHaveAttribute('aria-pressed', 'true')
+  await expect(appPage.getByTestId('compare-filter-all')).toHaveAttribute('aria-pressed', 'true')
+  await expect(appPage.getByTestId('compare-focus-summary')).toContainText('Showing 1 contributing node row.')
+  await expect(movedRow).toBeVisible()
+  await expect(renamedRow).toHaveCount(0)
+  await appPage.getByTestId('compare-focus-clear').click()
+  await expect(highPriorityFocus).toHaveAttribute('aria-pressed', 'false')
+  await expect(movedRow).toBeVisible()
+  await expect(renamedRow).toBeVisible()
+
   const priorityRows = await appPage.getByTestId('snapshot-diff-row').evaluateAll(rows =>
     rows.map(row => row.textContent ?? '')
   )

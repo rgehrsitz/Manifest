@@ -221,6 +221,13 @@ test('a schema-only change between snapshots is surfaced, not hidden as "No chan
   await expect(appPage.getByTestId('schema-change-row').filter({ hasText: 'vendor' })).toBeVisible()
   await expect(appPage.getByTestId('compare-review-focus')).toContainText('1 schema change')
   await expect(appPage.getByTestId('review-focus-classification-badge')).toHaveText('Schema')
+  const schemaFocus = appPage.getByTestId('review-focus-item').filter({ hasText: '1 schema change' })
+  await schemaFocus.click()
+  await expect(schemaFocus).toHaveAttribute('aria-pressed', 'true')
+  await expect(appPage.getByTestId('compare-focus-summary')).toContainText('This finding is about schema changes above.')
+  await expect(appPage.getByTestId('schema-changes')).toBeVisible()
+  await appPage.getByTestId('compare-focus-clear').click()
+  await expect(schemaFocus).toHaveAttribute('aria-pressed', 'false')
   await expect(appPage.getByTestId('snapshot-diff-list')).not.toContainText('No changes')
 })
 
