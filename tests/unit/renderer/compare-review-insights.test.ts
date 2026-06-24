@@ -3,6 +3,7 @@ import {
   buildReviewInsights,
   filterDiffsByReviewInsight,
   focusMatchesDiff,
+  type ReviewInsight,
 } from '../../../src/renderer/src/lib/compare-review-insights'
 import type { DiffEntry } from '../../../src/shared/types'
 
@@ -239,14 +240,14 @@ describe('buildReviewInsights', () => {
       diff({ nodeId: 'rack-b', changeType: 'removed', classification: 'structural', severity: 'High' }),
       diff({ nodeId: 'device-a', changeType: 'property-changed', classification: 'data', severity: 'Medium' }),
     ]
-    const insight = {
+    const insight: ReviewInsight = {
       id: 'structural-removal-cascade',
       label: 'Cascade',
       detail: 'Structural impact.',
       severity: 'High',
       classification: 'structural',
       match: { nodeIds: ['rack-a', 'device-a'] },
-    } as const
+    }
 
     expect(filterDiffsByReviewInsight(diffs, null)).toBe(diffs)
     expect(filterDiffsByReviewInsight(diffs, insight).map(diff => diff.nodeId)).toEqual(['rack-a', 'device-a'])
