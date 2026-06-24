@@ -94,4 +94,34 @@ describe('buildReviewInsights', () => {
   it('returns no insights when there are no node diffs', () => {
     expect(buildReviewInsights([])).toEqual([])
   })
+
+  it('does not inflate cascade impact when nested removed rows have no descendant impact', () => {
+    const insights = buildReviewInsights([
+      diff({
+        nodeId: 'rack-a',
+        changeType: 'removed',
+        severity: 'High',
+        context: {
+          nodeName: 'Rack A',
+          parentName: 'Lab',
+          path: ['Lab'],
+          removalImpact: {
+            descendants: [
+              { id: 'server-1', name: 'Server 1', path: ['Lab', 'Rack A'] },
+              { id: 'disk-1', name: 'Disk 1', path: ['Lab', 'Rack A', 'Server 1'] },
+            ],
+            incomingReferences: [],
+          },
+        },
+      }),
+      diff({ nodeId: 'server-1', changeType: 'removed', severity: 'High' }),
+      diff({ nodeId: 'disk-1', changeType: 'removed', severity: 'High' }),
+    ])
+
+    expect(insights).toContainEqual({
+      label: '1 removal includes 2 descendants',
+      detail: 'Review cascade impact before treating child removals individually.',
+      severity: 'High',
+    })
+  })
 })

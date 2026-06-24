@@ -290,4 +290,73 @@ describe('diffProjects', () => {
       { nodeId: 'controller', nodeName: 'Controller', path: ['Root'], fieldKey: 'target' },
     ])
   })
+
+  it('attaches descendant impact only to top-level removed ancestors', () => {
+    const before = makeProject([
+      ...baseNodes(),
+      {
+        id: 'server-1',
+        parentId: 'rack-a',
+        name: 'Server 1',
+        order: 0,
+        properties: {},
+        created: '2026-01-01T00:00:00.000Z',
+        modified: '2026-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'disk-1',
+        parentId: 'server-1',
+        name: 'Disk 1',
+        order: 0,
+        properties: {},
+        created: '2026-01-01T00:00:00.000Z',
+        modified: '2026-01-01T00:00:00.000Z',
+      },
+    ])
+    const after = makeProject(before.nodes.filter(node => (
+      node.id !== 'rack-a' &&
+      node.id !== 'server-1' &&
+      node.id !== 'disk-1'
+    )))
+
+    const diffs = diffProjects(before, after)
+    const rack = diffs.find(diff => diff.nodeId === 'rack-a')!
+    const server = diffs.find(diff => diff.nodeId === 'server-1')!
+    const disk = diffs.find(diff => diff.nodeId === 'disk-1')!
+
+    expect(rack.context.removalImpact?.descendants).toEqual([
+      { id: 'server-1', name: 'Server 1', path: ['Root', 'Rack A'] },
+      { id: 'disk-1', name: 'Disk 1', path: ['Root', 'Rack A', 'Server 1'] },
+    ])
+    expect(server.context.removalImpact?.descendants).toBeUndefined()
+    expect(disk.context.removalImpact).toBeUndefined()
+  })
+
+  it('ignores incoming references from nodes that are removed in the same compare', () => {
+    const before = {
+      ...makeProject([
+        ...baseNodes(),
+        {
+          id: 'child-controller',
+          parentId: 'rack-a',
+          name: 'Child Controller',
+          order: 0,
+          templateId: 'controller',
+          properties: { target: 'rack-a' },
+          created: '2026-01-01T00:00:00.000Z',
+          modified: '2026-01-01T00:00:00.000Z',
+        },
+      ]),
+      templates: { controller: { label: 'Controller', fields: { target: { type: 'reference' } } } },
+    }
+    const after = makeProject(before.nodes.filter(node => (
+      node.id !== 'rack-a' &&
+      node.id !== 'child-controller'
+    )), before.templates)
+
+    const removed = diffProjects(before, after).find(diff => diff.nodeId === 'rack-a')!
+
+    expect(removed.context.removalImpact?.incomingReferences).toEqual([])
+    expect(removed.severityReason).toBe('High: removed node affected 1 descendant.')
+  })
 })
