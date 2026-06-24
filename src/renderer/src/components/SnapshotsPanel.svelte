@@ -10,6 +10,7 @@
     describeTemplateChange,
   } from '../lib/diff-format'
   import { buildReviewInsights } from '../lib/compare-review-insights'
+  import { orderCompareDiffs, type CompareOrderMode } from '../lib/compare-diff-order'
   import SnapshotDiffRowBody from './SnapshotDiffRowBody.svelte'
 
   interface Props {
@@ -99,6 +100,7 @@
   }
 
   let activeSeverityFilter = $state<SeverityFilter>('All')
+  let activeCompareOrder = $state<CompareOrderMode>('document')
   let activeCompareKey = $state('')
   let collapsedChangeGroups = $state<Set<ChangeGroupId>>(new Set())
 
@@ -116,6 +118,7 @@
     if (key !== activeCompareKey) {
       activeCompareKey = key
       activeSeverityFilter = 'All'
+      activeCompareOrder = 'document'
       collapsedChangeGroups = new Set()
     }
   })
@@ -150,7 +153,10 @@
         return {
           id,
           label,
-          entries: visibleDiffs.filter(e => changeGroupFor(e) === id),
+          entries: orderCompareDiffs(
+            visibleDiffs.filter(e => changeGroupFor(e) === id),
+            activeCompareOrder
+          ),
           total: allDiffs.filter(e => changeGroupFor(e) === id).length,
         }
       })
@@ -173,6 +179,11 @@
     if (severity === 'Medium') return 'border-amber-200 bg-amber-50 text-amber-700'
     if (severity === 'Low') return 'border-slate-200 bg-slate-100 text-slate-600'
     return 'border-stone-700 bg-stone-800 text-white'
+  }
+
+  function orderModeClass(mode: CompareOrderMode): string {
+    if (mode === activeCompareOrder) return 'border-stone-700 bg-stone-800 text-white'
+    return 'border-stone-200 bg-white text-stone-500 hover:bg-stone-50'
   }
 
   function changeGroupFor(diff: DiffEntry): ChangeGroupId {
@@ -486,6 +497,34 @@
                 </div>
               </div>
             {/if}
+
+            <div class="space-y-1.5" data-testid="compare-order-mode">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <p class="text-[10px] font-semibold uppercase tracking-wide text-stone-400">Row order</p>
+                <div class="flex rounded-full border border-stone-200 bg-white p-0.5">
+                  <button
+                    type="button"
+                    aria-pressed={activeCompareOrder === 'document'}
+                    onclick={() => { activeCompareOrder = 'document' }}
+                    class={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase
+                            tracking-wide transition-colors cursor-default ${orderModeClass('document')}`}
+                    data-testid="compare-order-document"
+                  >
+                    Document
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={activeCompareOrder === 'priority'}
+                    onclick={() => { activeCompareOrder = 'priority' }}
+                    class={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase
+                            tracking-wide transition-colors cursor-default ${orderModeClass('priority')}`}
+                    data-testid="compare-order-priority"
+                  >
+                    Priority
+                  </button>
+                </div>
+              </div>
+            </div>
 
             <div class="space-y-1.5" data-testid="compare-severity-filter">
               <div class="flex flex-wrap gap-1.5">
