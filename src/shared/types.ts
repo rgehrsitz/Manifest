@@ -34,6 +34,13 @@ export type PropertyType =
 
 export type Severity = 'High' | 'Medium' | 'Low'
 
+export type DiffClassification =
+  | 'structural'
+  | 'dependency'
+  | 'data'
+  | 'schema'
+  | 'ordering'
+
 export interface TemplateField {
   type: PropertyType
   label?: string
@@ -248,6 +255,7 @@ export interface DiffEntry {
   nodeId: string
   changeType: ChangeType
   severity: Severity
+  classification: DiffClassification
   severityReason?: string
   oldValue?: unknown
   newValue?: unknown

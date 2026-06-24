@@ -6,6 +6,7 @@ function diff(overrides: Partial<DiffEntry> & Pick<DiffEntry, 'changeType'>): Di
   return {
     nodeId: 'node',
     changeType: overrides.changeType,
+    classification: 'data',
     severity: 'Medium',
     context: {
       nodeName: 'Node',
@@ -22,6 +23,7 @@ describe('buildReviewInsights', () => {
       diff({
         nodeId: 'rack-a',
         changeType: 'removed',
+        classification: 'dependency',
         severity: 'High',
         context: {
           nodeName: 'Rack A',
@@ -38,20 +40,23 @@ describe('buildReviewInsights', () => {
           },
         },
       }),
-      diff({ nodeId: 'server-1', changeType: 'removed', severity: 'High' }),
+      diff({ nodeId: 'server-1', changeType: 'removed', classification: 'structural', severity: 'High' }),
     ])
 
     expect(insights[0]).toMatchObject({
       label: '1 broken incoming reference',
-      detail: '1 removed node still had dependents.',
+      detail: 'Dependency risk: 1 removed node still had dependents.',
       severity: 'High',
+      classification: 'dependency',
     })
     expect(insights[1]).toMatchObject({
       label: '1 removal includes 2 descendants',
-      detail: 'Review cascade impact before treating child removals individually.',
+      detail: 'Structural impact: review cascade impact before treating child removals individually.',
       severity: 'High',
+      classification: 'structural',
     })
     expect(insights[2].label).toBe('2 high-priority changes')
+    expect(insights[2].detail).toContain('Priority mix:')
   })
 
   it('keeps repeated property and branch concentration insights', () => {
@@ -59,6 +64,7 @@ describe('buildReviewInsights', () => {
       diff({
         nodeId: 'device-a',
         changeType: 'property-changed',
+        classification: 'data',
         oldValue: { firmware: '1.0' },
         newValue: { firmware: '2.0' },
         context: { nodeName: 'Device A', parentName: 'Rack A', path: ['Lab', 'Rack A'] },
@@ -66,6 +72,7 @@ describe('buildReviewInsights', () => {
       diff({
         nodeId: 'device-b',
         changeType: 'property-changed',
+        classification: 'data',
         oldValue: { firmware: '1.0' },
         newValue: { firmware: '2.0' },
         context: { nodeName: 'Device B', parentName: 'Rack A', path: ['Lab', 'Rack A'] },
@@ -73,6 +80,7 @@ describe('buildReviewInsights', () => {
       diff({
         nodeId: 'device-c',
         changeType: 'renamed',
+        classification: 'data',
         oldValue: 'Device C',
         newValue: 'Device Gamma',
         context: { nodeName: 'Device Gamma', parentName: 'Rack A', path: ['Lab', 'Rack A'] },
@@ -81,13 +89,15 @@ describe('buildReviewInsights', () => {
 
     expect(insights).toContainEqual({
       label: '2 changes to "firmware"',
-      detail: 'Likely a repeated field update.',
+      detail: 'Data pattern: likely a repeated field update.',
       severity: 'Medium',
+      classification: 'data',
     })
     expect(insights).toContainEqual({
       label: '3 changes under Lab / Rack A',
-      detail: 'This branch carries most of the activity.',
+      detail: 'Structural concentration: this branch carries most of the activity.',
       severity: 'Medium',
+      classification: 'structural',
     })
   })
 
@@ -100,6 +110,7 @@ describe('buildReviewInsights', () => {
       diff({
         nodeId: 'rack-a',
         changeType: 'removed',
+        classification: 'structural',
         severity: 'High',
         context: {
           nodeName: 'Rack A',
@@ -114,14 +125,41 @@ describe('buildReviewInsights', () => {
           },
         },
       }),
-      diff({ nodeId: 'server-1', changeType: 'removed', severity: 'High' }),
-      diff({ nodeId: 'disk-1', changeType: 'removed', severity: 'High' }),
+      diff({ nodeId: 'server-1', changeType: 'removed', classification: 'structural', severity: 'High' }),
+      diff({ nodeId: 'disk-1', changeType: 'removed', classification: 'structural', severity: 'High' }),
     ])
 
     expect(insights).toContainEqual({
       label: '1 removal includes 2 descendants',
-      detail: 'Review cascade impact before treating child removals individually.',
+      detail: 'Structural impact: review cascade impact before treating child removals individually.',
       severity: 'High',
+      classification: 'structural',
     })
+  })
+
+  it('surfaces schema changes as review focus items', () => {
+    expect(buildReviewInsights([], [
+      { templateId: 'device', templateLabel: 'Device', changeType: 'field-removed', fieldKey: 'firmware' },
+    ])).toContainEqual({
+      label: '1 schema change',
+      detail: 'Schema impact: template or field definitions changed.',
+      severity: 'High',
+      classification: 'schema',
+    })
+  })
+
+  it('adds a low-priority display-only rollup after higher-risk insights', () => {
+    const insights = buildReviewInsights([
+      diff({ nodeId: 'rack-a', changeType: 'order-changed', classification: 'ordering', severity: 'Low' }),
+    ])
+
+    expect(insights).toEqual([
+      {
+        label: '1 display-only change',
+        detail: 'Ordering and low-importance data changes can usually be skimmed after higher-risk findings.',
+        severity: 'Low',
+        classification: 'ordering',
+      },
+    ])
   })
 })

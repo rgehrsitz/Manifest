@@ -5,14 +5,26 @@
 // Only the renderer-specific pieces (Tailwind class maps, the UI's value/property
 // rendering) are defined locally.
 
-import type { DiffEntry } from '../../../shared/types'
+import type { DiffClassification, DiffEntry } from '../../../shared/types'
 
 export {
   formatChangeType,
   formatTemplateRef,
   formatPath,
   describeTemplateChange,
+  DIFF_CLASSIFICATION_LABELS,
+  DIFF_CLASSIFICATION_WHY,
 } from '../../../shared/diff-format'
+
+export function classificationBadgeClass(classification: DiffClassification): string {
+  switch (classification) {
+    case 'dependency': return 'bg-red-100 text-red-700'
+    case 'structural': return 'bg-violet-100 text-violet-700'
+    case 'schema': return 'bg-indigo-100 text-indigo-700'
+    case 'data': return 'bg-emerald-100 text-emerald-700'
+    case 'ordering': return 'bg-stone-200 text-stone-600'
+  }
+}
 
 export function severityClass(severity: DiffEntry['severity']): string {
   switch (severity) {

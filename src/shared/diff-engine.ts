@@ -8,6 +8,7 @@ import type {
   Severity,
 } from './types'
 import { templateFields, templateLabel } from './validation'
+import { classifyDiff } from './diff-format'
 
 const SEVERITY_WEIGHT = {
   High: 0,
@@ -26,6 +27,7 @@ const CHANGE_WEIGHT = {
 } as const
 
 type NodeMap = Map<string, ManifestNode>
+type DraftDiffEntry = Omit<DiffEntry, 'classification'>
 type RemovedDescendantImpact = NonNullable<DiffEntry['context']['removalImpact']>['descendants'][number]
 type IncomingReferenceImpact = NonNullable<DiffEntry['context']['removalImpact']>['incomingReferences'][number]
 
@@ -254,7 +256,7 @@ export function diffProjects(projectA: Project, projectB: Project): DiffEntry[] 
   const incomingReferencesB = buildIncomingReferenceImpact(projectB, nodesB)
   const ids = new Set([...nodesA.keys(), ...nodesB.keys()])
   const removedIds = new Set([...nodesA.keys()].filter(id => !nodesB.has(id)))
-  const diffs: DiffEntry[] = []
+  const diffs: DraftDiffEntry[] = []
 
   for (const id of ids) {
     const nodeA = nodesA.get(id)
@@ -370,7 +372,9 @@ export function diffProjects(projectA: Project, projectB: Project): DiffEntry[] 
     }
   }
 
-  return diffs.sort(compareEntries)
+  return diffs
+    .map(diff => ({ ...diff, classification: classifyDiff(diff) }))
+    .sort(compareEntries)
 }
 
 // ─── Template / schema diffs ────────────────────────────────────────────────────

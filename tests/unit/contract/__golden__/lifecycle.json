@@ -547,7 +547,8 @@
             "path": [
               "Contract Lab"
             ]
-          }
+          },
+          "classification": "structural"
         },
         {
           "nodeId": "<id:4>",
@@ -563,7 +564,8 @@
               "Contract Lab",
               "Rack B"
             ]
-          }
+          },
+          "classification": "structural"
         }
       ]
     }
@@ -626,7 +628,8 @@
                   "path": [
                     "Contract Lab"
                   ]
-                }
+                },
+                "classification": "structural"
               }
             ]
           },
@@ -662,7 +665,8 @@
                     "Contract Lab",
                     "Rack B"
                   ]
-                }
+                },
+                "classification": "structural"
               }
             ]
           },

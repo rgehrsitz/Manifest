@@ -57,11 +57,13 @@ describe('diffProjects', () => {
     expect(added).toHaveLength(1)
     expect(added[0].changeType).toBe('added')
     expect(added[0].severity).toBe('High')
+    expect(added[0].classification).toBe('structural')
 
     const removed = diffProjects(after, before)
     expect(removed).toHaveLength(1)
     expect(removed[0].changeType).toBe('removed')
     expect(removed[0].severity).toBe('High')
+    expect(removed[0].classification).toBe('structural')
     expect(removed[0].severityReason).toContain('removed')
     expect(removed[0].context.removalImpact).toBeUndefined()
   })
@@ -157,6 +159,7 @@ describe('diffProjects', () => {
     expect(diffs).toHaveLength(1)
     expect(diffs[0].changeType).toBe('moved')
     expect(diffs[0].severity).toBe('High')
+    expect(diffs[0].classification).toBe('structural')
     expect(diffs[0].context.parentName).toBe('Rack B')
     expect(diffs[0].context.path).toEqual(['Root', 'Rack B'])
   })
@@ -205,9 +208,57 @@ describe('diffProjects', () => {
     }
 
     const diff = diffProjects(before, after).find(d => d.changeType === 'property-changed')!
+    expect(diff.classification).toBe('dependency')
     expect(diff.context.propertyValueLabels?.controller).toEqual({
       old: 'Power Supply A (supply-alpha-id)',
       new: 'Power Supply B (supply-bravo-id)',
+    })
+  })
+
+  it('keeps data-only property changes as data when another reference field is unchanged', () => {
+    const before = {
+      ...makeProject([
+        ...baseNodes(),
+        {
+          id: 'supply-alpha-id',
+          parentId: 'root',
+          name: 'Power Supply A',
+          order: 1,
+          properties: {},
+          created: '2026-01-01T00:00:00.000Z',
+          modified: '2026-01-01T00:00:00.000Z',
+        },
+        {
+          id: 'chamber',
+          parentId: 'root',
+          name: 'Chamber',
+          order: 2,
+          templateId: 'asset',
+          properties: { controller: 'supply-alpha-id', status: 'ready' },
+          created: '2026-01-01T00:00:00.000Z',
+          modified: '2026-01-01T00:00:00.000Z',
+        },
+      ]),
+      templates: {
+        asset: {
+          label: 'Asset',
+          fields: { controller: { type: 'reference' }, status: { type: 'string' } },
+        },
+      },
+    }
+    const after = {
+      ...before,
+      nodes: before.nodes.map(n => n.id === 'chamber'
+        ? { ...n, properties: { controller: 'supply-alpha-id', status: 'busy' } }
+        : n
+      ),
+    }
+
+    const diff = diffProjects(before, after).find(d => d.changeType === 'property-changed')!
+    expect(diff.classification).toBe('data')
+    expect(diff.context.propertyValueLabels?.controller).toEqual({
+      old: 'Power Supply A (supply-alpha-id)',
+      new: 'Power Supply A (supply-alpha-id)',
     })
   })
 
@@ -243,11 +294,13 @@ describe('diffProjects', () => {
 
     const firmware = diffProjects(before, afterFirmware).find(d => d.changeType === 'property-changed')!
     expect(firmware.severity).toBe('High')
+    expect(firmware.classification).toBe('data')
     expect(firmware.severityReason).toBe('High: important field "firmware" changed.')
     expect(firmware.context.propertyImportance).toEqual({ firmware: 'High' })
 
     const notes = diffProjects(before, afterNotes).find(d => d.changeType === 'property-changed')!
     expect(notes.severity).toBe('Low')
+    expect(notes.classification).toBe('data')
     expect(notes.severityReason).toBe('Low: only low-importance field "notes" changed.')
     expect(notes.context.propertyImportance).toEqual({ notes: 'Low' })
   })
@@ -281,6 +334,7 @@ describe('diffProjects', () => {
     const after = makeProject(before.nodes.filter(node => node.id !== 'rack-a' && node.id !== 'child'), before.templates)
 
     const removed = diffProjects(before, after).find(d => d.nodeId === 'rack-a')!
+    expect(removed.classification).toBe('dependency')
     expect(removed.severityReason).toContain('1 descendant')
     expect(removed.severityReason).toContain('1 incoming reference')
     expect(removed.context.removalImpact?.descendants).toEqual([
@@ -356,7 +410,53 @@ describe('diffProjects', () => {
 
     const removed = diffProjects(before, after).find(diff => diff.nodeId === 'rack-a')!
 
+    expect(removed.classification).toBe('structural')
     expect(removed.context.removalImpact?.incomingReferences).toEqual([])
     expect(removed.severityReason).toBe('High: removed node affected 1 descendant.')
+  })
+
+  it('classifies rename, template binding, and order changes by user-impact category', () => {
+    const before = makeProject([
+      ...baseNodes(),
+      {
+        id: 'rack-b',
+        parentId: 'root',
+        name: 'Rack B',
+        order: 1,
+        templateId: 'rack-old',
+        properties: {},
+        created: '2026-01-01T00:00:00.000Z',
+        modified: '2026-01-01T00:00:00.000Z',
+      },
+    ], {
+      'rack-old': { label: 'Rack Old', fields: {} },
+      'rack-new': { label: 'Rack New', fields: {} },
+    })
+    const after = makeProject([
+      {
+        ...baseNodes()[0],
+      },
+      {
+        ...baseNodes()[1],
+        order: 1,
+      },
+      {
+        id: 'rack-b',
+        parentId: 'root',
+        name: 'Rack Bravo',
+        order: 0,
+        templateId: 'rack-new',
+        properties: {},
+        created: '2026-01-01T00:00:00.000Z',
+        modified: '2026-01-01T00:00:00.000Z',
+      },
+    ], before.templates)
+
+    const diffs = diffProjects(before, after)
+
+    expect(diffs.find(diff => diff.changeType === 'renamed')?.classification).toBe('data')
+    expect(diffs.find(diff => diff.changeType === 'template-changed')?.classification).toBe('schema')
+    expect(diffs.filter(diff => diff.changeType === 'order-changed').map(diff => diff.classification))
+      .toEqual(['ordering', 'ordering'])
   })
 })

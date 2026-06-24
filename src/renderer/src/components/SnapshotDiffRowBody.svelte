@@ -9,6 +9,9 @@
     formatValue,
     formatTemplateRef,
     describePropertyChange,
+    classificationBadgeClass,
+    DIFF_CLASSIFICATION_LABELS,
+    DIFF_CLASSIFICATION_WHY,
   } from '../lib/diff-format'
 
   interface Props {
@@ -45,6 +48,8 @@
     ].filter(Boolean)
     return parts.join(', ')
   })
+  const classificationLabel = $derived(DIFF_CLASSIFICATION_LABELS[diff.classification])
+  const classificationWhy = $derived(DIFF_CLASSIFICATION_WHY[diff.classification])
 </script>
 
 <div class="flex items-start justify-between gap-2" data-testid="snapshot-diff-row-header">
@@ -54,15 +59,23 @@
       {formatPath(diff.context.path, diff.context.nodeName)}
     </p>
   </div>
-  <span class={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold
-                uppercase tracking-wide ${severityBadgeClass(diff.severity)}`}>
-    {diff.severity}
-  </span>
+  <div class="flex shrink-0 flex-wrap justify-end gap-1">
+    <span class={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold
+                  uppercase tracking-wide ${classificationBadgeClass(diff.classification)}`}
+          data-testid="diff-classification-badge">
+      {classificationLabel}
+    </span>
+    <span class={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold
+                  uppercase tracking-wide ${severityBadgeClass(diff.severity)}`}>
+      {diff.severity}
+    </span>
+  </div>
 </div>
 
 {#if diff.severityReason}
   <p class="mt-2 text-[11px] leading-snug text-stone-600" data-testid="diff-severity-reason">
     {diff.severityReason}
+    <span class="text-stone-400" data-testid="diff-classification-why"> - {classificationWhy}</span>
   </p>
 {/if}
 

@@ -298,17 +298,20 @@ a product UX that never exposes Git directly.
 
 Compares two manifest.json snapshots node-by-node using stable `id` as the join key:
 
-| Change type | Detection | Severity |
-|---|---|---|
-| Node added | id exists in B but not A | High |
-| Node removed | id exists in A but not B | High |
-| Node moved | same id, different parentId | High |
-| Node renamed | same id, different name | Medium |
-| Property changed | same id, different property value | Medium |
-| Order changed | same id + parentId, different order | Low |
+| Change type | Detection | Severity | Classification |
+|---|---|---|---|
+| Node added | id exists in B but not A | High | Structural |
+| Node removed | id exists in A but not B | High | Structural, or Dependency when surviving references still point at it |
+| Node moved | same id, different parentId | High | Structural |
+| Node renamed | same id, different name | Medium | Data |
+| Property changed | same id, different property value | Field importance | Data, or Dependency for reference-field changes |
+| Template binding changed | same id, different templateId | Medium | Schema |
+| Order changed | same id + parentId, different order | Low | Ordering |
 
 Output: a list of `DiffEntry` objects, each with: nodeId, changeType, severity,
-oldValue, newValue, and context (parent name + path).
+classification, oldValue, newValue, and context (parent name + path). Severity
+answers "how urgently should I review this?"; classification answers "what kind
+of user impact caused that priority?"
 
 **Multi-change rule:** A single node can produce multiple `DiffEntry` records
 (e.g., moved + renamed + property changed). Each change type is checked

@@ -9,7 +9,50 @@
 // distinct. report.ts owns that rendering; this module covers the parts whose
 // semantics are identical in both consumers.
 
-import type { DiffEntry, TemplateField, TemplateDiffEntry } from './types'
+import type { DiffClassification, DiffEntry, TemplateField, TemplateDiffEntry } from './types'
+
+export const DIFF_CLASSIFICATION_LABELS: Record<DiffClassification, string> = {
+  structural: 'Structural',
+  dependency: 'Dependency',
+  data: 'Data',
+  schema: 'Schema',
+  ordering: 'Ordering',
+}
+
+export const DIFF_CLASSIFICATION_WHY: Record<DiffClassification, string> = {
+  structural: 'changes where nodes exist in the hierarchy',
+  dependency: 'changes references between nodes',
+  data: 'changes recorded names or property values',
+  schema: 'changes the template that types this node',
+  ordering: 'affects display order only',
+}
+
+type ClassifiableDiff = Pick<DiffEntry, 'changeType' | 'context'>
+
+export function classifyDiff(diff: ClassifiableDiff): DiffClassification {
+  switch (diff.changeType) {
+    case 'added':
+    case 'moved':
+      return 'structural'
+    case 'removed':
+      return (diff.context.removalImpact?.incomingReferences.length ?? 0) > 0
+        ? 'dependency'
+        : 'structural'
+    case 'property-changed':
+      return Object.values(diff.context.propertyValueLabels ?? {}).some(label => label.old !== label.new)
+        ? 'dependency'
+        : 'data'
+    case 'renamed':
+      return 'data'
+    case 'template-changed':
+      return 'schema'
+    case 'order-changed':
+      return 'ordering'
+  }
+
+  const exhaustive: never = diff.changeType
+  return exhaustive
+}
 
 export function formatChangeType(changeType: DiffEntry['changeType']): string {
   switch (changeType) {
