@@ -11,7 +11,7 @@
   } from '../lib/diff-format'
   import { buildReviewInsights } from '../lib/compare-review-insights'
   import { orderCompareDiffs, type CompareOrderMode } from '../lib/compare-diff-order'
-  import { diffNodeIdFromSelection } from '../lib/compare-highlight'
+  import { diffNodeIdCandidatesFromSelection } from '../lib/compare-highlight'
   import SnapshotDiffRowBody from './SnapshotDiffRowBody.svelte'
 
   interface Props {
@@ -85,10 +85,10 @@
   // Scroll highlighted diff card into view whenever the selection changes.
   $effect(() => {
     if (!highlightedNodeId || !scrollEl) return
-    const diffNodeId = diffNodeIdFromSelection(highlightedNodeId)
-    const el = Array
-      .from(scrollEl.querySelectorAll<HTMLElement>('[data-node-id]'))
-      .find(row => row.dataset.nodeId === diffNodeId)
+    const rows = Array.from(scrollEl.querySelectorAll<HTMLElement>('[data-node-id]'))
+    const el = diffNodeIdCandidatesFromSelection(highlightedNodeId)
+      .map(candidate => rows.find(row => row.dataset.nodeId === candidate))
+      .find(row => row !== undefined)
     el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   })
 

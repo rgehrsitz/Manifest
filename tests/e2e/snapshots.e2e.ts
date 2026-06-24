@@ -314,9 +314,11 @@ test('surfaces move and rename snapshot diffs for the same node', async ({ appPa
   const priorityRows = await appPage.getByTestId('snapshot-diff-row').evaluateAll(rows =>
     rows.map(row => row.textContent ?? '')
   )
-  expect(priorityRows.findIndex(text => text.includes('Moved'))).toBeLessThan(
-    priorityRows.findIndex(text => text.includes('Renamed'))
-  )
+  const movedIndex = priorityRows.findIndex(text => text.includes('Moved'))
+  const renamedIndex = priorityRows.findIndex(text => text.includes('Renamed'))
+  expect(movedIndex).toBeGreaterThanOrEqual(0)
+  expect(renamedIndex).toBeGreaterThanOrEqual(0)
+  expect(movedIndex).toBeLessThan(renamedIndex)
   await expect(appPage.getByTestId('compare-change-group-modified')).toBeVisible()
   await expect(appPage.getByTestId('compare-change-group-count-modified')).toHaveText('3')
   await expect(appPage.getByTestId('compare-change-group-added')).toHaveCount(0)
