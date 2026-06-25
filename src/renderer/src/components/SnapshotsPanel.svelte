@@ -11,7 +11,12 @@
     severityClass,
     describeTemplateChange,
   } from '../lib/diff-format'
-  import { buildReviewInsights } from '../lib/compare-review-insights'
+  import {
+    buildReviewInsights,
+    filterDiffsByReviewInsight,
+    focusMatchesDiff,
+    type ReviewInsight,
+  } from '../lib/compare-review-insights'
   import { orderCompareDiffs, type CompareOrderMode } from '../lib/compare-diff-order'
   import { diffNodeIdCandidatesFromSelection } from '../lib/compare-highlight'
   import SnapshotDiffRowBody from './SnapshotDiffRowBody.svelte'
@@ -95,6 +100,7 @@
   })
 
   const severityOrder = ['High', 'Medium', 'Low'] as const
+  const classificationOrder = ['dependency', 'structural', 'schema', 'data', 'ordering'] as const
   const changeGroupOrder = ['modified', 'added', 'removed'] as const
   type SeverityFilter = 'All' | DiffEntry['severity']
   type ChangeGroupId = typeof changeGroupOrder[number]
@@ -108,6 +114,7 @@
   let activeSeverityFilter = $state<SeverityFilter>('All')
   let activeCompareOrder = $state<CompareOrderMode>('document')
   let activeCompareKey = $state('')
+  let activeFocusId = $state<string | null>(null)
   let collapsedChangeGroups = $state<Set<ChangeGroupId>>(new Set())
 
   // Flatten all diffs from the merged tree nodes.
@@ -125,6 +132,7 @@
       activeCompareKey = key
       activeSeverityFilter = 'All'
       activeCompareOrder = 'document'
+      activeFocusId = null
       collapsedChangeGroups = new Set()
     }
   })
@@ -146,10 +154,25 @@
     })),
   ])
 
+  const classificationSummary = $derived(
+    classificationOrder
+      .map(classification => ({
+        classification,
+        count: allDiffs.filter(e => e.classification === classification).length,
+      }))
+      .filter(e => e.count > 0)
+  )
+
+  const reviewInsights = $derived(buildReviewInsights(allDiffs, templateChanges))
+  const activeReviewInsight = $derived(
+    activeFocusId ? reviewInsights.find(insight => insight.id === activeFocusId) ?? null : null
+  )
+  const focusDiffs = $derived(filterDiffsByReviewInsight(allDiffs, activeReviewInsight))
+
   const visibleDiffs = $derived(
     activeSeverityFilter === 'All'
-      ? allDiffs
-      : allDiffs.filter(e => e.severity === activeSeverityFilter)
+      ? focusDiffs
+      : focusDiffs.filter(e => e.severity === activeSeverityFilter)
   )
 
   const changeGroups = $derived(
@@ -192,6 +215,11 @@
     return 'border-stone-200 bg-white text-stone-500 hover:bg-stone-50'
   }
 
+  function focusButtonClass(insight: ReviewInsight): string {
+    if (activeFocusId === insight.id) return 'border-stone-700 bg-white shadow-sm ring-2 ring-sky-300'
+    return 'border-stone-200 bg-transparent hover:bg-white'
+  }
+
   function changeGroupFor(diff: DiffEntry): ChangeGroupId {
     if (diff.changeType === 'added') return 'added'
     if (diff.changeType === 'removed') return 'removed'
@@ -216,6 +244,21 @@
     collapsedChangeGroups = next
   }
 
+  function setSeverityFilter(severity: SeverityFilter) {
+    activeSeverityFilter = severity
+    activeFocusId = null
+  }
+
+  function toggleReviewFocus(id: string) {
+    activeFocusId = activeFocusId === id ? null : id
+    activeSeverityFilter = 'All'
+    collapsedChangeGroups = new Set()
+  }
+
+  function clearReviewFocus() {
+    activeFocusId = null
+  }
+
   function shouldIgnoreDiffRowEvent(event: Event): boolean {
     return event.target instanceof Element && event.target.closest('[data-no-row-select]') !== null
   }
@@ -229,8 +272,6 @@
     }
     onDiffNodeSelect?.(nodeId)
   }
-
-  const reviewInsights = $derived(buildReviewInsights(allDiffs, templateChanges))
 
   // Auto-fill From/To once on first load. After that, leave them alone — if
   // the user toggled a pill off (third-click clear), don't pre-fill on top of
@@ -487,8 +528,16 @@
                 Review focus
               </h4>
               <div class="mt-2 space-y-1.5">
-                {#each reviewInsights as insight (insight.label)}
-                  <div class="flex items-start justify-between gap-2">
+                {#each reviewInsights as insight (insight.id)}
+                  <button
+                    type="button"
+                    aria-pressed={activeFocusId === insight.id}
+                    onclick={() => toggleReviewFocus(insight.id)}
+                    class={`flex w-full items-start justify-between gap-2 rounded-lg border px-2 py-1.5
+                            text-left transition-colors cursor-default ${focusButtonClass(insight)}`}
+                    data-testid="review-focus-item"
+                    data-focus-id={insight.id}
+                  >
                     <div class="min-w-0">
                       <p class="truncate text-xs font-medium text-stone-700">{insight.label}</p>
                       <p class="text-[11px] text-stone-500">{insight.detail}</p>
@@ -504,9 +553,36 @@
                         {DIFF_CLASSIFICATION_LABELS[insight.classification]}
                       </span>
                     </div>
-                  </div>
+                  </button>
                 {/each}
               </div>
+            </div>
+          {/if}
+
+          {#if activeReviewInsight}
+            <div
+              class="flex items-start justify-between gap-2 rounded-xl border border-sky-200 bg-sky-50/70 px-3 py-2"
+              data-testid="compare-focus-summary"
+            >
+              <div class="min-w-0">
+                <p class="text-xs font-medium text-sky-800">Focused on {activeReviewInsight.label}</p>
+                <p class="mt-0.5 text-[11px] text-sky-700">
+                  {#if activeReviewInsight.match.schema && visibleDiffs.length === 0}
+                    This finding is about schema changes above.
+                  {:else}
+                    Showing {visibleDiffs.length} contributing node {visibleDiffs.length === 1 ? 'row' : 'rows'}.
+                  {/if}
+                </p>
+              </div>
+              <button
+                type="button"
+                onclick={clearReviewFocus}
+                class="shrink-0 rounded border border-sky-200 bg-white px-2 py-1 text-[10px]
+                       font-semibold uppercase tracking-wide text-sky-700 hover:bg-sky-100 cursor-default"
+                data-testid="compare-focus-clear"
+              >
+                Clear
+              </button>
             </div>
           {/if}
 
@@ -545,7 +621,7 @@
                   <button
                     type="button"
                     aria-pressed={activeSeverityFilter === option.severity}
-                    onclick={() => { activeSeverityFilter = option.severity }}
+                    onclick={() => setSeverityFilter(option.severity)}
                     class={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase
                             tracking-wide transition-colors cursor-default ${severityFilterClass(option.severity)}`}
                     data-testid={`compare-filter-${option.severity.toLowerCase()}`}
@@ -569,6 +645,14 @@
                 </span>
               {/each}
             </div>
+            <div class="flex flex-wrap gap-1" data-testid="compare-classification-summary">
+              {#each classificationSummary as item (item.classification)}
+                <span class={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase
+                              tracking-wide ${classificationBadgeClass(item.classification)}`}>
+                  {item.count} {DIFF_CLASSIFICATION_LABELS[item.classification]}
+                </span>
+              {/each}
+            </div>
             <div class="flex flex-wrap gap-1">
               {#each changeGroupTotals as item (item.id)}
                 <span class="rounded-full bg-stone-100 px-2 py-0.5 text-[10px] text-stone-600">
@@ -582,8 +666,24 @@
                 class="rounded-xl border border-dashed border-stone-200 bg-stone-50/70 px-4 py-5 text-center"
                 data-testid="compare-filter-empty"
               >
-                <p class="text-xs font-medium text-stone-600">No {activeSeverityFilter.toLowerCase()} changes</p>
-                <p class="mt-0.5 text-xs text-stone-400">Choose another priority or return to All.</p>
+                {#if activeReviewInsight}
+                  <p class="text-xs font-medium text-stone-600">
+                    {activeReviewInsight.match.schema ? 'This finding is about schema changes' : 'No node rows for this finding'}
+                  </p>
+                  <p class="mt-0.5 text-xs text-stone-400">Clear the focus to return to all node changes.</p>
+                  <button
+                    type="button"
+                    onclick={clearReviewFocus}
+                    class="mt-3 rounded border border-stone-200 bg-white px-2 py-1 text-[10px]
+                           font-semibold uppercase tracking-wide text-stone-600 hover:bg-stone-50 cursor-default"
+                    data-testid="compare-filter-empty-clear"
+                  >
+                    Clear focus
+                  </button>
+                {:else}
+                  <p class="text-xs font-medium text-stone-600">No {activeSeverityFilter.toLowerCase()} changes</p>
+                  <p class="mt-0.5 text-xs text-stone-400">Choose another priority or return to All.</p>
+                {/if}
               </div>
             {:else}
               {#each changeGroups as group (group.id)}
@@ -627,7 +727,10 @@
                           focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-1`}
                         data-testid="snapshot-diff-row"
                       >
-                        <SnapshotDiffRowBody {diff} />
+                        <SnapshotDiffRowBody
+                          {diff}
+                          forceOpenImpact={activeReviewInsight?.match.expandRemovalImpact === true && focusMatchesDiff(activeReviewInsight, diff)}
+                        />
                       </div>
                     {:else}
                       <div
@@ -637,7 +740,10 @@
                           ${isHighlighted ? 'ring-2 ring-sky-400 ring-offset-1' : ''}`}
                         data-testid="snapshot-diff-row"
                       >
-                        <SnapshotDiffRowBody {diff} />
+                        <SnapshotDiffRowBody
+                          {diff}
+                          forceOpenImpact={activeReviewInsight?.match.expandRemovalImpact === true && focusMatchesDiff(activeReviewInsight, diff)}
+                        />
                       </div>
                     {/if}
                   {/each}

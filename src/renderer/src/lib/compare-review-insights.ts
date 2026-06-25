@@ -2,10 +2,17 @@ import type { DiffClassification, DiffEntry, TemplateDiffEntry } from '../../../
 import { DIFF_CLASSIFICATION_LABELS } from '../../../shared/diff-format'
 
 export interface ReviewInsight {
+  id: string
   label: string
   detail: string
   severity: DiffEntry['severity']
   classification: DiffClassification
+  match: {
+    nodeIds: string[]
+    diffKeys?: string[]
+    schema?: boolean
+    expandRemovalImpact?: boolean
+  }
 }
 
 function plural(count: number, singular: string, pluralLabel = `${singular}s`): string {
@@ -47,109 +54,159 @@ function schemaSeverity(templateChanges: TemplateDiffEntry[]): DiffEntry['severi
   ) ? 'High' : 'Medium'
 }
 
+function uniqueNodeIds(diffs: DiffEntry[]): string[] {
+  return Array.from(new Set(diffs.map(diff => diff.nodeId))).sort()
+}
+
+function diffKey(diff: DiffEntry): string {
+  return `${diff.nodeId} ${diff.changeType}`
+}
+
+function uniqueDiffKeys(diffs: DiffEntry[]): string[] {
+  return Array.from(new Set(diffs.map(diffKey))).sort()
+}
+
+function slug(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'root'
+}
+
+export function focusMatchesDiff(insight: ReviewInsight | null, diff: DiffEntry): boolean {
+  if (!insight) return true
+  if ((insight.match.diffKeys?.length ?? 0) > 0) return insight.match.diffKeys!.includes(diffKey(diff))
+  return insight.match.nodeIds.includes(diff.nodeId)
+}
+
+export function filterDiffsByReviewInsight(
+  diffs: DiffEntry[],
+  insight: ReviewInsight | null
+): DiffEntry[] {
+  if (!insight) return diffs
+  return diffs.filter(diff => focusMatchesDiff(insight, diff))
+}
+
 export function buildReviewInsights(
   allDiffs: DiffEntry[],
   templateChanges: TemplateDiffEntry[] = []
 ): ReviewInsight[] {
   const insights: ReviewInsight[] = []
 
-  let removalsWithReferences = 0
-  let brokenReferenceCount = 0
   let cascadingRemovals = 0
   let removedDescendantCount = 0
+  const cascadeNodeIds = new Set<string>()
   for (const diff of allDiffs) {
     if (diff.changeType !== 'removed') continue
     const impact = diff.context.removalImpact
     const descendants = impact?.descendants.length ?? 0
-    const references = impact?.incomingReferences.length ?? 0
-    if (references > 0) {
-      removalsWithReferences++
-      brokenReferenceCount += references
-    }
     if (descendants > 0) {
       cascadingRemovals++
       removedDescendantCount += descendants
+      cascadeNodeIds.add(diff.nodeId)
+      for (const descendant of impact?.descendants ?? []) cascadeNodeIds.add(descendant.id)
     }
   }
 
-  if (brokenReferenceCount > 0) {
+  const removedWithReferences = allDiffs
+    .filter(diff => diff.changeType === 'removed' && (diff.context.removalImpact?.incomingReferences.length ?? 0) > 0)
+    .sort((a, b) =>
+      (b.context.removalImpact?.incomingReferences.length ?? 0) -
+      (a.context.removalImpact?.incomingReferences.length ?? 0)
+    )
+  for (const diff of removedWithReferences) {
+    const references = diff.context.removalImpact?.incomingReferences.length ?? 0
     insights.push({
-      label: `${brokenReferenceCount} broken incoming ${plural(brokenReferenceCount, 'reference')}`,
-      detail: `Dependency risk: ${removalsWithReferences} removed ${plural(removalsWithReferences, 'node')} still had dependents.`,
+      id: `dependency-removed-${diff.nodeId}`,
+      label: `${references} broken incoming ${plural(references, 'reference')} to "${diff.context.nodeName}"`,
+      detail: 'Dependency risk: this removed node still had dependents.',
       severity: 'High',
       classification: 'dependency',
+      match: { nodeIds: [diff.nodeId], diffKeys: [diffKey(diff)], expandRemovalImpact: true },
     })
   }
 
   if (removedDescendantCount > 0) {
     insights.push({
+      id: 'structural-removal-cascade',
       label: `${cascadingRemovals} ${plural(cascadingRemovals, 'removal')} includes ${removedDescendantCount} ${plural(removedDescendantCount, 'descendant')}`,
       detail: 'Structural impact: review cascade impact before treating child removals individually.',
       severity: 'High',
       classification: 'structural',
+      match: { nodeIds: Array.from(cascadeNodeIds).sort(), expandRemovalImpact: true },
     })
   }
 
   const highDiffs = allDiffs.filter(diff => diff.severity === 'High')
   if (highDiffs.length > 0) {
     insights.push({
+      id: 'priority-high',
       label: `${highDiffs.length} high-priority ${plural(highDiffs.length, 'change')}`,
       detail: `Priority mix: ${classificationBreakdown(highDiffs)}.`,
       severity: 'High',
       classification: mostCommonClassification(highDiffs),
+      match: { nodeIds: uniqueNodeIds(highDiffs), diffKeys: uniqueDiffKeys(highDiffs) },
     })
   }
 
   if (templateChanges.length > 0) {
     insights.push({
+      id: 'schema-template-changes',
       label: `${templateChanges.length} schema ${plural(templateChanges.length, 'change')}`,
       detail: 'Schema impact: template or field definitions changed.',
       severity: schemaSeverity(templateChanges),
       classification: 'schema',
+      match: { nodeIds: [], schema: true },
     })
   }
 
-  const propertyCounts = new Map<string, number>()
+  const propertyDiffs = new Map<string, DiffEntry[]>()
   for (const diff of allDiffs) {
     for (const key of changedPropertyKeys(diff)) {
-      propertyCounts.set(key, (propertyCounts.get(key) ?? 0) + 1)
+      propertyDiffs.set(key, [...(propertyDiffs.get(key) ?? []), diff])
     }
   }
-  for (const [key, count] of [...propertyCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3)) {
-    if (count < 2) continue
+  for (const [index, [key, diffs]] of [...propertyDiffs.entries()].sort((a, b) => b[1].length - a[1].length).slice(0, 3).entries()) {
+    if (diffs.length < 2) continue
     insights.push({
-      label: `${count} changes to "${key}"`,
+      id: `data-property-${index + 1}-${slug(key)}`,
+      label: `${diffs.length} changes to "${key}"`,
       detail: 'Data pattern: likely a repeated field update.',
       severity: 'Medium',
       classification: 'data',
+      match: { nodeIds: uniqueNodeIds(diffs), diffKeys: uniqueDiffKeys(diffs) },
     })
   }
 
-  const parentCounts = new Map<string, number>()
+  const parentDiffs = new Map<string, DiffEntry[]>()
   for (const diff of allDiffs) {
     const path = diff.context.path.join(' / ') || '(root)'
-    parentCounts.set(path, (parentCounts.get(path) ?? 0) + 1)
+    parentDiffs.set(path, [...(parentDiffs.get(path) ?? []), diff])
   }
-  const [path, count] = [...parentCounts.entries()].sort((a, b) => b[1] - a[1])[0] ?? []
-  if (path && count >= 3) {
+  const [path, diffs] = [...parentDiffs.entries()].sort((a, b) => b[1].length - a[1].length)[0] ?? []
+  if (path && diffs.length >= 3) {
     insights.push({
-      label: `${count} changes under ${path}`,
+      id: `structural-branch-${slug(path)}`,
+      label: `${diffs.length} changes under ${path}`,
       detail: 'Structural concentration: this branch carries most of the activity.',
       severity: 'Medium',
       classification: 'structural',
+      match: { nodeIds: uniqueNodeIds(diffs), diffKeys: uniqueDiffKeys(diffs) },
     })
   }
 
-  const displayOnly = allDiffs.filter(diff =>
+  const displayOnlyDiffs = allDiffs.filter(diff =>
     diff.classification === 'ordering' ||
     (diff.classification === 'data' && diff.severity === 'Low')
-  ).length
-  if (displayOnly > 0) {
+  )
+  if (displayOnlyDiffs.length > 0) {
     insights.push({
-      label: `${displayOnly} display-only ${plural(displayOnly, 'change')}`,
+      id: 'ordering-display-only',
+      label: `${displayOnlyDiffs.length} display-only ${plural(displayOnlyDiffs.length, 'change')}`,
       detail: 'Ordering and low-importance data changes can usually be skimmed after higher-risk findings.',
       severity: 'Low',
       classification: 'ordering',
+      match: { nodeIds: uniqueNodeIds(displayOnlyDiffs), diffKeys: uniqueDiffKeys(displayOnlyDiffs) },
     })
   }
 
