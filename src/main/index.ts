@@ -7,6 +7,7 @@ import { ProjectManager } from './project-manager'
 import { GitService } from './git-service'
 import { IPC } from '../shared/ipc'
 import { ok, err, ErrorCode } from '../shared/errors'
+import { installApplicationMenu, updateApplicationMenuState } from './app-menu'
 import type { NodeTemplate, ImportMapping, NetboxImportOptions } from '../shared/types'
 import type { ReportFormat } from '../shared/report'
 
@@ -236,6 +237,13 @@ function registerIpcHandlers(): void {
     return result.canceled ? null : result.filePaths[0]
   })
 
+  // ── Native menu state ────────────────────────────────────────────────────
+  // Renderer-owned UI state drives native menu enablement. The renderer still
+  // self-guards every command when a menu item or accelerator dispatches.
+  ipcMain.on(IPC.MENU_STATE_UPDATE, (_, state: unknown) => {
+    updateApplicationMenuState(state)
+  })
+
   // ── Snapshots ────────────────────────────────────────────────────────────
 
   ipcMain.handle(IPC.SNAPSHOT_CREATE, (_, { name }: { name: string }) =>
@@ -300,6 +308,12 @@ app.whenReady().then(async () => {
   }
 
   registerIpcHandlers()
+  installApplicationMenu({
+    platform: process.platform,
+    isDev: Boolean(process.env['ELECTRON_RENDERER_URL']),
+    appName: app.name || 'Manifest',
+    logsPath: logDir,
+  })
   const iconPath = getBrandIconPath()
   if (process.platform === 'darwin' && iconPath) {
     app.dock.setIcon(iconPath)
