@@ -33,6 +33,7 @@ import type {
 } from './types'
 import type { MergedTree } from './merged-tree'
 import type { ReportFormat } from './report'
+import type { MenuCommandId, MenuCommandState } from './menu-commands'
 
 // Channel name constants — use these everywhere, never raw strings.
 export const IPC = {
@@ -71,6 +72,9 @@ export const IPC = {
   // UI utility channels (not domain operations)
   DIALOG_OPEN_FOLDER:  'dialog:openFolder',
   DIALOG_OPEN_FILE:    'dialog:openFile',
+  // Native menu notifications. These are one-way UI events, not domain calls.
+  MENU_COMMAND:        'menu:command',
+  MENU_STATE_UPDATE:   'menu:stateUpdate',
 } as const
 
 // Typed API surface exposed on window.api by the preload script.
@@ -167,5 +171,9 @@ export interface ManifestAPI {
   dialog: {
     openFolder(title: string): Promise<string | null>
     openFile(title: string): Promise<string | null>
+  }
+  menu: {
+    onCommand(handler: (command: MenuCommandId) => void): () => void
+    updateState(state: MenuCommandState): void
   }
 }

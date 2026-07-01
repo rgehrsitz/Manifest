@@ -238,6 +238,18 @@ export class ProjectManager {
       }
       this.openHistoryIndex(projectPath)
 
+      // Switching from an already-open project: stop the OUTGOING project's
+      // background work before it becomes the incoming project's problem. Without
+      // this, a pending autosave debounce would fire and write the NEW project,
+      // and the in-flight backfill's `inProgress` guard would suppress the new
+      // project's own backfill (scheduleHistoryBackfill below early-returns while
+      // a prior backfill is still running).
+      if (this.currentProject) {
+        this.cancelAutosave()
+        this.backfillToken++ // supersede any in-flight backfill so it bails
+        this.backfillStatus = { inProgress: false, completed: 0, total: 0 }
+      }
+
       const runtimeProject = this.withProjectWarnings(project, projectWarnings)
       this.currentProject = runtimeProject
       this.logger.info('project opened', { name: project.name, path: projectPath, nodes: project.nodes.length })

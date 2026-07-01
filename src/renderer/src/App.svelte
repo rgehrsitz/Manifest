@@ -5,6 +5,11 @@
   import type { Project, ManifestNode, ManifestWarning, ProjectWarning, NodeTemplate, PropertyType, RecoveryPoint, ReferenceBlocker, SearchResult, Snapshot, SnapshotTimelineEvent, ImportResult } from '../../shared/types'
   import { isUsableTemplate, templateLabel } from '../../shared/validation'
   import { snapshotRefLabel } from '../../shared/snapshot-ref'
+  import {
+    createDisabledMenuCommandState,
+    type MenuCommandId,
+    type MenuCommandState,
+  } from '../../shared/menu-commands'
   import type { MergedTree } from '../../shared/merged-tree'
   import { computeSubtreeSummaries, templatesForNode } from '../../shared/merged-tree'
   import { buildTree, getSiblingIndex, getAncestorIds } from './lib/tree'
@@ -146,6 +151,7 @@
   // Non-blocking error toast
   let toastMsg:     string | null = $state(null)
   let toastTimer:   ReturnType<typeof setTimeout> | null = null
+  let unsubscribeMenuCommands: (() => void) | null = null
   const brandMark = '/manifest-mark.svg'
 
   // ─── Derived ──────────────────────────────────────────────────────────────
@@ -220,6 +226,10 @@
   // ─── Lifecycle ────────────────────────────────────────────────────────────
 
   onMount(async () => {
+    unsubscribeMenuCommands = window.api.menu.onCommand((command) => {
+      void runMenuCommand(command)
+    })
+
     // Rehydrate if main already has a project open (e.g. macOS activate).
     const result = await window.api.project.getCurrent()
     if (result.ok && result.data) {
@@ -234,6 +244,8 @@
   })
 
   onDestroy(() => {
+    unsubscribeMenuCommands?.()
+    unsubscribeMenuCommands = null
     window.removeEventListener('mousemove', onDragMove)
     window.removeEventListener('mouseup', onDragEnd)
   })
@@ -315,6 +327,180 @@
     }
   }
 
+  function resetOpenProjectUi() {
+    clearSearch()
+    snapshotPanelOpen = false
+    snapshots = []
+    snapshotTimelineEvents = []
+    snapshotRecoveryPoints = []
+    snapshotError = null
+    snapshotLoading = false
+    snapshotCreating = false
+    snapshotComparing = false
+    snapshotRestoringName = null
+    revertDialogSnapshotName = null
+    revertDialogNoteRequired = false
+    revertDialogError = null
+    recoveryDialogPoint = null
+    recoveryDialogError = null
+    recoveryApplyingId = null
+    workingCopyBaseSnapshot = null
+    workingCopyDirty = false
+    compareMode = false
+    mergedTree = null
+    compareExpanded = new Set()
+    lensExpandedFolds = new Set()
+    importDialogOpen = false
+    importBaseParent = null
+    importSummary = null
+    importSummaryDismissed = false
+    templateManagerOpen = false
+    moveToNodeId = null
+    addingChildTo = null
+    addingChildName = ''
+    addingChildError = null
+    addingChildTemplateId = null
+    stashedGhostSelection = null
+  }
+
+  function beginCreateProject() {
+    if (project) {
+      showToast('Close the current project before creating a new project.')
+      return
+    }
+    appState = 'creating'
+    error = null
+  }
+
+  async function saveCurrentProject() {
+    if (!project) return
+    const result = await window.api.project.save()
+    if (result.ok) showToast('Project saved')
+    else showToast(result.error.message)
+  }
+
+  async function focusSearch() {
+    if (!project || compareMode) return
+    await tick()
+    searchInputEl?.focus()
+    searchInputEl?.select()
+  }
+
+  async function reindexHistory() {
+    if (!project) return
+    const result = await window.api.node.historyReindex()
+    if (result.ok) showToast('History index refreshed')
+    else showToast(result.error.message)
+  }
+
+  function buildMenuCommandState(): MenuCommandState {
+    const state = createDisabledMenuCommandState()
+    const hasOpenProject = appState === 'open' && project !== null
+    const projectBusy = snapshotRestoringName !== null || recoveryApplyingId !== null
+    const canUseProject = hasOpenProject && !projectBusy
+    const canEditProject = canUseProject && !editingLocked
+    const selectedLiveNode = canEditProject && selectedNode && !selectedId?.startsWith('ghost:')
+      ? selectedNode
+      : null
+    const selectedEditableChild = selectedLiveNode !== null && selectedLiveNode.parentId !== null
+    const compareLoaded = hasOpenProject && compareMode && mergedTree !== null
+
+    state['project:new'] = appState === 'welcome' && project === null
+    state['project:open'] = appState !== 'loading' && appState !== 'creating' && !creating && !snapshotRestoringName && !recoveryApplyingId
+    state['project:save'] = canUseProject
+    state['project:close'] = canUseProject
+    state['project:import'] = canEditProject
+    state['project:templates'] = canEditProject
+    state['project:snapshots'] = canUseProject
+    state['project:search'] = canUseProject && !compareMode
+    state['compare:exit'] = compareLoaded && !projectBusy
+    state['report:copyMarkdown'] = compareLoaded && !projectBusy
+    state['report:exportMarkdown'] = compareLoaded && !projectBusy
+    state['report:exportCsv'] = compareLoaded && !projectBusy
+    state['node:addChild'] = selectedLiveNode !== null
+    state['node:rename'] = selectedLiveNode !== null
+    state['node:moveTo'] = Boolean(selectedEditableChild)
+    state['node:delete'] = Boolean(selectedEditableChild)
+    state['history:reindex'] = canUseProject
+
+    return state
+  }
+
+  function canRunMenuCommand(command: MenuCommandId): boolean {
+    return buildMenuCommandState()[command]
+  }
+
+  async function runMenuCommand(command: MenuCommandId) {
+    if (!canRunMenuCommand(command)) return
+
+    switch (command) {
+      case 'project:new':
+        beginCreateProject()
+        return
+      case 'project:open':
+        await openProject()
+        return
+      case 'project:save':
+        await saveCurrentProject()
+        return
+      case 'project:close':
+        await closeProject()
+        return
+      case 'project:import':
+        openImportDialog()
+        return
+      case 'project:templates':
+        openTemplateManager()
+        return
+      case 'project:snapshots':
+        await toggleSnapshots()
+        return
+      case 'project:search':
+        await focusSearch()
+        return
+      case 'compare:exit':
+        exitCompareMode()
+        return
+      case 'report:copyMarkdown':
+        await handleCopyReport()
+        return
+      case 'report:exportMarkdown':
+        await handleExportReport('markdown')
+        return
+      case 'report:exportCsv':
+        await handleExportReport('csv')
+        return
+      case 'node:addChild':
+        if (selectedNode && !selectedId?.startsWith('ghost:')) handleAddChild(selectedNode.id)
+        return
+      case 'node:rename':
+        handleRenameRequest()
+        return
+      case 'node:moveTo':
+        if (selectedNode && !selectedId?.startsWith('ghost:')) handleMoveTo(selectedNode.id)
+        return
+      case 'node:delete':
+        if (selectedNode && !selectedId?.startsWith('ghost:')) await handleDelete(selectedNode.id)
+        return
+      case 'history:reindex':
+        await reindexHistory()
+        return
+    }
+  }
+
+  // Push enabled/disabled state to the native menu, but only when it actually
+  // changes — the effect re-runs on every reactive dependency, and most UI
+  // interactions leave the command map identical. Skipping no-op sends avoids a
+  // high volume of redundant IPC messages and native menu mutations.
+  let lastSentMenuState = ''
+  $effect(() => {
+    const next = buildMenuCommandState()
+    const serialized = JSON.stringify(next)
+    if (serialized === lastSentMenuState) return
+    lastSentMenuState = serialized
+    window.api.menu.updateState(next)
+  })
+
   // ─── Welcome actions ──────────────────────────────────────────────────────
 
   async function openProject() {
@@ -322,9 +508,20 @@
     const folderPath = await window.api.dialog.openFolder('Open Project')
     if (!folderPath) return
 
+    const fallbackState = project ? 'open' : 'welcome'
+    if (project) {
+      const saved = await window.api.project.save()
+      if (!saved.ok) {
+        error = saved.error.message
+        showToast(saved.error.message)
+        return
+      }
+    }
+
     appState = 'loading'
     const result = await window.api.project.open(folderPath)
     if (result.ok) {
+      resetOpenProjectUi()
       project = result.data
       selectRoot(result.data)
       workingCopyBaseSnapshot = null
@@ -334,7 +531,7 @@
       appState = 'open'
     } else {
       error = result.error.message
-      appState = 'welcome'
+      appState = fallbackState
     }
   }
 
@@ -1121,7 +1318,7 @@
           Open Project
         </button>
         <button
-          onclick={() => { appState = 'creating'; error = null }}
+          onclick={beginCreateProject}
           class="w-full bg-white hover:bg-stone-50 text-stone-700 text-sm font-medium
                  px-4 py-2.5 rounded-lg border border-stone-200 transition-colors duration-150 cursor-default"
           data-testid="create-project-btn"

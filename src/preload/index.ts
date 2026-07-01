@@ -5,6 +5,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '../shared/ipc'
 import type { ManifestAPI } from '../shared/ipc'
+import { isMenuCommandId } from '../shared/menu-commands'
 
 const api: ManifestAPI = {
   project: {
@@ -100,6 +101,20 @@ const api: ManifestAPI = {
       ipcRenderer.invoke(IPC.DIALOG_OPEN_FOLDER, { title }),
     openFile: (title) =>
       ipcRenderer.invoke(IPC.DIALOG_OPEN_FILE, { title }),
+  },
+
+  menu: {
+    onCommand: (handler) => {
+      const listener = (_event: Electron.IpcRendererEvent, command: unknown) => {
+        if (isMenuCommandId(command)) handler(command)
+      }
+      ipcRenderer.on(IPC.MENU_COMMAND, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC.MENU_COMMAND, listener)
+      }
+    },
+    updateState: (state) =>
+      ipcRenderer.send(IPC.MENU_STATE_UPDATE, state),
   },
 }
 

@@ -1,0 +1,154 @@
+import type { MenuItemConstructorOptions } from 'electron'
+import { MENU_COMMANDS, type MenuCommandId } from '../shared/menu-commands'
+
+export interface AppMenuTemplateOptions {
+  platform: NodeJS.Platform
+  isDev: boolean
+  appName: string
+  dispatch(command: MenuCommandId): void
+  openLogsFolder(): void
+}
+
+function commandItem(command: MenuCommandId, dispatch: (command: MenuCommandId) => void): MenuItemConstructorOptions {
+  const definition = MENU_COMMANDS[command]
+  return {
+    id: command,
+    label: definition.label,
+    accelerator: 'accelerator' in definition ? definition.accelerator : undefined,
+    enabled: false,
+    click: () => dispatch(command),
+  }
+}
+
+function separator(): MenuItemConstructorOptions {
+  return { type: 'separator' }
+}
+
+export function buildAppMenuTemplate(options: AppMenuTemplateOptions): MenuItemConstructorOptions[] {
+  const isMac = options.platform === 'darwin'
+  const template: MenuItemConstructorOptions[] = []
+
+  if (isMac) {
+    template.push({
+      label: options.appName,
+      submenu: [
+        { role: 'about' },
+        separator(),
+        { role: 'services' },
+        separator(),
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        separator(),
+        { role: 'quit' },
+      ],
+    })
+  }
+
+  template.push({
+    label: 'File',
+    submenu: [
+      commandItem('project:new', options.dispatch),
+      commandItem('project:open', options.dispatch),
+      separator(),
+      commandItem('project:save', options.dispatch),
+      commandItem('project:close', options.dispatch),
+      separator(),
+      commandItem('project:import', options.dispatch),
+      separator(),
+      {
+        label: 'Export Report',
+        submenu: [
+          commandItem('report:exportMarkdown', options.dispatch),
+          commandItem('report:exportCsv', options.dispatch),
+        ],
+      },
+      commandItem('report:copyMarkdown', options.dispatch),
+      ...(isMac ? [] : [separator(), { role: 'quit' } satisfies MenuItemConstructorOptions]),
+    ],
+  })
+
+  template.push({
+    label: 'Edit',
+    submenu: [
+      { role: 'undo' },
+      { role: 'redo' },
+      separator(),
+      { role: 'cut' },
+      { role: 'copy' },
+      { role: 'paste' },
+      ...(isMac
+        ? [
+            { role: 'pasteAndMatchStyle' } satisfies MenuItemConstructorOptions,
+            { role: 'delete' } satisfies MenuItemConstructorOptions,
+          ]
+        : [
+            { role: 'delete' } satisfies MenuItemConstructorOptions,
+          ]),
+      { role: 'selectAll' },
+      separator(),
+      commandItem('project:search', options.dispatch),
+    ],
+  })
+
+  template.push({
+    label: 'View',
+    submenu: [
+      commandItem('project:templates', options.dispatch),
+      commandItem('project:snapshots', options.dispatch),
+      commandItem('compare:exit', options.dispatch),
+      separator(),
+      { role: 'resetZoom' },
+      { role: 'zoomIn' },
+      { role: 'zoomOut' },
+      ...(options.isDev
+        ? [
+            separator(),
+            { role: 'reload' } satisfies MenuItemConstructorOptions,
+            { role: 'toggleDevTools' } satisfies MenuItemConstructorOptions,
+          ]
+        : []),
+    ],
+  })
+
+  template.push({
+    label: 'Project',
+    submenu: [
+      commandItem('node:addChild', options.dispatch),
+      commandItem('node:rename', options.dispatch),
+      commandItem('node:moveTo', options.dispatch),
+      commandItem('node:delete', options.dispatch),
+      separator(),
+      commandItem('history:reindex', options.dispatch),
+    ],
+  })
+
+  template.push({
+    label: 'Window',
+    submenu: [
+      { role: 'minimize' },
+      { role: 'zoom' },
+      ...(isMac
+        ? [
+            separator(),
+            { role: 'front' } satisfies MenuItemConstructorOptions,
+            separator(),
+            { role: 'window' } satisfies MenuItemConstructorOptions,
+          ]
+        : []),
+    ],
+  })
+
+  template.push({
+    label: 'Help',
+    submenu: [
+      {
+        label: 'Open Logs Folder',
+        click: options.openLogsFolder,
+      },
+      ...(isMac ? [] : [separator(), { role: 'about' } satisfies MenuItemConstructorOptions]),
+    ],
+  })
+
+  return template
+}
