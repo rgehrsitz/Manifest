@@ -22,7 +22,8 @@ export const test = base.extend<ManifestFixtures>({
     }
   },
 
-  electronApp: async ({}, use) => {
+  electronApp: async ({ workspaceDir }, use) => {
+    void workspaceDir
     if (!existsSync(MAIN_ENTRY)) {
       throw new Error(`Built Electron entrypoint not found at ${MAIN_ENTRY}. Run "bun run build" first.`)
     }

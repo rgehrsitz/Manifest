@@ -579,7 +579,12 @@
   }
 
   async function closeProject() {
-    await window.api.project.close()
+    const result = await window.api.project.close()
+    if (!result.ok) {
+      error = result.error.message
+      showToast(result.error.message)
+      return
+    }
     project = null
     setSelection(null)
     expandedIds = new Set()

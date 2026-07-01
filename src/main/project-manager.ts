@@ -273,17 +273,24 @@ export class ProjectManager {
     return this.writeManifest(this.currentProject)
   }
 
-  // Flush autosave immediately and clear in-memory state.
-  // Call before quit, close, or snapshot.
+  // Flush autosave immediately and clear in-memory state only after the final
+  // save succeeds. Callers that intentionally discard after a failed save must
+  // use discardCurrentProject() so final-save failures are never silent.
   async flushAndClose(): Promise<Result<void>> {
     this.cancelAutosave()
-    this.backfillToken++  // signal any in-flight backfill to exit early
     const result = await this.saveProject()
+    if (!result.ok) return result
+    this.discardCurrentProject()
+    return result
+  }
+
+  discardCurrentProject(): void {
+    this.cancelAutosave()
+    this.backfillToken++  // signal any in-flight backfill to exit early
     this.currentProject = null
     this.search.close()
     this.history.close()
     this.backfillStatus = { inProgress: false, completed: 0, total: 0 }
-    return result
   }
 
   getHistoryBackfillStatus(): HistoryBackfillStatus {
