@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdirSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import {
@@ -76,6 +76,33 @@ describe('AppSettingsStore', () => {
     expect(low.panelWidth).toBe(240)
     expect(high.treeWidth).toBe(520)
     expect(high.panelWidth).toBe(600)
+  })
+
+  it('does not write unchanged workspace settings after normalization', () => {
+    const path = storePath()
+    const store = new AppSettingsStore(path)
+
+    const settings = store.updateWorkspaceSettings({ treeWidth: 288.2, panelWidth: 320.4 })
+
+    expect(settings.treeWidth).toBe(288)
+    expect(settings.panelWidth).toBe(320)
+    expect(existsSync(path)).toBe(false)
+  })
+
+  it('clears stored workspace directories when null is supplied', () => {
+    const store = new AppSettingsStore(storePath())
+    store.updateWorkspaceSettings({
+      lastOpenDirectory: '/tmp/open',
+      lastCreateDirectory: '/tmp/create',
+    })
+
+    const cleared = store.updateWorkspaceSettings({
+      lastOpenDirectory: null,
+      lastCreateDirectory: null,
+    })
+
+    expect(cleared.lastOpenDirectory).toBeNull()
+    expect(cleared.lastCreateDirectory).toBeNull()
   })
 
   it('tracks last project and marks missing projects', () => {

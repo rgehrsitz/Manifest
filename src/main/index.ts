@@ -5,7 +5,7 @@ import { extname, join, resolve } from 'path'
 import { createLogger } from './logger'
 import { ProjectManager } from './project-manager'
 import { GitService } from './git-service'
-import { IPC } from '../shared/ipc'
+import { IPC, type FolderDialogPurpose } from '../shared/ipc'
 import { ok, err, ErrorCode } from '../shared/errors'
 import {
   installApplicationMenu,
@@ -14,7 +14,7 @@ import {
 } from './app-menu'
 import { resolveProjectOpenTarget } from './project-open-target'
 import { RecentProjectsStore, getRecentDocumentPath } from './recent-projects'
-import { AppSettingsStore, resolveRestorableWindowBounds } from './app-settings'
+import { AppSettingsStore, resolveRestorableWindowBounds, type WorkspaceSettingsPatch } from './app-settings'
 import {
   ensureFinalProjectSave,
   finalSaveFailureActionForResponse,
@@ -271,8 +271,8 @@ function registerIpcHandlers(): void {
 
   // ── Dialog helpers ───────────────────────────────────────────────────────
 
-  ipcMain.handle(IPC.DIALOG_OPEN_FOLDER, async (_, { title }: { title: string }) => {
-    const directoryKind = directoryKindForDialogTitle(title)
+  ipcMain.handle(IPC.DIALOG_OPEN_FOLDER, async (_, { title, purpose }: { title: string; purpose?: FolderDialogPurpose }) => {
+    const directoryKind = directoryKindForFolderDialogPurpose(purpose)
     const result = await dialog.showOpenDialog({
       title,
       defaultPath: directoryKind ? appSettings.getLastDirectory(directoryKind) : undefined,
@@ -601,20 +601,24 @@ function trackRecentProject(result: Result<Project>): void {
   updateApplicationMenuRecentProjects(recentProjects.all())
 }
 
-function directoryKindForDialogTitle(title: string): 'open' | 'create' | null {
-  if (/^open project$/i.test(title)) return 'open'
-  if (/^choose location$/i.test(title)) return 'create'
+function directoryKindForFolderDialogPurpose(purpose: FolderDialogPurpose | undefined): 'open' | 'create' | null {
+  if (purpose === 'open-project') return 'open'
+  if (purpose === 'create-project') return 'create'
   return null
 }
 
-function normalizeWorkspaceSettingsPatch(input: unknown): Parameters<AppSettingsStore['updateWorkspaceSettings']>[0] {
+function normalizeWorkspaceSettingsPatch(input: unknown): WorkspaceSettingsPatch {
   if (!input || typeof input !== 'object') return {}
   const source = input as Record<string, unknown>
-  const patch: Parameters<AppSettingsStore['updateWorkspaceSettings']>[0] = {}
+  const patch: WorkspaceSettingsPatch = {}
   if (typeof source.treeWidth === 'number') patch.treeWidth = source.treeWidth
   if (typeof source.panelWidth === 'number') patch.panelWidth = source.panelWidth
-  if (typeof source.lastOpenDirectory === 'string') patch.lastOpenDirectory = source.lastOpenDirectory
-  if (typeof source.lastCreateDirectory === 'string') patch.lastCreateDirectory = source.lastCreateDirectory
+  if (source.lastOpenDirectory === null || typeof source.lastOpenDirectory === 'string') {
+    patch.lastOpenDirectory = source.lastOpenDirectory
+  }
+  if (source.lastCreateDirectory === null || typeof source.lastCreateDirectory === 'string') {
+    patch.lastCreateDirectory = source.lastCreateDirectory
+  }
   return patch
 }
 

@@ -49,9 +49,12 @@ interface StoredSettings {
   }
 }
 
-export type WorkspaceSettingsPatch = Partial<Pick<WorkspaceSettings,
-  'treeWidth' | 'panelWidth' | 'lastOpenDirectory' | 'lastCreateDirectory'
->>
+export interface WorkspaceSettingsPatch {
+  treeWidth?: number
+  panelWidth?: number
+  lastOpenDirectory?: string | null
+  lastCreateDirectory?: string | null
+}
 
 const DEFAULT_TREE_WIDTH = 288
 const DEFAULT_PANEL_WIDTH = 320
@@ -102,19 +105,36 @@ export class AppSettingsStore {
   }
 
   updateWorkspaceSettings(patch: WorkspaceSettingsPatch): WorkspaceSettings {
+    const workspace = this.settings.workspace
+    let changed = false
+
     if (typeof patch.treeWidth === 'number') {
-      this.settings.workspace.treeWidth = clampTreeWidth(patch.treeWidth)
+      const next = clampTreeWidth(patch.treeWidth)
+      if (workspace.treeWidth !== next) {
+        workspace.treeWidth = next
+        changed = true
+      }
     }
     if (typeof patch.panelWidth === 'number') {
-      this.settings.workspace.panelWidth = clampPanelWidth(patch.panelWidth)
+      const next = clampPanelWidth(patch.panelWidth)
+      if (workspace.panelWidth !== next) {
+        workspace.panelWidth = next
+        changed = true
+      }
     }
-    if (typeof patch.lastOpenDirectory === 'string') {
-      this.settings.workspace.lastOpenDirectory = patch.lastOpenDirectory
+    if (patch.lastOpenDirectory === null || typeof patch.lastOpenDirectory === 'string') {
+      if (workspace.lastOpenDirectory !== patch.lastOpenDirectory) {
+        workspace.lastOpenDirectory = patch.lastOpenDirectory
+        changed = true
+      }
     }
-    if (typeof patch.lastCreateDirectory === 'string') {
-      this.settings.workspace.lastCreateDirectory = patch.lastCreateDirectory
+    if (patch.lastCreateDirectory === null || typeof patch.lastCreateDirectory === 'string') {
+      if (workspace.lastCreateDirectory !== patch.lastCreateDirectory) {
+        workspace.lastCreateDirectory = patch.lastCreateDirectory
+        changed = true
+      }
     }
-    this.save()
+    if (changed) this.save()
     return this.getWorkspaceSettings()
   }
 

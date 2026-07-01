@@ -94,9 +94,14 @@ export interface WorkspaceSettings {
   lastProject: LastWorkspaceProject | null
 }
 
-export type WorkspaceSettingsPatch = Partial<Pick<WorkspaceSettings,
-  'treeWidth' | 'panelWidth' | 'lastOpenDirectory' | 'lastCreateDirectory'
->>
+export interface WorkspaceSettingsPatch {
+  treeWidth?: number
+  panelWidth?: number
+  lastOpenDirectory?: string | null
+  lastCreateDirectory?: string | null
+}
+
+export type FolderDialogPurpose = 'open-project' | 'create-project'
 
 // Typed API surface exposed on window.api by the preload script.
 // Renderer code should only interact with main process through this interface.
@@ -191,7 +196,7 @@ export interface ManifestAPI {
     build(from: string, to: string, format: ReportFormat): Promise<Result<{ content: string; suggestedName: string }>>
   }
   dialog: {
-    openFolder(title: string): Promise<string | null>
+    openFolder(title: string, purpose?: FolderDialogPurpose): Promise<string | null>
     openFile(title: string): Promise<string | null>
   }
   menu: {

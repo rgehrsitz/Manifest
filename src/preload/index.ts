@@ -106,8 +106,8 @@ const api: ManifestAPI = {
   },
 
   dialog: {
-    openFolder: (title) =>
-      ipcRenderer.invoke(IPC.DIALOG_OPEN_FOLDER, { title }),
+    openFolder: (title, purpose) =>
+      ipcRenderer.invoke(IPC.DIALOG_OPEN_FOLDER, { title, purpose }),
     openFile: (title) =>
       ipcRenderer.invoke(IPC.DIALOG_OPEN_FILE, { title }),
   },

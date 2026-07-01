@@ -158,6 +158,7 @@
   let unsubscribeMenuCommands: (() => void) | null = null
   let unsubscribeProjectOpenFromOs: (() => void) | null = null
   const brandMark = '/manifest-mark.svg'
+  const WORKSPACE_SETTINGS_SAVE_DELAY_MS = 250
 
   // ─── Derived ──────────────────────────────────────────────────────────────
 
@@ -241,6 +242,8 @@
     const settings = await window.api.settings.get()
     if (settings.ok) {
       applyWorkspaceSettings(settings.data)
+    } else {
+      lastSentWorkspaceSettings = serializeWorkspacePaneSettings(treeWidth, panelWidth)
     }
     workspaceSettingsLoaded = true
 
@@ -262,6 +265,7 @@
     unsubscribeMenuCommands = null
     unsubscribeProjectOpenFromOs?.()
     unsubscribeProjectOpenFromOs = null
+    clearWorkspaceSettingsSaveTimer()
     window.removeEventListener('mousemove', onDragMove)
     window.removeEventListener('mouseup', onDragEnd)
   })
@@ -531,20 +535,30 @@
   })
 
   let lastSentWorkspaceSettings = ''
+  let workspaceSettingsSaveTimer: ReturnType<typeof setTimeout> | null = null
   $effect(() => {
     if (!workspaceSettingsLoaded) return
-    const next = { treeWidth, panelWidth }
-    const serialized = JSON.stringify(next)
-    if (serialized === lastSentWorkspaceSettings) return
-    lastSentWorkspaceSettings = serialized
-    void window.api.settings.updateWorkspace(next)
+    const serialized = serializeWorkspacePaneSettings(treeWidth, panelWidth)
+    if (serialized === lastSentWorkspaceSettings) {
+      clearWorkspaceSettingsSaveTimer()
+      return
+    }
+    clearWorkspaceSettingsSaveTimer()
+    workspaceSettingsSaveTimer = setTimeout(() => {
+      workspaceSettingsSaveTimer = null
+      const next = { treeWidth: Math.round(treeWidth), panelWidth: Math.round(panelWidth) }
+      const nextSerialized = serializeWorkspacePaneSettings(next.treeWidth, next.panelWidth)
+      if (nextSerialized === lastSentWorkspaceSettings) return
+      lastSentWorkspaceSettings = nextSerialized
+      void window.api.settings.updateWorkspace(next)
+    }, WORKSPACE_SETTINGS_SAVE_DELAY_MS)
   })
 
   // ─── Welcome actions ──────────────────────────────────────────────────────
 
   async function openProject() {
     error = null
-    const folderPath = await window.api.dialog.openFolder('Open Project')
+    const folderPath = await window.api.dialog.openFolder('Open Project', 'open-project')
     if (!folderPath) return
 
     const fallbackState = project ? 'open' : 'welcome'
@@ -584,7 +598,7 @@
   }
 
   async function selectFolder() {
-    const folderPath = await window.api.dialog.openFolder('Choose Location')
+    const folderPath = await window.api.dialog.openFolder('Choose Location', 'create-project')
     if (folderPath) {
       newPath = folderPath
       lastCreateDirectory = folderPath
@@ -651,8 +665,22 @@
   function applyWorkspaceSettings(settings: WorkspaceSettings) {
     treeWidth = settings.treeWidth
     panelWidth = settings.panelWidth
+    lastSentWorkspaceSettings = serializeWorkspacePaneSettings(settings.treeWidth, settings.panelWidth)
     lastCreateDirectory = settings.lastCreateDirectory
     lastWorkspaceProject = settings.lastProject
+  }
+
+  function clearWorkspaceSettingsSaveTimer() {
+    if (!workspaceSettingsSaveTimer) return
+    clearTimeout(workspaceSettingsSaveTimer)
+    workspaceSettingsSaveTimer = null
+  }
+
+  function serializeWorkspacePaneSettings(nextTreeWidth: number, nextPanelWidth: number): string {
+    return JSON.stringify({
+      treeWidth: Math.round(nextTreeWidth),
+      panelWidth: Math.round(nextPanelWidth),
+    })
   }
 
   // ─── Tree actions ─────────────────────────────────────────────────────────
