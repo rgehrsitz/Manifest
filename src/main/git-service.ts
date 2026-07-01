@@ -3,9 +3,12 @@
 // Runs operations through a serial queue to prevent .git/index.lock contention.
 
 import { execFile } from 'child_process'
+import { existsSync } from 'fs'
+import { join } from 'path'
 import { promisify } from 'util'
 import type { GitStatus, Snapshot } from '../shared/types'
 import type { Logger } from './logger'
+import { PROJECT_LAUNCHER_FILE } from './project-launcher'
 
 const execFileAsync = promisify(execFile)
 
@@ -104,6 +107,9 @@ export class GitService {
   async initialCommit(projectDir: string): Promise<void> {
     await this.queue.enqueue(async () => {
       await execFileAsync('git', ['add', 'manifest.json'], { cwd: projectDir })
+      if (existsSync(join(projectDir, PROJECT_LAUNCHER_FILE))) {
+        await execFileAsync('git', ['add', PROJECT_LAUNCHER_FILE], { cwd: projectDir })
+      }
       await execFileAsync(
         'git',
         ['-c', 'user.email=manifest@local', '-c', 'user.name=Manifest', 'commit', '-m', 'Initial project'],

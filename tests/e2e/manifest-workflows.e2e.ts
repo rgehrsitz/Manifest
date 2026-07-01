@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import type { ElectronApplication, Page } from '@playwright/test'
+import { _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
 import { expect, test } from './fixtures'
 
 type PersistedProject = {
@@ -13,6 +13,9 @@ type PersistedProject = {
     properties: Record<string, string | number | boolean | null>
   }>
 }
+
+const ROOT_DIR = process.cwd()
+const MAIN_ENTRY = join(ROOT_DIR, 'out', 'main', 'index.js')
 
 function treeRow(page: Page, name: string) {
   return page.locator('[data-testid="tree-node"]', { hasText: name }).first()
@@ -77,17 +80,33 @@ async function writeFixtureProject(targetDir: string, fixtureName: string): Prom
   writeFileSync(join(targetDir, 'manifest.json'), readFileSync(fixturePath, 'utf8'), 'utf8')
 }
 
+async function launchAppWithArgs(args: string[]): Promise<ElectronApplication> {
+  return electron.launch({
+    args: [MAIN_ENTRY, ...args],
+    cwd: ROOT_DIR,
+    env: {
+      ...process.env,
+      NODE_ENV: 'test',
+    },
+  })
+}
+
 test('creates a new project from the welcome flow', async ({ appPage, electronApp, workspaceDir }) => {
   const projectDir = await createProjectThroughUi(appPage, electronApp, workspaceDir, 'Bench Alpha')
   const manifestPath = join(projectDir, 'manifest.json')
+  const launcherPath = join(projectDir, 'Manifest.manifestproject')
 
   expect(existsSync(manifestPath)).toBe(true)
+  expect(existsSync(launcherPath)).toBe(true)
   expect(existsSync(join(projectDir, '.git'))).toBe(true)
 
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as PersistedProject
   expect(manifest.name).toBe('Bench Alpha')
   expect(manifest.nodes).toHaveLength(1)
   expect(manifest.nodes[0]?.parentId).toBeNull()
+
+  const launcher = JSON.parse(readFileSync(launcherPath, 'utf8')) as { projectPath: string }
+  expect(launcher.projectPath).toBe('.')
 })
 
 test('opens an existing project and renders its hierarchy', async ({ appPage, electronApp, workspaceDir }) => {
@@ -216,6 +235,38 @@ test('searches by property value and focuses the selected node', async ({ appPag
   await expect(appPage.getByTestId('search-results')).toHaveCount(0)
   await expect(appPage.locator('[data-testid="tree-node"][data-row-matched="true"]', { hasText: 'Server 2' })).toBeVisible()
   await expect(appPage.locator('[data-testid="tree-node"]', { hasText: 'Server 1' })).toHaveCount(0)
+})
+
+test('opens a project passed as a launch argument', async ({ workspaceDir }) => {
+  const projectDir = join(workspaceDir, 'Launch Arg Lab')
+  await writeFixtureProject(projectDir, 'project-with-nodes.json')
+
+  const launchedApp = await launchAppWithArgs([projectDir])
+  try {
+    const page = await launchedApp.firstWindow()
+    await expect(page.getByTestId('project-view')).toBeVisible()
+    await expect(treeRow(page, 'Rack A')).toBeVisible()
+  } finally {
+    await launchedApp.close()
+  }
+})
+
+test('routes a second-instance project argument to the running window', async ({ appPage, electronApp, workspaceDir }) => {
+  const firstProjectDir = join(workspaceDir, 'First Lab')
+  const secondProjectDir = join(workspaceDir, 'Second Lab')
+  await writeFixtureProject(firstProjectDir, 'empty-project.json')
+  await writeFixtureProject(secondProjectDir, 'project-with-nodes.json')
+
+  await openProjectThroughUi(appPage, electronApp, firstProjectDir)
+  await expect(treeRow(appPage, 'Empty Project')).toBeVisible()
+
+  await electronApp.evaluate(({ app }, argv) => {
+    app.emit('second-instance', {} as never, argv, process.cwd())
+  }, [MAIN_ENTRY, secondProjectDir])
+
+  await expect(treeRow(appPage, 'Rack A')).toBeVisible()
+  const project = await currentProject(appPage)
+  expect(project.name).toBe('Lab Setup')
 })
 
 test('shows an empty state when search finds no matches', async ({ appPage, electronApp, workspaceDir }) => {

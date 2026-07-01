@@ -1,14 +1,15 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron'
 import { existsSync } from 'fs'
 import { writeFile } from 'fs/promises'
-import { join } from 'path'
+import { extname, join, resolve } from 'path'
 import { createLogger } from './logger'
 import { ProjectManager } from './project-manager'
 import { GitService } from './git-service'
 import { IPC } from '../shared/ipc'
 import { ok, err, ErrorCode } from '../shared/errors'
 import { installApplicationMenu, updateApplicationMenuState } from './app-menu'
-import type { NodeTemplate, ImportMapping, NetboxImportOptions } from '../shared/types'
+import { resolveProjectOpenTarget } from './project-open-target'
+import type { Project, Result, NodeTemplate, ImportMapping, NetboxImportOptions } from '../shared/types'
 import type { ReportFormat } from '../shared/report'
 
 // ─── Logging ────────────────────────────────────────────────────────────────
@@ -26,6 +27,10 @@ const gitService     = new GitService(gitLogger)
 const projectManager = new ProjectManager(gitService, projectLogger)
 
 // ─── Window ──────────────────────────────────────────────────────────────────
+
+let mainWindow: BrowserWindow | null = null
+const pendingOpenTargets: string[] = []
+let ownsSingleInstanceLock = false
 
 function createWindow(): BrowserWindow {
   const iconPath = getBrandIconPath()
@@ -47,6 +52,9 @@ function createWindow(): BrowserWindow {
   })
 
   win.once('ready-to-show', () => win.show())
+  win.on('closed', () => {
+    if (mainWindow === win) mainWindow = null
+  })
 
   if (process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(process.env['ELECTRON_RENDERER_URL'])
@@ -54,6 +62,7 @@ function createWindow(): BrowserWindow {
     win.loadFile(join(__dirname, '../renderer/index.html'))
   }
 
+  mainWindow = win
   return win
 }
 
@@ -318,11 +327,30 @@ app.whenReady().then(async () => {
   if (process.platform === 'darwin' && iconPath) {
     app.dock.setIcon(iconPath)
   }
+  await drainPendingOpenTargets()
   createWindow()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+})
+
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
+if (!hasSingleInstanceLock) {
+  app.quit()
+} else {
+  ownsSingleInstanceLock = true
+  app.on('second-instance', (_event, argv) => {
+    focusMainWindow()
+    for (const target of collectOpenTargetsFromArgv(argv)) {
+      void openProjectFromOsTarget(target, { notifyRenderer: true })
+    }
+  })
+}
+
+app.on('open-file', (event, path) => {
+  event.preventDefault()
+  queueOpenTarget(path)
 })
 
 // Flush autosave before quitting so no changes are lost.
@@ -334,6 +362,10 @@ app.on('before-quit', () => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
+
+for (const target of collectOpenTargetsFromArgv(process.argv)) {
+  queueOpenTarget(target)
+}
 
 function getGitInstallInstructions(): string {
   switch (process.platform) {
@@ -349,4 +381,104 @@ function getGitInstallInstructions(): string {
 function getBrandIconPath(): string | undefined {
   const iconPath = join(app.getAppPath(), 'resources', 'icon.png')
   return existsSync(iconPath) ? iconPath : undefined
+}
+
+function queueOpenTarget(targetPath: string): void {
+  if (!ownsSingleInstanceLock) return
+  if (app.isReady()) {
+    void openProjectFromOsTarget(targetPath, { notifyRenderer: true })
+    return
+  }
+  pendingOpenTargets.push(targetPath)
+}
+
+async function drainPendingOpenTargets(): Promise<void> {
+  while (pendingOpenTargets.length > 0) {
+    const target = pendingOpenTargets.shift()
+    if (!target) continue
+    const result = await openProjectFromOsTarget(target, { notifyRenderer: false })
+    if (!result.ok) {
+      await dialog.showMessageBox({
+        type: 'error',
+        title: 'Could Not Open Project',
+        message: result.error.message,
+        buttons: ['OK'],
+      })
+    }
+  }
+}
+
+async function openProjectFromOsTarget(
+  targetPath: string,
+  options: { notifyRenderer: boolean }
+): Promise<Result<Project>> {
+  const resolved = resolveProjectOpenTarget(targetPath)
+  if (!resolved.ok) {
+    notifyProjectOpenFromOs(resolved, options)
+    return resolved
+  }
+
+  if (projectManager.getCurrent()) {
+    const saved = await projectManager.saveProject()
+    if (!saved.ok) {
+      const failure: Result<Project> = { ok: false, error: saved.error }
+      notifyProjectOpenFromOs(failure, options)
+      return failure
+    }
+  }
+
+  const opened = await projectManager.openProject(resolved.data)
+  notifyProjectOpenFromOs(opened, options)
+  return opened
+}
+
+function notifyProjectOpenFromOs(
+  result: Result<Project>,
+  options: { notifyRenderer: boolean }
+): void {
+  if (!options.notifyRenderer) return
+  const win = mainWindow ?? BrowserWindow.getAllWindows()[0]
+  if (!win || win.isDestroyed()) {
+    if (!result.ok) {
+      void dialog.showMessageBox({
+        type: 'error',
+        title: 'Could Not Open Project',
+        message: result.error.message,
+        buttons: ['OK'],
+      })
+    }
+    return
+  }
+  if (!result.ok) {
+    void dialog.showMessageBox(win, {
+      type: 'error',
+      title: 'Could Not Open Project',
+      message: result.error.message,
+      buttons: ['OK'],
+    })
+  }
+  win.webContents.send(IPC.PROJECT_OPENED_FROM_OS, result)
+  if (result.ok) focusMainWindow()
+}
+
+function focusMainWindow(): void {
+  const win = mainWindow ?? BrowserWindow.getAllWindows()[0]
+  if (!win || win.isDestroyed()) return
+  if (win.isMinimized()) win.restore()
+  win.show()
+  win.focus()
+}
+
+function collectOpenTargetsFromArgv(argv: string[]): string[] {
+  return argv.slice(1).filter((arg, index) => {
+    if (!arg || arg.startsWith('-')) return false
+    return !isRuntimeEntrypointArg(arg, index)
+  })
+}
+
+function isRuntimeEntrypointArg(arg: string, index: number): boolean {
+  if (app.isPackaged || index !== 0) return false
+  const extension = extname(arg)
+  if (extension !== '.js' && extension !== '.mjs' && extension !== '.cjs') return false
+  return resolve(arg).startsWith(resolve(app.getAppPath()))
 }

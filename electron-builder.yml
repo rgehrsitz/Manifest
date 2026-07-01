@@ -9,6 +9,13 @@ files:
   - package.json
   - resources/icon.png
 
+fileAssociations:
+  - ext: manifestproject
+    name: Manifest Project
+    description: Manifest project launcher
+    role: Editor
+    icon: resources/icon
+
 mac:
   category: public.app-category.productivity
   icon: resources/icon.icns
