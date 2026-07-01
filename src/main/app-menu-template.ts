@@ -1,11 +1,15 @@
 import type { MenuItemConstructorOptions } from 'electron'
 import { MENU_COMMANDS, type MenuCommandId } from '../shared/menu-commands'
+import type { RecentProjectMenuEntry } from './recent-projects'
 
 export interface AppMenuTemplateOptions {
   platform: NodeJS.Platform
   isDev: boolean
   appName: string
+  recentProjects: RecentProjectMenuEntry[]
   dispatch(command: MenuCommandId): void
+  openRecentProject(path: string): void
+  clearRecentProjects(): void
   openLogsFolder(): void
 }
 
@@ -22,6 +26,32 @@ function commandItem(command: MenuCommandId, dispatch: (command: MenuCommandId) 
 
 function separator(): MenuItemConstructorOptions {
   return { type: 'separator' }
+}
+
+function recentProjectsSubmenu(options: AppMenuTemplateOptions): MenuItemConstructorOptions[] {
+  const entries = options.recentProjects.map(entry => ({
+    label: entry.exists ? entry.name : `${entry.name} (Missing)`,
+    sublabel: entry.path,
+    enabled: entry.exists,
+    click: () => options.openRecentProject(entry.path),
+  } satisfies MenuItemConstructorOptions))
+
+  if (entries.length === 0) {
+    return [
+      { label: 'No Recent Projects', enabled: false },
+      separator(),
+      { label: 'Clear Menu', enabled: false },
+    ]
+  }
+
+  return [
+    ...entries,
+    separator(),
+    {
+      label: 'Clear Menu',
+      click: options.clearRecentProjects,
+    },
+  ]
 }
 
 export function buildAppMenuTemplate(options: AppMenuTemplateOptions): MenuItemConstructorOptions[] {
@@ -50,6 +80,10 @@ export function buildAppMenuTemplate(options: AppMenuTemplateOptions): MenuItemC
     submenu: [
       commandItem('project:new', options.dispatch),
       commandItem('project:open', options.dispatch),
+      {
+        label: 'Open Recent',
+        submenu: recentProjectsSubmenu(options),
+      },
       separator(),
       commandItem('project:save', options.dispatch),
       commandItem('project:close', options.dispatch),
