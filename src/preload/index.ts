@@ -125,6 +125,13 @@ const api: ManifestAPI = {
     updateState: (state) =>
       ipcRenderer.send(IPC.MENU_STATE_UPDATE, state),
   },
+
+  settings: {
+    get: () =>
+      ipcRenderer.invoke(IPC.SETTINGS_GET, {}),
+    updateWorkspace: (patch) =>
+      ipcRenderer.invoke(IPC.SETTINGS_UPDATE_WORKSPACE, patch),
+  },
 }
 
 contextBridge.exposeInMainWorld('api', api)

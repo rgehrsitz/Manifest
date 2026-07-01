@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, shell, screen } from 'electron'
 import { existsSync } from 'fs'
 import { writeFile } from 'fs/promises'
 import { extname, join, resolve } from 'path'
@@ -14,6 +14,7 @@ import {
 } from './app-menu'
 import { resolveProjectOpenTarget } from './project-open-target'
 import { RecentProjectsStore, getRecentDocumentPath } from './recent-projects'
+import { AppSettingsStore, resolveRestorableWindowBounds } from './app-settings'
 import {
   ensureFinalProjectSave,
   finalSaveFailureActionForResponse,
@@ -38,6 +39,7 @@ const projectLogger = createLogger('project', join(logDir, 'project.log'))
 const gitService     = new GitService(gitLogger)
 const projectManager = new ProjectManager(gitService, projectLogger)
 const recentProjects = new RecentProjectsStore(join(userData, 'recent-projects.json'))
+const appSettings = new AppSettingsStore(join(userData, 'app-settings.json'))
 
 // ─── Window ──────────────────────────────────────────────────────────────────
 
@@ -47,12 +49,17 @@ let ownsSingleInstanceLock = false
 let quitAfterFinalSave = false
 let finalQuitInProgress = false
 const approvedWindowCloses = new WeakSet<BrowserWindow>()
+let windowStateSaveTimer: ReturnType<typeof setTimeout> | null = null
 
 function createWindow(): BrowserWindow {
   const iconPath = getBrandIconPath()
+  const storedWindowState = appSettings.getWindowState()
+  const restoredBounds = resolveRestorableWindowBounds(storedWindowState, screen.getAllDisplays())
   const win = new BrowserWindow({
-    width: 1280,
-    height: 800,
+    x: restoredBounds?.x,
+    y: restoredBounds?.y,
+    width: restoredBounds?.width ?? 1280,
+    height: restoredBounds?.height ?? 800,
     minWidth: 900,
     minHeight: 600,
     show: false,
@@ -67,8 +74,22 @@ function createWindow(): BrowserWindow {
     },
   })
 
+  if (storedWindowState?.isMaximized) {
+    win.maximize()
+  }
+  if (storedWindowState?.isFullScreen) {
+    win.setFullScreen(true)
+  }
+
   win.once('ready-to-show', () => win.show())
+  win.on('move', () => scheduleWindowStateSave(win))
+  win.on('resize', () => scheduleWindowStateSave(win))
+  win.on('maximize', () => saveWindowState(win))
+  win.on('unmaximize', () => saveWindowState(win))
+  win.on('enter-full-screen', () => saveWindowState(win))
+  win.on('leave-full-screen', () => saveWindowState(win))
   win.on('close', (event) => {
+    saveWindowState(win)
     if (quitAfterFinalSave || approvedWindowCloses.has(win) || !projectManager.getCurrent()) return
     event.preventDefault()
     void closeWindowAfterFinalSave(win)
@@ -251,10 +272,15 @@ function registerIpcHandlers(): void {
   // ── Dialog helpers ───────────────────────────────────────────────────────
 
   ipcMain.handle(IPC.DIALOG_OPEN_FOLDER, async (_, { title }: { title: string }) => {
+    const directoryKind = directoryKindForDialogTitle(title)
     const result = await dialog.showOpenDialog({
       title,
+      defaultPath: directoryKind ? appSettings.getLastDirectory(directoryKind) : undefined,
       properties: ['openDirectory', 'createDirectory'],
     })
+    if (!result.canceled && result.filePaths[0] && directoryKind) {
+      appSettings.recordLastDirectory(directoryKind, result.filePaths[0])
+    }
     return result.canceled ? null : result.filePaths[0]
   })
 
@@ -277,6 +303,14 @@ function registerIpcHandlers(): void {
   ipcMain.on(IPC.MENU_STATE_UPDATE, (_, state: unknown) => {
     updateApplicationMenuState(state)
   })
+
+  ipcMain.handle(IPC.SETTINGS_GET, () =>
+    ok(appSettings.getWorkspaceSettings())
+  )
+
+  ipcMain.handle(IPC.SETTINGS_UPDATE_WORKSPACE, (_, patch: unknown) =>
+    ok(appSettings.updateWorkspaceSettings(normalizeWorkspaceSettingsPatch(patch)))
+  )
 
   // ── Snapshots ────────────────────────────────────────────────────────────
 
@@ -414,6 +448,26 @@ function getBrandIconPath(): string | undefined {
   return existsSync(iconPath) ? iconPath : undefined
 }
 
+function scheduleWindowStateSave(win: BrowserWindow): void {
+  if (windowStateSaveTimer) clearTimeout(windowStateSaveTimer)
+  windowStateSaveTimer = setTimeout(() => {
+    windowStateSaveTimer = null
+    saveWindowState(win)
+  }, 250)
+}
+
+function saveWindowState(win: BrowserWindow): void {
+  if (win.isDestroyed()) return
+  const bounds = (win.isMaximized() || win.isFullScreen())
+    ? win.getNormalBounds()
+    : win.getBounds()
+  appSettings.updateWindowState({
+    bounds,
+    isMaximized: win.isMaximized(),
+    isFullScreen: win.isFullScreen(),
+  })
+}
+
 async function closeProjectAfterFinalSave(owner: BrowserWindow | null): Promise<Result<void>> {
   const outcome = await runFinalSaveFlow('project-close', owner)
   if (outcome === 'proceed-anyway') {
@@ -540,10 +594,28 @@ function clearRecentProjects(): void {
 function trackRecentProject(result: Result<Project>): void {
   if (!result.ok) return
   if (typeof result.data.path !== 'string' || result.data.path.trim() === '') return
+  appSettings.recordLastProject(result.data)
   recentProjects.add(result.data)
   const documentPath = getRecentDocumentPath(result.data.path)
   if (documentPath) app.addRecentDocument(documentPath)
   updateApplicationMenuRecentProjects(recentProjects.all())
+}
+
+function directoryKindForDialogTitle(title: string): 'open' | 'create' | null {
+  if (/^open project$/i.test(title)) return 'open'
+  if (/^choose location$/i.test(title)) return 'create'
+  return null
+}
+
+function normalizeWorkspaceSettingsPatch(input: unknown): Parameters<AppSettingsStore['updateWorkspaceSettings']>[0] {
+  if (!input || typeof input !== 'object') return {}
+  const source = input as Record<string, unknown>
+  const patch: Parameters<AppSettingsStore['updateWorkspaceSettings']>[0] = {}
+  if (typeof source.treeWidth === 'number') patch.treeWidth = source.treeWidth
+  if (typeof source.panelWidth === 'number') patch.panelWidth = source.panelWidth
+  if (typeof source.lastOpenDirectory === 'string') patch.lastOpenDirectory = source.lastOpenDirectory
+  if (typeof source.lastCreateDirectory === 'string') patch.lastCreateDirectory = source.lastCreateDirectory
+  return patch
 }
 
 function notifyProjectOpenFromOs(

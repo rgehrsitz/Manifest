@@ -12,6 +12,7 @@
   } from '../../shared/menu-commands'
   import type { MergedTree } from '../../shared/merged-tree'
   import { computeSubtreeSummaries, templatesForNode } from '../../shared/merged-tree'
+  import type { WorkspaceSettings } from '../../shared/ipc'
   import { buildTree, getSiblingIndex, getAncestorIds } from './lib/tree'
   import { flattenTree } from './lib/tree-rows'
   import { cycleIndex } from './lib/tree-typeahead'
@@ -116,6 +117,9 @@
   // Resizable pane widths (px).
   let treeWidth:  number = $state(288)  // 18rem default
   let panelWidth: number = $state(320)  // 20rem default
+  let workspaceSettingsLoaded: boolean = $state(false)
+  let lastCreateDirectory: string | null = $state(null)
+  let lastWorkspaceProject: WorkspaceSettings['lastProject'] = $state(null)
 
   // foldIds the user has manually expanded inside the Space-Folding Lens.
   // Resets on project close / mode flip — handled in those flows below.
@@ -234,6 +238,12 @@
       handleProjectOpenedFromOs(result)
     })
 
+    const settings = await window.api.settings.get()
+    if (settings.ok) {
+      applyWorkspaceSettings(settings.data)
+    }
+    workspaceSettingsLoaded = true
+
     // Rehydrate if main already has a project open (e.g. macOS activate).
     const result = await window.api.project.getCurrent()
     if (result.ok && result.data) {
@@ -341,9 +351,7 @@
     }
 
     resetOpenProjectUi()
-    project = result.data
-    selectRoot(result.data)
-    appState = 'open'
+    applyOpenedProject(result.data)
     error = null
   }
 
@@ -388,6 +396,7 @@
       showToast('Close the current project before creating a new project.')
       return
     }
+    newPath = lastCreateDirectory ?? ''
     appState = 'creating'
     error = null
   }
@@ -521,6 +530,16 @@
     window.api.menu.updateState(next)
   })
 
+  let lastSentWorkspaceSettings = ''
+  $effect(() => {
+    if (!workspaceSettingsLoaded) return
+    const next = { treeWidth, panelWidth }
+    const serialized = JSON.stringify(next)
+    if (serialized === lastSentWorkspaceSettings) return
+    lastSentWorkspaceSettings = serialized
+    void window.api.settings.updateWorkspace(next)
+  })
+
   // ─── Welcome actions ──────────────────────────────────────────────────────
 
   async function openProject() {
@@ -542,22 +561,34 @@
     const result = await window.api.project.open(folderPath)
     if (result.ok) {
       resetOpenProjectUi()
-      project = result.data
-      selectRoot(result.data)
-      workingCopyBaseSnapshot = null
-      workingCopyDirty = false
-      loadWarningsDismissed = false
-      projectWarningsDismissed = false
-      appState = 'open'
+      applyOpenedProject(result.data)
     } else {
       error = result.error.message
       appState = fallbackState
     }
   }
 
+  async function openLastProject() {
+    if (!lastWorkspaceProject?.exists) return
+    error = null
+    appState = 'loading'
+    const result = await window.api.project.open(lastWorkspaceProject.path)
+    if (result.ok) {
+      resetOpenProjectUi()
+      applyOpenedProject(result.data)
+    } else {
+      error = result.error.message
+      appState = 'welcome'
+      lastWorkspaceProject = { ...lastWorkspaceProject, exists: false }
+    }
+  }
+
   async function selectFolder() {
     const folderPath = await window.api.dialog.openFolder('Choose Location')
-    if (folderPath) newPath = folderPath
+    if (folderPath) {
+      newPath = folderPath
+      lastCreateDirectory = folderPath
+    }
   }
 
   async function createProject() {
@@ -567,12 +598,7 @@
     const result = await window.api.project.create(newName.trim(), newPath)
     creating = false
     if (result.ok) {
-      project = result.data
-      selectRoot(result.data)
-      workingCopyBaseSnapshot = null
-      workingCopyDirty = false
-      projectWarningsDismissed = false
-      appState = 'open'
+      applyOpenedProject(result.data)
     } else {
       error = result.error.message
     }
@@ -603,6 +629,30 @@
     compareExpanded = new Set()
     lensExpandedFolds = new Set()
     // stashedGhostSelection already cleared by setSelection(null) above.
+  }
+
+  function applyOpenedProject(openedProject: Project) {
+    project = openedProject
+    selectRoot(openedProject)
+    workingCopyBaseSnapshot = null
+    workingCopyDirty = false
+    loadWarningsDismissed = false
+    projectWarningsDismissed = false
+    appState = 'open'
+    if (openedProject.path) {
+      lastWorkspaceProject = {
+        path: openedProject.path,
+        name: openedProject.name,
+        exists: true,
+      }
+    }
+  }
+
+  function applyWorkspaceSettings(settings: WorkspaceSettings) {
+    treeWidth = settings.treeWidth
+    panelWidth = settings.panelWidth
+    lastCreateDirectory = settings.lastCreateDirectory
+    lastWorkspaceProject = settings.lastProject
   }
 
   // ─── Tree actions ─────────────────────────────────────────────────────────
@@ -1334,6 +1384,17 @@
       {/if}
 
       <div class="flex flex-col gap-3 w-full">
+        {#if lastWorkspaceProject?.exists}
+          <button
+            onclick={openLastProject}
+            class="w-full bg-white hover:bg-stone-50 text-stone-700 text-sm font-medium
+                   px-4 py-2.5 rounded-lg border border-stone-200 transition-colors duration-150
+                   cursor-default"
+            data-testid="reopen-last-project-btn"
+          >
+            Reopen {lastWorkspaceProject.name}
+          </button>
+        {/if}
         <button
           onclick={openProject}
           class="w-full bg-stone-800 hover:bg-stone-700 text-white text-sm font-medium
