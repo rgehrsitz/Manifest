@@ -6,8 +6,11 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '../shared/ipc'
 import type { ManifestAPI } from '../shared/ipc'
 import { isMenuCommandId } from '../shared/menu-commands'
+import { desktopChromeForPlatform } from '../shared/desktop-chrome'
 
 const api: ManifestAPI = {
+  platform: desktopChromeForPlatform(process.platform),
+
   project: {
     create: (name, parentPath) =>
       ipcRenderer.invoke(IPC.PROJECT_CREATE, { name, parentPath }),

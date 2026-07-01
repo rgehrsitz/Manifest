@@ -126,6 +126,19 @@ test('creates a new project from the welcome flow', async ({ appPage, electronAp
   expect(launcher.projectPath).toBe('.')
 })
 
+test('renders platform-aware desktop chrome', async ({ appPage, electronApp, workspaceDir }) => {
+  await createProjectThroughUi(appPage, electronApp, workspaceDir, 'Chrome Bench')
+
+  const chrome = await appPage.evaluate(() => window.api.platform)
+  const titlebarClass = await appPage.getByTestId('project-titlebar').getAttribute('class')
+  expect(titlebarClass).not.toBeNull()
+  const projectTitlebarClass = titlebarClass ?? ''
+
+  await expect(appPage.getByTestId('window-drag-region')).toHaveCount(chrome.supportsWindowDragRegion ? 1 : 0)
+  expect(projectTitlebarClass).toContain(chrome.reservesTrafficLightSpace ? 'pl-20' : 'pl-4')
+  expect(projectTitlebarClass.includes('[-webkit-app-region:drag]')).toBe(chrome.supportsWindowDragRegion)
+})
+
 test('adds opened projects to native Open Recent and OS recent documents', async ({ appPage, electronApp, workspaceDir }) => {
   await electronApp.evaluate(({ app }) => {
     const state = globalThis as typeof globalThis & { __manifestRecentDocuments?: string[] }

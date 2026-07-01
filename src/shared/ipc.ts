@@ -34,6 +34,7 @@ import type {
 import type { MergedTree } from './merged-tree'
 import type { ReportFormat } from './report'
 import type { MenuCommandId, MenuCommandState } from './menu-commands'
+import type { DesktopChromeInfo } from './desktop-chrome'
 
 // Channel name constants — use these everywhere, never raw strings.
 export const IPC = {
@@ -110,6 +111,7 @@ export type FolderDialogPurpose = 'open-project' | 'create-project'
 // after each mutation. The renderer replaces its local store entirely, which
 // eliminates any possibility of partial-sync bugs.
 export interface ManifestAPI {
+  platform: DesktopChromeInfo
   project: {
     create(name: string, parentPath: string): Promise<Result<Project>>
     open(path: string): Promise<Result<Project>>
