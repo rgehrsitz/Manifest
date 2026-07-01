@@ -7,8 +7,13 @@ import { ProjectManager } from './project-manager'
 import { GitService } from './git-service'
 import { IPC } from '../shared/ipc'
 import { ok, err, ErrorCode } from '../shared/errors'
-import { installApplicationMenu, updateApplicationMenuState } from './app-menu'
+import {
+  installApplicationMenu,
+  updateApplicationMenuRecentProjects,
+  updateApplicationMenuState,
+} from './app-menu'
 import { resolveProjectOpenTarget } from './project-open-target'
+import { RecentProjectsStore, getRecentDocumentPath } from './recent-projects'
 import type { Project, Result, NodeTemplate, ImportMapping, NetboxImportOptions } from '../shared/types'
 import type { ReportFormat } from '../shared/report'
 
@@ -25,6 +30,7 @@ const projectLogger = createLogger('project', join(logDir, 'project.log'))
 
 const gitService     = new GitService(gitLogger)
 const projectManager = new ProjectManager(gitService, projectLogger)
+const recentProjects = new RecentProjectsStore(join(userData, 'recent-projects.json'))
 
 // ─── Window ──────────────────────────────────────────────────────────────────
 
@@ -72,13 +78,17 @@ function registerIpcHandlers(): void {
 
   // ── Project lifecycle ────────────────────────────────────────────────────
 
-  ipcMain.handle(IPC.PROJECT_CREATE, (_, { name, parentPath }: { name: string; parentPath: string }) =>
-    projectManager.createProject(name, parentPath)
-  )
+  ipcMain.handle(IPC.PROJECT_CREATE, async (_, { name, parentPath }: { name: string; parentPath: string }) => {
+    const result = await projectManager.createProject(name, parentPath)
+    trackRecentProject(result)
+    return result
+  })
 
-  ipcMain.handle(IPC.PROJECT_OPEN, (_, { path }: { path: string }) =>
-    projectManager.openProject(path)
-  )
+  ipcMain.handle(IPC.PROJECT_OPEN, async (_, { path }: { path: string }) => {
+    const result = await projectManager.openProject(path)
+    trackRecentProject(result)
+    return result
+  })
 
   ipcMain.handle(IPC.PROJECT_SAVE, async () =>
     projectManager.saveProject()
@@ -322,6 +332,9 @@ app.whenReady().then(async () => {
     isDev: Boolean(process.env['ELECTRON_RENDERER_URL']),
     appName: app.name || 'Manifest',
     logsPath: logDir,
+    recentProjects: recentProjects.all(),
+    openRecentProject: openRecentProject,
+    clearRecentProjects: clearRecentProjects,
   })
   const iconPath = getBrandIconPath()
   if (process.platform === 'darwin' && iconPath) {
@@ -428,8 +441,28 @@ async function openProjectFromOsTarget(
   }
 
   const opened = await projectManager.openProject(resolved.data)
+  trackRecentProject(opened)
   notifyProjectOpenFromOs(opened, options)
   return opened
+}
+
+function openRecentProject(projectPath: string): void {
+  void openProjectFromOsTarget(projectPath, { notifyRenderer: true })
+}
+
+function clearRecentProjects(): void {
+  recentProjects.clear()
+  app.clearRecentDocuments()
+  updateApplicationMenuRecentProjects(recentProjects.all())
+}
+
+function trackRecentProject(result: Result<Project>): void {
+  if (!result.ok) return
+  if (typeof result.data.path !== 'string' || result.data.path.trim() === '') return
+  recentProjects.add(result.data)
+  const documentPath = getRecentDocumentPath(result.data.path)
+  if (documentPath) app.addRecentDocument(documentPath)
+  updateApplicationMenuRecentProjects(recentProjects.all())
 }
 
 function notifyProjectOpenFromOs(

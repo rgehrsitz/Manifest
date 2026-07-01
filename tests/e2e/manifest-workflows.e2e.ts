@@ -16,6 +16,7 @@ type PersistedProject = {
 
 const ROOT_DIR = process.cwd()
 const MAIN_ENTRY = join(ROOT_DIR, 'out', 'main', 'index.js')
+const PROJECT_LAUNCHER_FILE = 'Manifest.manifestproject'
 
 function treeRow(page: Page, name: string) {
   return page.locator('[data-testid="tree-node"]', { hasText: name }).first()
@@ -74,6 +75,22 @@ async function currentProject(page: Page): Promise<PersistedProject> {
   return result.data
 }
 
+async function nativeOpenRecentMenuItems(electronApp: ElectronApplication): Promise<Array<{
+  label: string
+  enabled: boolean
+  sublabel?: string
+}>> {
+  return electronApp.evaluate(({ Menu }) => {
+    const fileMenu = Menu.getApplicationMenu()?.items.find(item => item.label === 'File')
+    const openRecentMenu = fileMenu?.submenu?.items.find(item => item.label === 'Open Recent')
+    return openRecentMenu?.submenu?.items.map(item => ({
+      label: item.label,
+      enabled: item.enabled,
+      sublabel: item.sublabel,
+    })) ?? []
+  })
+}
+
 async function writeFixtureProject(targetDir: string, fixtureName: string): Promise<void> {
   mkdirSync(targetDir, { recursive: true })
   const fixturePath = join(process.cwd(), 'tests', 'fixtures', fixtureName)
@@ -107,6 +124,30 @@ test('creates a new project from the welcome flow', async ({ appPage, electronAp
 
   const launcher = JSON.parse(readFileSync(launcherPath, 'utf8')) as { projectPath: string }
   expect(launcher.projectPath).toBe('.')
+})
+
+test('adds opened projects to native Open Recent and OS recent documents', async ({ appPage, electronApp, workspaceDir }) => {
+  await electronApp.evaluate(({ app }) => {
+    const state = globalThis as typeof globalThis & { __manifestRecentDocuments?: string[] }
+    state.__manifestRecentDocuments = []
+    app.addRecentDocument = (path: string) => {
+      state.__manifestRecentDocuments?.push(path)
+    }
+  })
+
+  const projectDir = await createProjectThroughUi(appPage, electronApp, workspaceDir, 'Recent Bench')
+  const recentItems = await nativeOpenRecentMenuItems(electronApp)
+  const addedDocuments = await electronApp.evaluate(() => {
+    const state = globalThis as typeof globalThis & { __manifestRecentDocuments?: string[] }
+    return state.__manifestRecentDocuments ?? []
+  })
+
+  expect(recentItems[0]).toMatchObject({
+    label: 'Recent Bench',
+    enabled: true,
+    sublabel: projectDir,
+  })
+  expect(addedDocuments).toContain(join(projectDir, PROJECT_LAUNCHER_FILE))
 })
 
 test('opens an existing project and renders its hierarchy', async ({ appPage, electronApp, workspaceDir }) => {

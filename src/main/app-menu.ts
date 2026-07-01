@@ -7,21 +7,57 @@ import {
   type MenuCommandState,
 } from '../shared/menu-commands'
 import { buildAppMenuTemplate } from './app-menu-template'
+import type { RecentProjectMenuEntry } from './recent-projects'
 
 let commandItems = new Map<MenuCommandId, MenuItem>()
 let commandState = normalizeMenuCommandState(null)
+let installOptions: {
+  platform: NodeJS.Platform
+  isDev: boolean
+  appName: string
+  logsPath: string
+  openRecentProject(path: string): void
+  clearRecentProjects(): void
+} | null = null
+let recentProjects: RecentProjectMenuEntry[] = []
 
 export function installApplicationMenu(options: {
   platform: NodeJS.Platform
   isDev: boolean
   appName: string
   logsPath: string
+  recentProjects: RecentProjectMenuEntry[]
+  openRecentProject(path: string): void
+  clearRecentProjects(): void
 }): void {
+  installOptions = {
+    platform: options.platform,
+    isDev: options.isDev,
+    appName: options.appName,
+    logsPath: options.logsPath,
+    openRecentProject: options.openRecentProject,
+    clearRecentProjects: options.clearRecentProjects,
+  }
+  recentProjects = options.recentProjects
+  rebuildApplicationMenu()
+}
+
+export function updateApplicationMenuRecentProjects(nextProjects: RecentProjectMenuEntry[]): void {
+  recentProjects = nextProjects
+  rebuildApplicationMenu()
+}
+
+function rebuildApplicationMenu(): void {
+  if (!installOptions) return
+  const options = installOptions
   const menu = Menu.buildFromTemplate(buildAppMenuTemplate({
     platform: options.platform,
     isDev: options.isDev,
     appName: options.appName,
+    recentProjects,
     dispatch: dispatchMenuCommand,
+    openRecentProject: options.openRecentProject,
+    clearRecentProjects: options.clearRecentProjects,
     openLogsFolder: () => {
       void shell.openPath(options.logsPath)
     },
