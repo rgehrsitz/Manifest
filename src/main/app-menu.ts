@@ -18,6 +18,10 @@ let installOptions: {
   logsPath: string
   openRecentProject(path: string): void
   clearRecentProjects(): void
+  openPreferences(): void
+  openDocumentation(): void
+  reportIssue(): void
+  copyDiagnostics(): void
 } | null = null
 let recentProjects: RecentProjectMenuEntry[] = []
 
@@ -29,6 +33,10 @@ export function installApplicationMenu(options: {
   recentProjects: RecentProjectMenuEntry[]
   openRecentProject(path: string): void
   clearRecentProjects(): void
+  openPreferences(): void
+  openDocumentation(): void
+  reportIssue(): void
+  copyDiagnostics(): void
 }): void {
   installOptions = {
     platform: options.platform,
@@ -37,6 +45,10 @@ export function installApplicationMenu(options: {
     logsPath: options.logsPath,
     openRecentProject: options.openRecentProject,
     clearRecentProjects: options.clearRecentProjects,
+    openPreferences: options.openPreferences,
+    openDocumentation: options.openDocumentation,
+    reportIssue: options.reportIssue,
+    copyDiagnostics: options.copyDiagnostics,
   }
   recentProjects = options.recentProjects
   rebuildApplicationMenu()
@@ -58,9 +70,13 @@ function rebuildApplicationMenu(): void {
     dispatch: dispatchMenuCommand,
     openRecentProject: options.openRecentProject,
     clearRecentProjects: options.clearRecentProjects,
+    openPreferences: options.openPreferences,
+    openDocumentation: options.openDocumentation,
+    reportIssue: options.reportIssue,
     openLogsFolder: () => {
       void shell.openPath(options.logsPath)
     },
+    copyDiagnostics: options.copyDiagnostics,
   }))
 
   Menu.setApplicationMenu(menu)

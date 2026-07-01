@@ -10,7 +10,11 @@ export interface AppMenuTemplateOptions {
   dispatch(command: MenuCommandId): void
   openRecentProject(path: string): void
   clearRecentProjects(): void
+  openPreferences(): void
+  openDocumentation(): void
+  reportIssue(): void
   openLogsFolder(): void
+  copyDiagnostics(): void
 }
 
 function commandItem(command: MenuCommandId, dispatch: (command: MenuCommandId) => void): MenuItemConstructorOptions {
@@ -63,6 +67,11 @@ export function buildAppMenuTemplate(options: AppMenuTemplateOptions): MenuItemC
       label: options.appName,
       submenu: [
         { role: 'about' },
+        {
+          label: 'Settings...',
+          accelerator: 'Command+,',
+          click: options.openPreferences,
+        },
         separator(),
         { role: 'services' },
         separator(),
@@ -98,7 +107,18 @@ export function buildAppMenuTemplate(options: AppMenuTemplateOptions): MenuItemC
         ],
       },
       commandItem('report:copyMarkdown', options.dispatch),
-      ...(isMac ? [] : [separator(), { role: 'quit' } satisfies MenuItemConstructorOptions]),
+      ...(isMac
+        ? []
+        : [
+            separator(),
+            {
+              label: 'Settings...',
+              accelerator: 'Control+,',
+              click: options.openPreferences,
+            } satisfies MenuItemConstructorOptions,
+            separator(),
+            { role: 'quit' } satisfies MenuItemConstructorOptions,
+          ]),
     ],
   })
 
@@ -177,8 +197,21 @@ export function buildAppMenuTemplate(options: AppMenuTemplateOptions): MenuItemC
     label: 'Help',
     submenu: [
       {
+        label: 'Manifest Documentation',
+        click: options.openDocumentation,
+      },
+      {
+        label: 'Report an Issue...',
+        click: options.reportIssue,
+      },
+      separator(),
+      {
         label: 'Open Logs Folder',
         click: options.openLogsFolder,
+      },
+      {
+        label: 'Copy Diagnostics',
+        click: options.copyDiagnostics,
       },
       ...(isMac ? [] : [separator(), { role: 'about' } satisfies MenuItemConstructorOptions]),
     ],

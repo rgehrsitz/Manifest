@@ -17,7 +17,11 @@ function templateFor(
     dispatch: () => {},
     openRecentProject: () => {},
     clearRecentProjects: () => {},
+    openPreferences: () => {},
+    openDocumentation: () => {},
+    reportIssue: () => {},
     openLogsFolder: () => {},
+    copyDiagnostics: () => {},
   })
 }
 
@@ -54,6 +58,7 @@ describe('buildAppMenuTemplate', () => {
     expect(labels[0]).toBe('Manifest')
     expect(submenu(fileMenu(template)).some(item => item.role === 'quit')).toBe(false)
     expect(submenu(template[0]!).some(item => item.role === 'quit')).toBe(true)
+    expect(submenu(template[0]!).some(item => item.label === 'Settings...')).toBe(true)
   })
 
   it('puts quit under File on non-mac platforms', () => {
@@ -62,6 +67,7 @@ describe('buildAppMenuTemplate', () => {
 
     expect(labels[0]).toBe('File')
     expect(submenu(fileMenu(template)).some(item => item.role === 'quit')).toBe(true)
+    expect(submenu(fileMenu(template)).some(item => item.label === 'Settings...')).toBe(true)
   })
 
   it('renders every shared command exactly once and disabled by default', () => {
@@ -111,5 +117,20 @@ describe('buildAppMenuTemplate', () => {
     expect(items[0]).toMatchObject({ label: 'Lab', sublabel: '/tmp/Lab', enabled: true })
     expect(items[1]).toMatchObject({ label: 'Missing (Missing)', sublabel: '/tmp/Missing', enabled: false })
     expect(items[3]).toMatchObject({ label: 'Clear Menu' })
+  })
+
+  it('renders desktop help actions', () => {
+    const helpMenu = templateFor('linux').find(item => item.label === 'Help')
+    if (!helpMenu) throw new Error('Help menu not found')
+
+    expect(submenu(helpMenu).map(item => item.label)).toEqual([
+      'Manifest Documentation',
+      'Report an Issue...',
+      undefined,
+      'Open Logs Folder',
+      'Copy Diagnostics',
+      undefined,
+      undefined,
+    ])
   })
 })

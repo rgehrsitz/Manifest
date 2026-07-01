@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, screen } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, shell, screen, clipboard } from 'electron'
 import { existsSync } from 'fs'
 import { writeFile } from 'fs/promises'
 import { extname, join, resolve } from 'path'
@@ -16,6 +16,7 @@ import { resolveProjectOpenTarget } from './project-open-target'
 import { RecentProjectsStore, getRecentDocumentPath } from './recent-projects'
 import { AppSettingsStore, resolveRestorableWindowBounds, type WorkspaceSettingsPatch } from './app-settings'
 import { desktopChromeForPlatform } from '../shared/desktop-chrome'
+import { buildDiagnostics } from './diagnostics'
 import {
   ensureFinalProjectSave,
   finalSaveFailureActionForResponse,
@@ -41,6 +42,8 @@ const gitService     = new GitService(gitLogger)
 const projectManager = new ProjectManager(gitService, projectLogger)
 const recentProjects = new RecentProjectsStore(join(userData, 'recent-projects.json'))
 const appSettings = new AppSettingsStore(join(userData, 'app-settings.json'))
+const DOCUMENTATION_URL = 'https://github.com/rgehrsitz/Manifest#readme'
+const REPORT_ISSUE_URL = 'https://github.com/rgehrsitz/Manifest/issues/new'
 
 // ─── Window ──────────────────────────────────────────────────────────────────
 
@@ -386,8 +389,13 @@ app.whenReady().then(async () => {
     recentProjects: recentProjects.all(),
     openRecentProject: openRecentProject,
     clearRecentProjects: clearRecentProjects,
+    openPreferences: openPreferences,
+    openDocumentation: openDocumentation,
+    reportIssue: reportIssue,
+    copyDiagnostics: copyDiagnostics,
   })
   const iconPath = getBrandIconPath()
+  configureAboutPanel(iconPath)
   if (process.platform === 'darwin' && iconPath) {
     app.dock.setIcon(iconPath)
   }
@@ -448,6 +456,17 @@ function getGitInstallInstructions(): string {
 function getBrandIconPath(): string | undefined {
   const iconPath = join(app.getAppPath(), 'resources', 'icon.png')
   return existsSync(iconPath) ? iconPath : undefined
+}
+
+function configureAboutPanel(iconPath: string | undefined): void {
+  app.setAboutPanelOptions({
+    applicationName: app.name || 'Manifest',
+    applicationVersion: app.getVersion(),
+    version: app.getVersion(),
+    copyright: `Copyright © ${new Date().getFullYear()} Manifest contributors`,
+    website: DOCUMENTATION_URL,
+    iconPath,
+  })
 }
 
 function scheduleWindowStateSave(win: BrowserWindow): void {
@@ -591,6 +610,61 @@ function clearRecentProjects(): void {
   recentProjects.clear()
   app.clearRecentDocuments()
   updateApplicationMenuRecentProjects(recentProjects.all())
+}
+
+function openPreferences(): void {
+  const owner = mainWindow ?? BrowserWindow.getFocusedWindow()
+  const options = {
+    type: 'info' as const,
+    title: 'Settings',
+    message: 'Manifest Settings',
+    detail: 'Manifest currently saves workspace layout, window placement, recent projects, and dialog locations automatically. App-level preferences will appear here as they are added.',
+    buttons: ['OK'],
+  }
+  if (owner && !owner.isDestroyed()) {
+    void dialog.showMessageBox(owner, options)
+  } else {
+    void dialog.showMessageBox(options)
+  }
+}
+
+function openDocumentation(): void {
+  void shell.openExternal(DOCUMENTATION_URL)
+}
+
+function reportIssue(): void {
+  void shell.openExternal(REPORT_ISSUE_URL)
+}
+
+async function copyDiagnostics(): Promise<void> {
+  const diagnostics = buildDiagnostics({
+    appName: app.name || 'Manifest',
+    appVersion: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    electronVersion: process.versions.electron,
+    chromeVersion: process.versions.chrome,
+    nodeVersion: process.versions.node,
+    gitStatus: await gitService.checkVersion(),
+    projectPath: projectManager.getCurrent()?.path ?? null,
+    logsPath: logDir,
+    userDataPath: userData,
+  })
+  clipboard.writeText(diagnostics)
+
+  const owner = mainWindow ?? BrowserWindow.getFocusedWindow()
+  const options = {
+    type: 'info' as const,
+    title: 'Diagnostics Copied',
+    message: 'Diagnostics copied to the clipboard.',
+    detail: diagnostics,
+    buttons: ['OK'],
+  }
+  if (owner && !owner.isDestroyed()) {
+    await dialog.showMessageBox(owner, options)
+  } else {
+    await dialog.showMessageBox(options)
+  }
 }
 
 function trackRecentProject(result: Result<Project>): void {
