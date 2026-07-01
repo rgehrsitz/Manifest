@@ -8,6 +8,7 @@ import {
 } from '../shared/menu-commands'
 import { buildAppMenuTemplate } from './app-menu-template'
 import type { RecentProjectMenuEntry } from './recent-projects'
+import type { Logger } from './logger'
 
 let commandItems = new Map<MenuCommandId, MenuItem>()
 let commandState = normalizeMenuCommandState(null)
@@ -16,8 +17,13 @@ let installOptions: {
   isDev: boolean
   appName: string
   logsPath: string
+  logger: Logger
   openRecentProject(path: string): void
   clearRecentProjects(): void
+  openPreferences(): void
+  openDocumentation(): void
+  reportIssue(): void
+  copyDiagnostics(): void
 } | null = null
 let recentProjects: RecentProjectMenuEntry[] = []
 
@@ -26,17 +32,27 @@ export function installApplicationMenu(options: {
   isDev: boolean
   appName: string
   logsPath: string
+  logger: Logger
   recentProjects: RecentProjectMenuEntry[]
   openRecentProject(path: string): void
   clearRecentProjects(): void
+  openPreferences(): void
+  openDocumentation(): void
+  reportIssue(): void
+  copyDiagnostics(): void
 }): void {
   installOptions = {
     platform: options.platform,
     isDev: options.isDev,
     appName: options.appName,
     logsPath: options.logsPath,
+    logger: options.logger,
     openRecentProject: options.openRecentProject,
     clearRecentProjects: options.clearRecentProjects,
+    openPreferences: options.openPreferences,
+    openDocumentation: options.openDocumentation,
+    reportIssue: options.reportIssue,
+    copyDiagnostics: options.copyDiagnostics,
   }
   recentProjects = options.recentProjects
   rebuildApplicationMenu()
@@ -58,9 +74,15 @@ function rebuildApplicationMenu(): void {
     dispatch: dispatchMenuCommand,
     openRecentProject: options.openRecentProject,
     clearRecentProjects: options.clearRecentProjects,
+    openPreferences: options.openPreferences,
+    openDocumentation: options.openDocumentation,
+    reportIssue: options.reportIssue,
     openLogsFolder: () => {
-      void shell.openPath(options.logsPath)
+      shell.openPath(options.logsPath).catch((error: unknown) => {
+        options.logger.error('failed to open logs folder from menu', { error: errorMessage(error), path: options.logsPath })
+      })
     },
+    copyDiagnostics: options.copyDiagnostics,
   }))
 
   Menu.setApplicationMenu(menu)
@@ -89,4 +111,8 @@ function dispatchMenuCommand(command: MenuCommandId): void {
   const target = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
   if (!target || target.isDestroyed()) return
   target.webContents.send(IPC.MENU_COMMAND, command)
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
