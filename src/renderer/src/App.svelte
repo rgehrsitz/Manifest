@@ -152,6 +152,7 @@
   let toastMsg:     string | null = $state(null)
   let toastTimer:   ReturnType<typeof setTimeout> | null = null
   let unsubscribeMenuCommands: (() => void) | null = null
+  let unsubscribeProjectOpenFromOs: (() => void) | null = null
   const brandMark = '/manifest-mark.svg'
 
   // ─── Derived ──────────────────────────────────────────────────────────────
@@ -229,6 +230,9 @@
     unsubscribeMenuCommands = window.api.menu.onCommand((command) => {
       void runMenuCommand(command)
     })
+    unsubscribeProjectOpenFromOs = window.api.project.onOpenedFromOs((result) => {
+      handleProjectOpenedFromOs(result)
+    })
 
     // Rehydrate if main already has a project open (e.g. macOS activate).
     const result = await window.api.project.getCurrent()
@@ -246,6 +250,8 @@
   onDestroy(() => {
     unsubscribeMenuCommands?.()
     unsubscribeMenuCommands = null
+    unsubscribeProjectOpenFromOs?.()
+    unsubscribeProjectOpenFromOs = null
     window.removeEventListener('mousemove', onDragMove)
     window.removeEventListener('mouseup', onDragEnd)
   })
@@ -325,6 +331,20 @@
     if (result.ok && result.data) {
       applyProject(result.data)
     }
+  }
+
+  function handleProjectOpenedFromOs(result: Awaited<ReturnType<typeof window.api.project.open>>) {
+    if (!result.ok) {
+      error = result.error.message
+      showToast(result.error.message)
+      return
+    }
+
+    resetOpenProjectUi()
+    project = result.data
+    selectRoot(result.data)
+    appState = 'open'
+    error = null
   }
 
   function resetOpenProjectUi() {

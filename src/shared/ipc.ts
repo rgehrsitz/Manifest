@@ -42,6 +42,7 @@ export const IPC = {
   PROJECT_SAVE:        'project:save',
   PROJECT_GET_CURRENT: 'project:getCurrent',
   PROJECT_CLOSE:       'project:close',
+  PROJECT_OPENED_FROM_OS: 'project:openedFromOs',
   NODE_CREATE:         'node:create',
   NODE_UPDATE:         'node:update',
   NODE_DELETE:         'node:delete',
@@ -90,6 +91,7 @@ export interface ManifestAPI {
     save(): Promise<Result<void>>
     getCurrent(): Promise<Result<Project | null>>
     close(): Promise<Result<void>>
+    onOpenedFromOs(handler: (result: Result<Project>) => void): () => void
   }
   node: {
     /** Create a child node under parentId, optionally bound to a template. Returns full updated Project. */

@@ -19,6 +19,15 @@ const api: ManifestAPI = {
       ipcRenderer.invoke(IPC.PROJECT_GET_CURRENT),
     close: () =>
       ipcRenderer.invoke(IPC.PROJECT_CLOSE),
+    onOpenedFromOs: (handler) => {
+      const listener = (_event: Electron.IpcRendererEvent, result: unknown) => {
+        handler(result as Awaited<ReturnType<ManifestAPI['project']['open']>>)
+      }
+      ipcRenderer.on(IPC.PROJECT_OPENED_FROM_OS, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC.PROJECT_OPENED_FROM_OS, listener)
+      }
+    },
   },
 
   node: {

@@ -92,6 +92,7 @@ import type { GitService } from './git-service'
 import type { Logger } from './logger'
 import { SearchIndexService } from './search-index'
 import { HistoryIndexService } from './history-index'
+import { PROJECT_LAUNCHER_FILE } from './project-launcher'
 
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024  // 50 MB
 const MAX_FILE_SIZE_MB = MAX_FILE_SIZE_BYTES / 1024 / 1024
@@ -158,6 +159,7 @@ export class ProjectManager {
       }
 
       await this.writeManifest(project)
+      this.writeProjectLauncher(projectPath)
       await this.git.initRepo(projectPath)
       await this.git.initialCommit(projectPath)
       const searchResult = this.rebuildSearchIndex(project, 'initialize')
@@ -2507,6 +2509,15 @@ export class ProjectManager {
       }
     }
     return false
+  }
+
+  private writeProjectLauncher(projectPath: string): void {
+    const launcherPath = join(projectPath, PROJECT_LAUNCHER_FILE)
+    const launcher = {
+      version: 1,
+      projectPath: '.',
+    }
+    writeFileSync(launcherPath, `${JSON.stringify(launcher, null, 2)}\n`, 'utf8')
   }
 }
 
