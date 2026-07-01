@@ -488,8 +488,17 @@
     }
   }
 
+  // Push enabled/disabled state to the native menu, but only when it actually
+  // changes — the effect re-runs on every reactive dependency, and most UI
+  // interactions leave the command map identical. Skipping no-op sends avoids a
+  // high volume of redundant IPC messages and native menu mutations.
+  let lastSentMenuState = ''
   $effect(() => {
-    window.api.menu.updateState(buildMenuCommandState())
+    const next = buildMenuCommandState()
+    const serialized = JSON.stringify(next)
+    if (serialized === lastSentMenuState) return
+    lastSentMenuState = serialized
+    window.api.menu.updateState(next)
   })
 
   // ─── Welcome actions ──────────────────────────────────────────────────────

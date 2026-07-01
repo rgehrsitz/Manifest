@@ -28,7 +28,7 @@ export function installApplicationMenu(options: {
   }))
 
   Menu.setApplicationMenu(menu)
-  commandItems = new Map()
+  commandItems = new Map<MenuCommandId, MenuItem>()
   for (const id of MENU_COMMAND_IDS) {
     const item = menu.getMenuItemById(id)
     if (item) commandItems.set(id, item)
