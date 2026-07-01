@@ -68,6 +68,28 @@ describe('ensureFinalProjectSave', () => {
     expect(outcome).toBe('saved')
     expect(saveCalled).toBe(false)
   })
+
+  it('stops retrying when the project is gone between prompts', async () => {
+    let projectOpen = true
+    let saveAttempts = 0
+
+    const outcome = await ensureFinalProjectSave({
+      context: 'quit',
+      hasOpenProject: () => projectOpen,
+      saveProject: async () => {
+        saveAttempts += 1
+        return err(ErrorCode.PROJECT_NOT_FOUND, 'No project is currently open')
+      },
+      showFailurePrompt: async () => {
+        projectOpen = false
+        return 'retry'
+      },
+      openLogsFolder: async () => {},
+    })
+
+    expect(outcome).toBe('saved')
+    expect(saveAttempts).toBe(1)
+  })
 })
 
 describe('finalSaveFailureDialogOptions', () => {

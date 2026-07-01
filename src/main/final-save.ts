@@ -21,9 +21,9 @@ export interface FinalSaveOptions {
 }
 
 export async function ensureFinalProjectSave(options: FinalSaveOptions): Promise<FinalSaveOutcome> {
-  if (!options.hasOpenProject()) return 'saved'
-
   while (true) {
+    if (!options.hasOpenProject()) return 'saved'
+
     const result = await options.saveProject()
     if (result.ok) return 'saved'
 
