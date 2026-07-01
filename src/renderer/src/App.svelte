@@ -159,6 +159,7 @@
   let unsubscribeProjectOpenFromOs: (() => void) | null = null
   const brandMark = '/manifest-mark.svg'
   const WORKSPACE_SETTINGS_SAVE_DELAY_MS = 250
+  const desktopChrome = window.api.platform
 
   // ─── Derived ──────────────────────────────────────────────────────────────
 
@@ -1347,8 +1348,13 @@
   }
 </script>
 
-<!-- ─── Drag region (always present) ─────────────────────────────────────── -->
-<div class="fixed top-0 left-0 right-0 h-8 [-webkit-app-region:drag] pointer-events-none z-50"></div>
+<!-- ─── Window drag region for macOS hidden titlebar ─────────────────────── -->
+{#if desktopChrome.supportsWindowDragRegion}
+  <div
+    class="fixed top-0 left-0 right-0 h-8 [-webkit-app-region:drag] pointer-events-none z-50"
+    data-testid="window-drag-region"
+  ></div>
+{/if}
 
 <!-- ─── Toast ─────────────────────────────────────────────────────────────── -->
 {#if toastMsg}
@@ -1534,8 +1540,11 @@
   <div class="flex flex-col h-full bg-white" data-testid="project-view">
 
     <!-- Titlebar -->
-    <div class="flex items-center justify-between px-4 py-2.5 border-b border-stone-200 bg-white
-                pl-20 shrink-0 [-webkit-app-region:drag]">
+    <div
+      class="flex items-center justify-between pr-4 py-2.5 border-b border-stone-200 bg-white
+             shrink-0 {desktopChrome.reservesTrafficLightSpace ? 'pl-20 [-webkit-app-region:drag]' : 'pl-4'}"
+      data-testid="project-titlebar"
+    >
       <div class="flex items-center gap-3 [-webkit-app-region:no-drag]">
         <div class="flex h-10 w-10 items-center justify-center rounded-2xl bg-stone-50 ring-1 ring-stone-200">
           <img src={brandMark} alt="Manifest logo" class="h-5 w-5" />

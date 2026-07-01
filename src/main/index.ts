@@ -15,6 +15,7 @@ import {
 import { resolveProjectOpenTarget } from './project-open-target'
 import { RecentProjectsStore, getRecentDocumentPath } from './recent-projects'
 import { AppSettingsStore, resolveRestorableWindowBounds, type WorkspaceSettingsPatch } from './app-settings'
+import { desktopChromeForPlatform } from '../shared/desktop-chrome'
 import {
   ensureFinalProjectSave,
   finalSaveFailureActionForResponse,
@@ -55,6 +56,7 @@ function createWindow(): BrowserWindow {
   const iconPath = getBrandIconPath()
   const storedWindowState = appSettings.getWindowState()
   const restoredBounds = resolveRestorableWindowBounds(storedWindowState, screen.getAllDisplays())
+  const desktopChrome = desktopChromeForPlatform(process.platform)
   const win = new BrowserWindow({
     x: restoredBounds?.x,
     y: restoredBounds?.y,
@@ -65,7 +67,7 @@ function createWindow(): BrowserWindow {
     show: false,
     title: 'Manifest',
     icon: iconPath,
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    titleBarStyle: desktopChrome.titleBarStyle,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
