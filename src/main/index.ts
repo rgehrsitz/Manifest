@@ -386,6 +386,7 @@ app.whenReady().then(async () => {
     isDev: Boolean(process.env['ELECTRON_RENDERER_URL']),
     appName: app.name || 'Manifest',
     logsPath: logDir,
+    logger: appLogger,
     recentProjects: recentProjects.all(),
     openRecentProject: openRecentProject,
     clearRecentProjects: clearRecentProjects,
@@ -621,22 +622,24 @@ function openPreferences(): void {
     detail: 'Manifest currently saves workspace layout, window placement, recent projects, and dialog locations automatically. App-level preferences will appear here as they are added.',
     buttons: ['OK'],
   }
-  if (owner && !owner.isDestroyed()) {
-    void dialog.showMessageBox(owner, options)
-  } else {
-    void dialog.showMessageBox(options)
-  }
+  showMessageBoxSafely('settings dialog', owner, options)
 }
 
 function openDocumentation(): void {
-  void shell.openExternal(DOCUMENTATION_URL)
+  openExternalSafely(DOCUMENTATION_URL, 'documentation link')
 }
 
 function reportIssue(): void {
-  void shell.openExternal(REPORT_ISSUE_URL)
+  openExternalSafely(REPORT_ISSUE_URL, 'issue report link')
 }
 
-async function copyDiagnostics(): Promise<void> {
+function copyDiagnostics(): void {
+  copyDiagnosticsToClipboard().catch((error: unknown) => {
+    appLogger.error('failed to copy diagnostics from menu', { error: errorMessage(error) })
+  })
+}
+
+async function copyDiagnosticsToClipboard(): Promise<void> {
   const diagnostics = buildDiagnostics({
     appName: app.name || 'Manifest',
     appVersion: app.getVersion(),
@@ -660,11 +663,33 @@ async function copyDiagnostics(): Promise<void> {
     detail: diagnostics,
     buttons: ['OK'],
   }
+  await showMessageBoxSafely('diagnostics copied dialog', owner, options)
+}
+
+function openExternalSafely(url: string, label: string): void {
+  shell.openExternal(url).catch((error: unknown) => {
+    appLogger.error(`failed to open ${label}`, { error: errorMessage(error), url })
+  })
+}
+
+async function showMessageBoxSafely(
+  label: string,
+  owner: BrowserWindow | null,
+  options: Electron.MessageBoxOptions,
+): Promise<void> {
   if (owner && !owner.isDestroyed()) {
-    await dialog.showMessageBox(owner, options)
+    await dialog.showMessageBox(owner, options).catch((error: unknown) => {
+      appLogger.error(`failed to show ${label}`, { error: errorMessage(error) })
+    })
   } else {
-    await dialog.showMessageBox(options)
+    await dialog.showMessageBox(options).catch((error: unknown) => {
+      appLogger.error(`failed to show ${label}`, { error: errorMessage(error) })
+    })
   }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 function trackRecentProject(result: Result<Project>): void {
