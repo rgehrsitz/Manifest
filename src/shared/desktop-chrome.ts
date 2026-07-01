@@ -4,8 +4,6 @@ export type DesktopTitlebarStyle = 'hiddenInset' | 'default'
 export interface DesktopChromeInfo {
   platform: DesktopPlatform
   titleBarStyle: DesktopTitlebarStyle
-  usesNativeFrame: boolean
-  usesHiddenInsetTitlebar: boolean
   reservesTrafficLightSpace: boolean
   supportsWindowDragRegion: boolean
 }
@@ -17,8 +15,6 @@ export function desktopChromeForPlatform(platform: string): DesktopChromeInfo {
   return {
     platform: normalized,
     titleBarStyle: usesHiddenInsetTitlebar ? 'hiddenInset' : 'default',
-    usesNativeFrame: !usesHiddenInsetTitlebar,
-    usesHiddenInsetTitlebar,
     reservesTrafficLightSpace: usesHiddenInsetTitlebar,
     supportsWindowDragRegion: usesHiddenInsetTitlebar,
   }

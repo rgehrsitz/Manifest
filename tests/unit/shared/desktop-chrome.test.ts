@@ -6,8 +6,6 @@ describe('desktopChromeForPlatform', () => {
     expect(desktopChromeForPlatform('darwin')).toEqual({
       platform: 'darwin',
       titleBarStyle: 'hiddenInset',
-      usesNativeFrame: false,
-      usesHiddenInsetTitlebar: true,
       reservesTrafficLightSpace: true,
       supportsWindowDragRegion: true,
     })
@@ -17,8 +15,6 @@ describe('desktopChromeForPlatform', () => {
     expect(desktopChromeForPlatform(platform)).toEqual({
       platform,
       titleBarStyle: 'default',
-      usesNativeFrame: true,
-      usesHiddenInsetTitlebar: false,
       reservesTrafficLightSpace: false,
       supportsWindowDragRegion: false,
     })
@@ -28,7 +24,6 @@ describe('desktopChromeForPlatform', () => {
     expect(desktopChromeForPlatform('freebsd')).toMatchObject({
       platform: 'other',
       titleBarStyle: 'default',
-      usesNativeFrame: true,
       reservesTrafficLightSpace: false,
       supportsWindowDragRegion: false,
     })
