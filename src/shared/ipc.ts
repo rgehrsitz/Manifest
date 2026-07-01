@@ -76,7 +76,32 @@ export const IPC = {
   // Native menu notifications. These are one-way UI events, not domain calls.
   MENU_COMMAND:        'menu:command',
   MENU_STATE_UPDATE:   'menu:stateUpdate',
+  SETTINGS_GET:        'settings:get',
+  SETTINGS_UPDATE_WORKSPACE: 'settings:updateWorkspace',
 } as const
+
+export interface LastWorkspaceProject {
+  path: string
+  name: string
+  exists: boolean
+}
+
+export interface WorkspaceSettings {
+  treeWidth: number
+  panelWidth: number
+  lastOpenDirectory: string | null
+  lastCreateDirectory: string | null
+  lastProject: LastWorkspaceProject | null
+}
+
+export interface WorkspaceSettingsPatch {
+  treeWidth?: number
+  panelWidth?: number
+  lastOpenDirectory?: string | null
+  lastCreateDirectory?: string | null
+}
+
+export type FolderDialogPurpose = 'open-project' | 'create-project'
 
 // Typed API surface exposed on window.api by the preload script.
 // Renderer code should only interact with main process through this interface.
@@ -171,11 +196,15 @@ export interface ManifestAPI {
     build(from: string, to: string, format: ReportFormat): Promise<Result<{ content: string; suggestedName: string }>>
   }
   dialog: {
-    openFolder(title: string): Promise<string | null>
+    openFolder(title: string, purpose?: FolderDialogPurpose): Promise<string | null>
     openFile(title: string): Promise<string | null>
   }
   menu: {
     onCommand(handler: (command: MenuCommandId) => void): () => void
     updateState(state: MenuCommandState): void
+  }
+  settings: {
+    get(): Promise<Result<WorkspaceSettings>>
+    updateWorkspace(patch: WorkspaceSettingsPatch): Promise<Result<WorkspaceSettings>>
   }
 }

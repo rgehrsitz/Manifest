@@ -150,6 +150,19 @@ test('adds opened projects to native Open Recent and OS recent documents', async
   expect(addedDocuments).toContain(join(projectDir, PROJECT_LAUNCHER_FILE))
 })
 
+test('offers the last project as a one-click welcome action', async ({ appPage, electronApp, workspaceDir }) => {
+  const projectDir = await createProjectThroughUi(appPage, electronApp, workspaceDir, 'Welcome Back')
+
+  await appPage.getByTestId('close-project-btn').click()
+  await expect(appPage.getByTestId('reopen-last-project-btn')).toContainText('Welcome Back')
+
+  await appPage.getByTestId('reopen-last-project-btn').click()
+  await expect(appPage.getByTestId('project-view')).toBeVisible()
+  await expect(treeRow(appPage, 'Welcome Back')).toBeVisible()
+  const reopened = await currentProject(appPage)
+  expect((reopened as typeof reopened & { path?: string }).path).toBe(projectDir)
+})
+
 test('opens an existing project and renders its hierarchy', async ({ appPage, electronApp, workspaceDir }) => {
   const projectDir = join(workspaceDir, 'Lab Setup')
   await writeFixtureProject(projectDir, 'project-with-nodes.json')

@@ -106,8 +106,8 @@ const api: ManifestAPI = {
   },
 
   dialog: {
-    openFolder: (title) =>
-      ipcRenderer.invoke(IPC.DIALOG_OPEN_FOLDER, { title }),
+    openFolder: (title, purpose) =>
+      ipcRenderer.invoke(IPC.DIALOG_OPEN_FOLDER, { title, purpose }),
     openFile: (title) =>
       ipcRenderer.invoke(IPC.DIALOG_OPEN_FILE, { title }),
   },
@@ -124,6 +124,13 @@ const api: ManifestAPI = {
     },
     updateState: (state) =>
       ipcRenderer.send(IPC.MENU_STATE_UPDATE, state),
+  },
+
+  settings: {
+    get: () =>
+      ipcRenderer.invoke(IPC.SETTINGS_GET, {}),
+    updateWorkspace: (patch) =>
+      ipcRenderer.invoke(IPC.SETTINGS_UPDATE_WORKSPACE, patch),
   },
 }
 
