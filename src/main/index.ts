@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
 import { existsSync } from 'fs'
 import { writeFile } from 'fs/promises'
 import { extname, join, resolve } from 'path'
@@ -14,6 +14,13 @@ import {
 } from './app-menu'
 import { resolveProjectOpenTarget } from './project-open-target'
 import { RecentProjectsStore, getRecentDocumentPath } from './recent-projects'
+import {
+  ensureFinalProjectSave,
+  finalSaveFailureActionForResponse,
+  finalSaveFailureDialogOptions,
+  type FinalSaveContext,
+  type FinalSaveFailureAction,
+} from './final-save'
 import type { Project, Result, NodeTemplate, ImportMapping, NetboxImportOptions } from '../shared/types'
 import type { ReportFormat } from '../shared/report'
 
@@ -37,6 +44,9 @@ const recentProjects = new RecentProjectsStore(join(userData, 'recent-projects.j
 let mainWindow: BrowserWindow | null = null
 const pendingOpenTargets: string[] = []
 let ownsSingleInstanceLock = false
+let quitAfterFinalSave = false
+let finalQuitInProgress = false
+const approvedWindowCloses = new WeakSet<BrowserWindow>()
 
 function createWindow(): BrowserWindow {
   const iconPath = getBrandIconPath()
@@ -58,6 +68,11 @@ function createWindow(): BrowserWindow {
   })
 
   win.once('ready-to-show', () => win.show())
+  win.on('close', (event) => {
+    if (quitAfterFinalSave || approvedWindowCloses.has(win) || !projectManager.getCurrent()) return
+    event.preventDefault()
+    void closeWindowAfterFinalSave(win)
+  })
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null
   })
@@ -100,7 +115,7 @@ function registerIpcHandlers(): void {
   })
 
   ipcMain.handle(IPC.PROJECT_CLOSE, async () =>
-    projectManager.flushAndClose()
+    closeProjectAfterFinalSave(mainWindow ?? BrowserWindow.getFocusedWindow())
   )
 
   // ── Node CRUD ────────────────────────────────────────────────────────────
@@ -366,10 +381,13 @@ app.on('open-file', (event, path) => {
   queueOpenTarget(path)
 })
 
-// Flush autosave before quitting so no changes are lost.
-app.on('before-quit', () => {
-  projectManager.cancelAutosave()
-  projectManager.saveProject()
+// Flush autosave before quitting so no changes are lost. Electron cannot await
+// before-quit listeners, so normal quits are paused and resumed after the final
+// save either succeeds or the user explicitly chooses Quit Anyway.
+app.on('before-quit', (event) => {
+  if (quitAfterFinalSave || !projectManager.getCurrent()) return
+  event.preventDefault()
+  void quitAfterFinalSavePrompt()
 })
 
 app.on('window-all-closed', () => {
@@ -394,6 +412,69 @@ function getGitInstallInstructions(): string {
 function getBrandIconPath(): string | undefined {
   const iconPath = join(app.getAppPath(), 'resources', 'icon.png')
   return existsSync(iconPath) ? iconPath : undefined
+}
+
+async function closeProjectAfterFinalSave(owner: BrowserWindow | null): Promise<Result<void>> {
+  const outcome = await runFinalSaveFlow('project-close', owner)
+  if (outcome === 'proceed-anyway') {
+    projectLogger.warn('project closed after final save failure')
+  }
+  projectManager.discardCurrentProject()
+  return ok(undefined)
+}
+
+async function closeWindowAfterFinalSave(win: BrowserWindow): Promise<void> {
+  const outcome = await runFinalSaveFlow('window-close', win)
+  if (outcome === 'proceed-anyway') {
+    projectLogger.warn('window closed after final save failure')
+  }
+  projectManager.discardCurrentProject()
+  if (win.isDestroyed()) return
+  approvedWindowCloses.add(win)
+  win.close()
+}
+
+async function quitAfterFinalSavePrompt(): Promise<void> {
+  if (finalQuitInProgress) return
+  finalQuitInProgress = true
+  const outcome = await runFinalSaveFlow('quit', mainWindow ?? BrowserWindow.getFocusedWindow())
+  if (outcome === 'proceed-anyway') {
+    projectLogger.warn('app quit after final save failure')
+  }
+  quitAfterFinalSave = true
+  finalQuitInProgress = false
+  app.quit()
+}
+
+async function runFinalSaveFlow(
+  context: FinalSaveContext,
+  owner: BrowserWindow | null,
+) {
+  return ensureFinalProjectSave({
+    context,
+    window: owner,
+    hasOpenProject: () => projectManager.getCurrent() !== null,
+    saveProject: async () => {
+      projectManager.cancelAutosave()
+      return projectManager.saveProject()
+    },
+    showFailurePrompt: (prompt) => showFinalSaveFailurePrompt(prompt.context, prompt.message, prompt.window ?? null),
+    openLogsFolder: async () => {
+      await shell.openPath(logDir)
+    },
+  })
+}
+
+async function showFinalSaveFailurePrompt(
+  context: FinalSaveContext,
+  message: string,
+  owner: BrowserWindow | null,
+): Promise<FinalSaveFailureAction> {
+  const options = finalSaveFailureDialogOptions(context, message)
+  const result = owner && !owner.isDestroyed()
+    ? await dialog.showMessageBox(owner, options)
+    : await dialog.showMessageBox(options)
+  return finalSaveFailureActionForResponse(result.response)
 }
 
 function queueOpenTarget(targetPath: string): void {
