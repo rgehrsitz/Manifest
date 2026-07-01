@@ -67,8 +67,13 @@ export class RecentProjectsStore {
   }
 
   private save(): void {
-    mkdirSync(dirname(this.storePath), { recursive: true })
-    writeFileSync(this.storePath, JSON.stringify({ projects: this.entries }, null, 2), 'utf8')
+    try {
+      mkdirSync(dirname(this.storePath), { recursive: true })
+      writeFileSync(this.storePath, JSON.stringify({ projects: this.entries }, null, 2), 'utf8')
+    } catch {
+      // Recent projects are convenience metadata; persistence failure must not
+      // block project create/open flows.
+    }
   }
 }
 

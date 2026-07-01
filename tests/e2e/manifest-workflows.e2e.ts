@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
 import { expect, test } from './fixtures'
+import { PROJECT_LAUNCHER_FILE } from '../../src/main/project-launcher'
 
 type PersistedProject = {
   name: string
@@ -16,7 +17,6 @@ type PersistedProject = {
 
 const ROOT_DIR = process.cwd()
 const MAIN_ENTRY = join(ROOT_DIR, 'out', 'main', 'index.js')
-const PROJECT_LAUNCHER_FILE = 'Manifest.manifestproject'
 
 function treeRow(page: Page, name: string) {
   return page.locator('[data-testid="tree-node"]', { hasText: name }).first()

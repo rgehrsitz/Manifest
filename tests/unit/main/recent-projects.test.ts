@@ -87,6 +87,18 @@ describe('RecentProjectsStore', () => {
 
     expect(new RecentProjectsStore(storePath).all()).toEqual([])
   })
+
+  it('keeps recent tracking best-effort when persistence fails', () => {
+    const store = new RecentProjectsStore('/dev/null/recent-projects.json')
+    const projectDir = writeProjectDir('Best Effort')
+
+    expect(() => store.add(project(projectDir, 'Best Effort'))).not.toThrow()
+    expect(store.all()[0]).toMatchObject({
+      name: 'Best Effort',
+      path: projectDir,
+      exists: true,
+    })
+  })
 })
 
 describe('getRecentDocumentPath', () => {
